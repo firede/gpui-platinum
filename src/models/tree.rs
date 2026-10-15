@@ -1,4 +1,4 @@
-use std::cmp::Ordering;
+use std::{cmp::Ordering, time::SystemTime};
 
 /// The kinds of items in the desk's in-memory disk.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -33,6 +33,9 @@ pub struct TreeNode {
     pub title: String,
     pub kind: NodeKind,
     pub text: String,
+    pub modified: SystemTime,
+    pub runs: Option<Vec<crate::Run>>,
+    pub alignments: Option<Vec<crate::Alignment>>,
     pub children: Vec<TreeNode>,
     pub open: bool,
 }
@@ -44,6 +47,9 @@ impl TreeNode {
             title: title.into(),
             kind,
             text: String::new(),
+            modified: SystemTime::now(),
+            runs: None,
+            alignments: None,
             children: Vec::new(),
             open: false,
         }
@@ -55,6 +61,18 @@ impl TreeNode {
             NodeKind::Application | NodeKind::ControlPanel => 24 * 1024 + self.title.len() * 512,
             _ => self.children.iter().map(Self::size).sum(),
         }
+    }
+
+    pub fn write_document(
+        &mut self,
+        text: String,
+        runs: Vec<crate::Run>,
+        alignments: Vec<crate::Alignment>,
+    ) {
+        self.text = text;
+        self.runs = Some(runs);
+        self.alignments = Some(alignments);
+        self.modified = SystemTime::now();
     }
 
     pub fn find(&self, id: usize) -> Option<&Self> {
@@ -385,6 +403,33 @@ impl FileTree {
         self.selected = selected;
         true
     }
+
+    /// Copy an item with fresh IDs, preserving its descendants and contents.
+    pub fn duplicate(
+        &mut self,
+        id: usize,
+        parent: usize,
+        title: impl Into<String>,
+    ) -> Option<usize> {
+        if !self.find(parent)?.kind.is_container() {
+            return None;
+        }
+        let mut node = self.find(id)?.clone();
+        fn assign_ids(node: &mut TreeNode, next: &mut usize) -> Option<()> {
+            node.id = *next;
+            *next = next.checked_add(1)?;
+            for child in &mut node.children {
+                assign_ids(child, next)?;
+            }
+            Some(())
+        }
+        assign_ids(&mut node, &mut self.next_id)?;
+        node.title = title.into();
+        node.modified = SystemTime::now();
+        let id = node.id;
+        self.find_mut(parent)?.children.push(node);
+        Some(id)
+    }
 }
 
 fn compare_nodes(left: &TreeNode, right: &TreeNode, column: SortColumn) -> Ordering {
@@ -399,6 +444,39 @@ fn compare_nodes(left: &TreeNode, right: &TreeNode, column: SortColumn) -> Order
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn saving_document_content_updates_its_modified_time() {
+        let mut node = TreeNode::new(1, "Letter", NodeKind::Document);
+        node.modified = SystemTime::UNIX_EPOCH;
+        let before_save = SystemTime::now();
+        node.write_document(
+            "Saved text".into(),
+            Vec::new(),
+            vec![crate::Alignment::Center],
+        );
+        assert_eq!(node.text, "Saved text");
+        assert_eq!(
+            node.alignments.as_deref(),
+            Some([crate::Alignment::Center].as_slice())
+        );
+        assert!(node.modified >= before_save);
+    }
+    #[test]
+    fn duplicates_get_a_fresh_modified_time_without_changing_the_original() {
+        let mut tree = FileTree::new(vec![TreeNode::new(0, "Disk", NodeKind::Disk)]);
+        let original = tree.add_document(0, "Letter", "Hello").unwrap();
+        tree.find_mut(original).unwrap().modified = SystemTime::UNIX_EPOCH;
+        let before_copy = SystemTime::now();
+        let copy = tree.duplicate(original, 0, "Letter copy").unwrap();
+        assert_ne!(copy, original);
+        assert_eq!(
+            tree.find(original).unwrap().modified,
+            SystemTime::UNIX_EPOCH
+        );
+        let node = tree.find(copy).unwrap();
+        assert!(node.modified >= before_copy);
+        assert_eq!(node.text, "Hello");
+    }
 
     fn id(tree: &FileTree, title: &str) -> usize {
         fn search(node: &TreeNode, title: &str) -> Option<usize> {

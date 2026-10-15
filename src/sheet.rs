@@ -102,6 +102,60 @@ impl SheetView {
         self.height = height.max(100);
         self
     }
+    pub fn set_size(&mut self, width: i32, height: i32, cx: &mut Context<Self>) {
+        self.width = width.max(150);
+        self.height = height.max(100);
+        self.reveal();
+        cx.notify();
+    }
+    pub fn command(&mut self, command: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if self.formula.focus_handle(cx).is_focused(window)
+            || self.editor.focus_handle(cx).is_focused(window)
+        {
+            match command {
+                "copy" => window.dispatch_action(Box::new(crate::text_input::Copy), cx),
+                "cut" => window.dispatch_action(Box::new(crate::text_input::Cut), cx),
+                "paste" => window.dispatch_action(Box::new(crate::text_input::Paste), cx),
+                "selectAll" | "select-all" => {
+                    window.dispatch_action(Box::new(crate::text_input::SelectAll), cx)
+                }
+                "clear" => window.dispatch_action(Box::new(crate::text_input::Delete), cx),
+                "undo" => window.dispatch_action(Box::new(crate::text_input::Undo), cx),
+                "redo" => window.dispatch_action(Box::new(crate::text_input::Redo), cx),
+                _ => {}
+            }
+            return;
+        }
+        self.finish_edit(cx);
+        match command {
+            "selectAll" | "select-all" => {
+                self.model.anchor = Cell::new(0, 0);
+                self.model.cursor = Cell::new(self.cols - 1, self.rows - 1);
+                cx.notify();
+            }
+            "copy" | "cut" => {
+                cx.write_to_clipboard(ClipboardItem::new_string(self.model.copy_tsv()));
+                if command == "cut" {
+                    self.clear_selection(cx);
+                }
+            }
+            "paste" => {
+                if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                    let changed = self.model.paste_tsv(&text, self.rows, self.cols);
+                    for cell in changed {
+                        cx.emit(SheetEvent::Changed(cell));
+                    }
+                    self.reveal();
+                    self.sync_formula(cx);
+                    cx.emit(SheetEvent::Selected(self.model.cursor));
+                    cx.notify();
+                }
+            }
+            "clear" => self.clear_selection(cx),
+            _ => return,
+        }
+        window.focus(&self.focus, cx);
+    }
     pub fn dimensions(mut self, rows: usize, cols: usize) -> Self {
         self.rows = rows.max(1);
         self.cols = cols.max(1);
@@ -327,32 +381,14 @@ impl SheetView {
         let modifiers = event.keystroke.modifiers;
         let command = modifiers.platform || modifiers.control;
         if command {
-            match event.keystroke.key.as_str() {
-                "a" => {
-                    self.model.anchor = Cell::new(0, 0);
-                    self.model.cursor = Cell::new(self.cols - 1, self.rows - 1);
-                    cx.notify();
-                }
-                "c" | "x" => {
-                    cx.write_to_clipboard(ClipboardItem::new_string(self.model.copy_tsv()));
-                    if event.keystroke.key == "x" {
-                        self.clear_selection(cx);
-                    }
-                }
-                "v" => {
-                    if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-                        let changed = self.model.paste_tsv(&text, self.rows, self.cols);
-                        for cell in changed {
-                            cx.emit(SheetEvent::Changed(cell));
-                        }
-                        self.reveal();
-                        self.sync_formula(cx);
-                        cx.emit(SheetEvent::Selected(self.model.cursor));
-                        cx.notify();
-                    }
-                }
+            let command = match event.keystroke.key.as_str() {
+                "a" => "selectAll",
+                "c" => "copy",
+                "x" => "cut",
+                "v" => "paste",
                 _ => return,
-            }
+            };
+            self.command(command, window, cx);
             cx.stop_propagation();
             return;
         }

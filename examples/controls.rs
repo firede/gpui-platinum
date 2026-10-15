@@ -8,9 +8,10 @@ use catalog::{Controls, NextFocus, PreviousFocus, Quit};
 fn main() {
     gpui_platform::application().run(|cx: &mut App| {
         text_input::init(cx);
+        gpui_platinum::dialogs::init(cx);
         cx.bind_keys([
-            KeyBinding::new("tab", NextFocus, None),
-            KeyBinding::new("shift-tab", PreviousFocus, None),
+            KeyBinding::new("tab", NextFocus, Some("Controls")),
+            KeyBinding::new("shift-tab", PreviousFocus, Some("Controls")),
             KeyBinding::new("cmd-q", Quit, None),
         ]);
         let bounds = Bounds::centered(None, size(px(820.), px(540.)), cx);

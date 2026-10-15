@@ -94,13 +94,44 @@ impl TextBuffer {
     }
 
     pub fn replace(&mut self, range: Range<usize>, text: &str) -> bool {
+        self.replace_impl(range, text, true)
+    }
+
+    /// Replace non-overlapping matches as one undoable edit.
+    pub fn replace_many(&mut self, ranges: &[Range<usize>], text: &str) -> usize {
+        let mut ranges: Vec<_> = ranges
+            .iter()
+            .cloned()
+            .map(|range| self.safe_range(range))
+            .collect();
+        ranges.sort_by_key(|range| range.start);
+        let mut previous_end = 0;
+        ranges.retain(|range| {
+            if range.is_empty() || range.start < previous_end {
+                return false;
+            }
+            previous_end = range.end;
+            true
+        });
+        if ranges.is_empty() {
+            return 0;
+        }
+        self.checkpoint();
+        self.marked = None;
+        for range in ranges.iter().rev() {
+            self.replace_impl(range.clone(), text, false);
+        }
+        ranges.len()
+    }
+
+    fn replace_impl(&mut self, range: Range<usize>, text: &str, record: bool) -> bool {
         let range = self.safe_range(range);
         let changed = &self.text[range.clone()] != text
             || self
                 .rich
                 .as_ref()
                 .is_some_and(|rich| rich.replacement_changes_style(&self.text, range.clone()));
-        if changed && self.marked.is_none() {
+        if changed && record && self.marked.is_none() {
             self.checkpoint();
         }
         if let Some(rich) = &mut self.rich {
@@ -298,10 +329,54 @@ fn utf16_range_to_bytes(text: &str, range: Range<usize>) -> Range<usize> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn importing_a_document_resets_previous_styles_and_undo_history() {
+        let mut buffer = TextBuffer::default();
+        buffer.set_runs(&[Run {
+            text: "old".into(),
+            style: crate::TextStyle {
+                bold: true,
+                ..Default::default()
+            },
+        }]);
+        buffer.replace(0..3, "edited");
+        buffer.set_runs(&[Run {
+            text: "新 document".into(),
+            style: crate::TextStyle::default(),
+        }]);
+        assert!(!buffer.undo());
+        assert!(
+            buffer
+                .rich
+                .as_ref()
+                .unwrap()
+                .styles
+                .iter()
+                .all(|style| !style.bold)
+        );
+        buffer.replace(0..3, "New");
+        assert!(buffer.undo());
+        assert_eq!(buffer.text, "新 document");
+    }
+
     fn buffer(text: &str) -> TextBuffer {
         let mut buffer = TextBuffer::default();
         buffer.set(text.into());
         buffer
+    }
+
+    #[test]
+    fn replacing_several_matches_is_one_undoable_edit() {
+        let mut buffer = TextBuffer::default();
+        buffer.set("猫 cat 猫".into());
+        buffer.select(3, false);
+        assert_eq!(buffer.replace_many(&[0..3, 8..11], "dog"), 2);
+        assert_eq!(buffer.text, "dog cat dog");
+        assert!(buffer.undo());
+        assert_eq!(buffer.text, "猫 cat 猫");
+        assert_eq!(buffer.selection(), 3..3);
+        assert!(buffer.redo());
+        assert_eq!(buffer.text, "dog cat dog");
     }
 
     #[test]

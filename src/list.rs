@@ -1,6 +1,6 @@
 //! A list box with one keyboard focus stop and scrollable rows.
 
-use crate::{Font, Theme, paint::drawing, theme::*};
+use crate::{Font, Language, ScrollBar, Theme, paint::drawing, theme::*};
 use gpui::{prelude::*, *};
 use std::time::{Duration, Instant};
 
@@ -44,6 +44,7 @@ pub struct ListBox {
     fill_height: bool,
     label: SharedString,
     theme: Theme,
+    language: Language,
     prefix: String,
     typed_at: Instant,
 }
@@ -65,6 +66,7 @@ impl ListBox {
             fill_height: false,
             label: "List".into(),
             theme: Theme::default(),
+            language: Language::English,
             prefix: String::new(),
             typed_at: Instant::now(),
         }
@@ -86,6 +88,14 @@ impl ListBox {
         self.theme = theme;
         self
     }
+    pub fn language(mut self, language: Language) -> Self {
+        self.language = language;
+        self
+    }
+    pub fn set_language(&mut self, language: Language, cx: &mut Context<Self>) {
+        self.language = language;
+        cx.notify();
+    }
     pub fn selected(mut self, selected: usize) -> Self {
         self.selected = self
             .items
@@ -102,6 +112,18 @@ impl ListBox {
     }
     pub fn set_theme(&mut self, theme: Theme, cx: &mut Context<Self>) {
         self.theme = theme;
+        cx.notify();
+    }
+    pub fn set_label(&mut self, label: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.label = label.into();
+        cx.notify();
+    }
+    pub fn set_selection(&mut self, selected: Option<usize>, cx: &mut Context<Self>) {
+        self.selected =
+            selected.filter(|index| self.items.get(*index).is_some_and(|item| !item.disabled));
+        if let Some(index) = self.selected {
+            self.scroll.scroll_to_item(index);
+        }
         cx.notify();
     }
     pub fn set_items(&mut self, items: Vec<ListItem>, cx: &mut Context<Self>) {
@@ -163,7 +185,9 @@ impl ListBox {
             }
             self.select(index, cx);
             cx.stop_propagation();
-        } else if !event.keystroke.modifiers.modified()
+        } else if !event.keystroke.modifiers.platform
+            && !event.keystroke.modifiers.control
+            && !event.keystroke.modifiers.alt
             && let Some(text) = &event.keystroke.key_char
         {
             if self.typed_at.elapsed() > Duration::from_secs(1) {
@@ -190,13 +214,23 @@ impl Render for ListBox {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focused = self.focus.is_focused(window);
         let accent = self.theme.accent;
-        let width = self.width;
+        let language = self.language;
+        let viewport = if self.fill_height && self.scroll.bounds().size.height > px(0.) {
+            f32::from(self.scroll.bounds().size.height) as i32
+        } else {
+            self.height - 6
+        };
+        let scrolls = self.items.len() as i32 * 16 > viewport;
+        let width = self.width - if scrolls { 16 } else { 0 };
+        let handle = self.scroll.clone();
+        let entity = cx.entity();
         div()
             .id("list")
             .role(Role::ListBox)
             .aria_label(self.label.clone())
             .track_focus(&self.focus)
-            .w(px(width as f32))
+            .w(px(self.width as f32))
+            .flex()
             .when(self.fill_height, |el| el.h_full())
             .when(!self.fill_height, |el| el.h(px(self.height as f32)))
             .flex_shrink_0()
@@ -208,13 +242,17 @@ impl Render for ListBox {
             .child(
                 div()
                     .id("rows")
-                    .size_full()
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
                     .overflow_y_scroll()
+                    .on_scroll_wheel(cx.listener(|_, _, _, cx| cx.notify()))
                     .track_scroll(&self.scroll)
                     .children(self.items.iter().enumerate().map(|(index, item)| {
                         let selected = self.selected == Some(index);
                         let text = item.label.clone();
                         let disabled = item.disabled;
+                        let entity = cx.entity();
                         div()
                             .id(index)
                             .role(Role::ListBoxOption)
@@ -223,6 +261,15 @@ impl Render for ListBox {
                             .h(px(16.))
                             .w_full()
                             .flex_shrink_0()
+                            .on_a11y_action(AccessibleAction::Click, move |_, window, cx| {
+                                entity.update(cx, |this, cx| {
+                                    if disabled {
+                                        return;
+                                    }
+                                    window.focus(&this.focus, cx);
+                                    this.select(index, cx);
+                                });
+                            })
                             .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                                 window.focus(&this.focus, cx);
                                 if disabled {
@@ -234,6 +281,7 @@ impl Render for ListBox {
                                 }
                             }))
                             .child(drawing((width - 6) as f32, 16., move |pen, _, _| {
+                                pen.language = language;
                                 pen.rect(
                                     0,
                                     0,
@@ -261,5 +309,21 @@ impl Render for ListBox {
                             }))
                     })),
             )
+            .when(scrolls, |root| {
+                root.child(
+                    ScrollBar::new(
+                        "list-scroll",
+                        -f32::from(self.scroll.offset().y) as f64,
+                        viewport as f64,
+                        (self.items.len() * 16) as f64,
+                    )
+                    .length(viewport)
+                    .theme(self.theme)
+                    .on_change(move |value, _, cx| {
+                        handle.set_offset(point(px(0.), px(-value as f32)));
+                        entity.update(cx, |_, cx| cx.notify());
+                    }),
+                )
+            })
     }
 }

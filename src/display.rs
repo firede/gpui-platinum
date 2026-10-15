@@ -1,35 +1,57 @@
 //! Labels, status displays and other controls without a bound value.
 
 use crate::{
-    Font, Theme,
+    Font, Language, Theme,
     paint::{Pen, Rect, drawing},
     theme::*,
-    widgets::text_in,
+    widgets::text_in_language,
 };
 use gpui::{prelude::*, *};
 use std::{sync::OnceLock, time::Instant};
 
+#[track_caller]
 pub fn paragraph(text: impl Into<SharedString>, font: Font, width: i32) -> impl IntoElement {
+    paragraph_in(text, font, width, Language::English)
+}
+
+#[track_caller]
+pub fn paragraph_in(
+    text: impl Into<SharedString>,
+    font: Font,
+    width: i32,
+    language: Language,
+) -> impl IntoElement {
     let text = text.into();
-    let lines = wrap(&text, font, width);
-    div().flex().flex_col().w(px(width as f32)).children(
-        lines
-            .into_iter()
-            .map(move |line| text_in(line, font, BLACK)),
-    )
+    let lines = wrap_in(&text, font, width, language);
+    div()
+        .id(ElementId::from(std::panic::Location::caller()))
+        .flex()
+        .flex_col()
+        .w(px(width as f32))
+        .children(lines.into_iter().enumerate().map(move |(index, line)| {
+            div()
+                .id(("line", index))
+                .child(text_in_language(line, font, BLACK, language))
+        }))
 }
 
 pub fn wrap(text: &str, font: Font, width: i32) -> Vec<String> {
+    wrap_in(text, font, width, Language::English)
+}
+
+pub fn wrap_in(text: &str, font: Font, width: i32, language: Language) -> Vec<String> {
     let mut lines = Vec::new();
     for paragraph in text.split('\n') {
         let mut line = String::new();
         for word in paragraph.split_inclusive(' ') {
-            if !line.is_empty() && font.measure(&(line.clone() + word)) > width {
+            if !line.is_empty() && font.measure_in(&(line.clone() + word), language) > width {
                 lines.push(line.trim_end().to_owned());
                 line.clear();
             }
             for ch in word.chars() {
-                if !line.is_empty() && font.measure(&(line.clone() + &ch.to_string())) > width {
+                if !line.is_empty()
+                    && font.measure_in(&(line.clone() + &ch.to_string()), language) > width
+                {
                     lines.push(std::mem::take(&mut line));
                 }
                 line.push(ch);
@@ -41,101 +63,153 @@ pub fn wrap(text: &str, font: Font, width: i32) -> Vec<String> {
 }
 
 pub fn placard(text: impl Into<SharedString>, width: i32) -> impl IntoElement {
+    placard_in(text, width, Language::English)
+}
+
+pub fn placard_in(
+    text: impl Into<SharedString>,
+    width: i32,
+    language: Language,
+) -> impl IntoElement {
     let text = text.into();
-    drawing(width as f32, 20., move |pen, _, _| {
-        pen.raised(GRAY_2);
-        pen.text_centered(&text, Font::Small, BLACK);
+    drawing(width as f32, 16., move |pen, _, _| {
+        pen.language = language;
+        pen.rect(0, 0, width, 16, GRAY_2);
+        pen.bevel(0, 0, width, 16, WHITE, GRAY_7);
+        pen.text(6, 12, &text, Font::Small, BLACK);
     })
 }
 
 pub fn window_header(text: impl Into<SharedString>, width: i32) -> impl IntoElement {
-    let text = text.into();
-    drawing(width as f32, 24., move |pen, _, _| {
-        pen.rect(0, 0, width, 24, GRAY_2);
-        pen.hline(0, 0, width, WHITE);
-        pen.hline(0, 23, width, GRAY_7);
-        pen.text(8, 16, &text, Font::Bold, BLACK);
+    window_header_in(text, width, Language::English)
+}
+
+pub fn window_header_in(
+    text: impl Into<SharedString>,
+    width: i32,
+    language: Language,
+) -> impl IntoElement {
+    window_header_parts(text, "", width, language)
+}
+
+pub fn window_header_parts(
+    left: impl Into<SharedString>,
+    right: impl Into<SharedString>,
+    width: i32,
+    language: Language,
+) -> impl IntoElement {
+    let (left, right) = (left.into(), right.into());
+    drawing(width as f32, 20., move |pen, _, _| {
+        pen.language = language;
+        pen.rect(0, 0, width, 20, GRAY_2);
+        pen.hline(0, 18, width, GRAY_7);
+        pen.hline(0, 19, width, BLACK);
+        pen.text(8, 13, &left, Font::Small, BLACK);
+        pen.text(
+            width - Font::Small.measure_in(&right, language) - 8,
+            13,
+            &right,
+            Font::Small,
+            BLACK,
+        );
     })
 }
 
 pub fn badge(text: impl Into<SharedString>, theme: Theme) -> impl IntoElement {
-    let text = text.into();
-    let width = Font::Bold.measure(&text) + 10;
-    drawing(width as f32, 16., move |pen, _, _| {
-        pen.round_frame(
-            Rect {
-                x: 0,
-                y: 0,
-                width,
-                height: 16,
-            },
-            4,
-            theme.accent.dark,
-            Some(theme.accent.light),
-        );
-        pen.text_centered(&text, Font::Bold, BLACK);
-    })
+    badge_in(text, theme, Language::English)
+}
+
+pub fn badge_in(
+    text: impl Into<SharedString>,
+    _theme: Theme,
+    language: Language,
+) -> impl IntoElement {
+    label_box(text, BLACK, WHITE, language)
 }
 
 pub fn tag(text: impl Into<SharedString>) -> impl IntoElement {
+    tag_in(text, Language::English)
+}
+
+pub fn tag_in(text: impl Into<SharedString>, language: Language) -> impl IntoElement {
+    label_box(text, GRAY_1, BLACK, language)
+}
+
+fn label_box(
+    text: impl Into<SharedString>,
+    face: u32,
+    ink: u32,
+    language: Language,
+) -> impl IntoElement {
     let text = text.into();
-    let width = Font::Small.measure(&text) + 14;
-    drawing(width as f32, 16., move |pen, _, _| {
-        pen.round_frame(
-            Rect {
-                x: 0,
-                y: 0,
-                width,
-                height: 16,
-            },
-            2,
-            GRAY_7,
-            Some(GRAY_1),
-        );
-        pen.text_centered(&text, Font::Small, BLACK);
+    let width = (Font::Small.measure_in(&text, language) + 8).max(14);
+    drawing(width as f32, 14., move |pen, _, _| {
+        pen.language = language;
+        pen.rect(0, 0, width, 14, face);
+        pen.frame(0, 0, width, 14, BLACK);
+        pen.text_centered(&text, Font::Small, ink);
     })
 }
 
 pub fn image_well(width: i32, height: i32) -> impl IntoElement {
-    drawing(width as f32, height as f32, move |pen, _, _| {
-        pen.sunken();
-        pen.rect(2, 2, width - 4, height - 4, GRAY_3);
-        for y in (3..height - 3).step_by(4) {
-            for x in (3..width - 3).step_by(4) {
-                pen.dot(x, y, GRAY_5);
-            }
-        }
-    })
+    drawing(width as f32, height as f32, |pen, _, _| pen.sunken())
 }
 
 pub fn balloon(text: impl Into<SharedString>, width: i32) -> impl IntoElement {
+    balloon_in(text, width, Language::English)
+}
+
+pub fn balloon_in(
+    text: impl Into<SharedString>,
+    width: i32,
+    language: Language,
+) -> impl IntoElement {
     let text = text.into();
-    let lines = wrap(&text, Font::Small, width - 20);
-    let height = lines.len() as i32 * 14 + 28;
+    let lines = wrap_in(&text, Font::Small, width - 20, language);
+    let height = lines.len() as i32 * 14 + 20;
     drawing(width as f32, height as f32, move |pen, _, _| {
+        pen.language = language;
+        pen.round_frame(
+            Rect {
+                x: 1,
+                y: 9,
+                width: width - 1,
+                height: height - 9,
+            },
+            4,
+            GRAY_6,
+            Some(GRAY_6),
+        );
         pen.round_frame(
             Rect {
                 x: 0,
-                y: 0,
-                width: width - 2,
-                height: height - 10,
+                y: 8,
+                width: width - 1,
+                height: height - 9,
             },
             4,
             BLACK,
             Some(WHITE),
         );
-        for i in 0..9 {
-            pen.hline(12, height - 11 + i, 10 - i, WHITE);
-            pen.dot(12, height - 11 + i, BLACK);
-            pen.dot(22 - i, height - 11 + i, BLACK);
+        for y in 0..8 {
+            pen.hline(13, y, y, WHITE);
+            pen.dot(12, y, BLACK);
+            pen.dot(13 + y, y, BLACK);
         }
+        pen.hline(13, 8, 8, WHITE);
         for (index, line) in lines.iter().enumerate() {
-            pen.text(10, 17 + index as i32 * 14, line, Font::Small, BLACK);
+            pen.text(10, 23 + index as i32 * 14, line, Font::Small, BLACK);
         }
     })
 }
 
+#[track_caller]
 pub fn card(title: impl Into<SharedString>, width: i32) -> Div {
+    card_in(title, width, Language::English)
+}
+
+#[track_caller]
+pub fn card_in(title: impl Into<SharedString>, width: i32, language: Language) -> Div {
     div()
         .w(px(width as f32))
         .p(px(12.))
@@ -145,13 +219,24 @@ pub fn card(title: impl Into<SharedString>, width: i32) -> Div {
         .flex()
         .flex_col()
         .gap(px(8.))
-        .child(crate::label(title))
+        .child(crate::label_in(title, language))
 }
 
+#[track_caller]
 pub fn empty_state(
     title: impl Into<SharedString>,
     body: impl Into<SharedString>,
     width: i32,
+) -> impl IntoElement {
+    empty_state_in(title, body, width, Language::English)
+}
+
+#[track_caller]
+pub fn empty_state_in(
+    title: impl Into<SharedString>,
+    body: impl Into<SharedString>,
+    width: i32,
+    language: Language,
 ) -> impl IntoElement {
     let title = title.into();
     div()
@@ -161,26 +246,36 @@ pub fn empty_state(
         .flex_col()
         .items_center()
         .gap(px(10.))
-        .child(crate::label(title))
-        .child(paragraph(body, Font::Small, width - 32))
+        .child(crate::label_in(title, language))
+        .child(paragraph_in(body, Font::Small, width - 32, language))
 }
 
 pub fn status_bar(
     parts: impl IntoIterator<Item = impl Into<SharedString>>,
     width: i32,
 ) -> impl IntoElement {
+    status_bar_in(parts, width, Language::English)
+}
+
+pub fn status_bar_in(
+    parts: impl IntoIterator<Item = impl Into<SharedString>>,
+    width: i32,
+    language: Language,
+) -> impl IntoElement {
     let parts: Vec<SharedString> = parts.into_iter().map(Into::into).collect();
-    drawing(width as f32, 20., move |pen, _, _| {
-        pen.rect(0, 0, width, 20, GRAY_2);
-        pen.hline(0, 0, width, WHITE);
-        let section = width / parts.len().max(1) as i32;
+    drawing(width as f32, 16., move |pen, _, _| {
+        pen.language = language;
+        let mut x = 0;
         for (index, part) in parts.iter().enumerate() {
-            let x = index as i32 * section;
-            if index > 0 {
-                pen.vline(x, 3, 14, GRAY_7);
-                pen.vline(x + 1, 3, 14, WHITE);
-            }
-            pen.text(x + 6, 14, part, Font::Small, BLACK);
+            let section = if index + 1 == parts.len() {
+                width - x
+            } else {
+                Font::Small.measure_in(part, language) + 12
+            };
+            pen.rect(x, 0, section, 16, GRAY_2);
+            pen.bevel(x, 0, section, 16, WHITE, GRAY_7);
+            pen.text(x + 6, 12, part, Font::Small, BLACK);
+            x += section;
         }
     })
 }
@@ -195,21 +290,8 @@ pub fn indeterminate_progress(width: i32, theme: Theme) -> impl IntoElement {
         |_, _, _| (),
         move |bounds, _, window, _| {
             let mut pen = Pen::new(width, 14);
-            pen.sunken();
-            let phase = frame_number() as i32 % 12;
-            for x in 2..width - 2 {
-                for y in 2..12 {
-                    pen.dot(
-                        x,
-                        y,
-                        if (x + y + phase) % 12 < 6 {
-                            theme.accent.mid
-                        } else {
-                            theme.accent.light
-                        },
-                    );
-                }
-            }
+            let phase = frame_number() as i32;
+            crate::draw_progress_indeterminate(&mut pen, phase, theme.accent);
             pen.paint(bounds.origin, window);
             window.request_animation_frame();
         },
@@ -224,30 +306,7 @@ pub fn chasing_arrows() -> impl IntoElement {
         |_, _, _| (),
         move |bounds, _, window, _| {
             let mut pen = Pen::new(16, 16);
-            let points = [
-                (7, 1),
-                (11, 3),
-                (13, 7),
-                (11, 11),
-                (7, 13),
-                (3, 11),
-                (1, 7),
-                (3, 3),
-            ];
-            let phase = frame_number() % 8;
-            for (index, (x, y)) in points.into_iter().enumerate() {
-                pen.rect(
-                    x,
-                    y,
-                    3,
-                    3,
-                    if (index + phase) % 8 < 4 {
-                        BLACK
-                    } else {
-                        GRAY_7
-                    },
-                );
-            }
+            draw_chasing_arrows(&mut pen, frame_number() % 8);
             pen.paint(bounds.origin, window);
             window.request_animation_frame();
         },
@@ -255,6 +314,29 @@ pub fn chasing_arrows() -> impl IntoElement {
     .w(px(16.))
     .h(px(16.))
     .flex_shrink_0()
+}
+
+pub fn draw_chasing_arrows(pen: &mut Pen, step: usize) {
+    let turn = step as f64 / 8. * std::f64::consts::TAU;
+    for y in 0..16 {
+        for x in 0..16 {
+            let (dx, dy) = (x as f64 + 0.5 - 8., y as f64 + 0.5 - 8.);
+            let distance = dx.hypot(dy);
+            let angle = (dy.atan2(dx) - turn + 4. * std::f64::consts::PI)
+                .rem_euclid(std::f64::consts::TAU)
+                .rem_euclid(std::f64::consts::PI);
+            let ink = if angle < 0.55 {
+                false
+            } else if angle < 1.15 {
+                (distance - 5.5).abs() <= (angle - 0.55) / 0.6 * 3.2
+            } else {
+                (4.3..=6.7).contains(&distance)
+            };
+            if ink {
+                pen.dot(x, y, BLACK);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

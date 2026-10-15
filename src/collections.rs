@@ -2,7 +2,8 @@
 
 use std::{
     cmp::Ordering,
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
+    rc::Rc,
     time::{Duration, Instant},
 };
 
@@ -323,17 +324,53 @@ pub enum TableEvent {
     Activated(usize),
 }
 
+struct TableColumns {
+    headers: Vec<String>,
+    widths: Vec<i32>,
+    sort: Option<(usize, bool)>,
+    resizing: Option<(usize, i32, i32)>,
+}
+
+impl TableColumns {
+    fn new(headers: Vec<String>) -> Self {
+        Self {
+            widths: vec![120; headers.len()],
+            headers,
+            sort: None,
+            resizing: None,
+        }
+    }
+
+    /// Keeps every header and its interactive column geometry in step.
+    /// Returns true when a removed sort column requires restoring row order.
+    fn set_headers(&mut self, headers: Vec<String>, content_width: i32) -> bool {
+        let mut reset_order = false;
+        if headers.len() != self.headers.len() {
+            self.widths.resize(headers.len(), 120);
+            if !self.widths.is_empty() {
+                let width = (content_width / self.widths.len() as i32).max(30);
+                self.widths.fill(width);
+            }
+            self.resizing = None;
+            if self.sort.is_some_and(|(column, _)| column >= headers.len()) {
+                self.sort = None;
+                reset_order = true;
+            }
+        }
+        self.headers = headers;
+        reset_order
+    }
+}
+
 pub struct Table {
     focus: FocusHandle,
-    headers: Vec<String>,
+    columns: TableColumns,
     rows: Vec<Vec<String>>,
     order: Vec<usize>,
-    widths: Vec<i32>,
+    comparators: BTreeMap<usize, RowComparator>,
     selected: Option<usize>,
     selection: BTreeSet<usize>,
     anchor: Option<usize>,
-    sort: Option<(usize, bool)>,
-    resizing: Option<(usize, i32, i32)>,
     viewport: Viewport,
     theme: Theme,
     language: Language,
@@ -342,20 +379,20 @@ pub struct Table {
 
 impl EventEmitter<TableEvent> for Table {}
 
+type RowComparator = Rc<dyn Fn(usize, usize) -> Ordering>;
+
 impl Table {
     pub fn new(headers: Vec<String>, rows: Vec<Vec<String>>, cx: &mut Context<Self>) -> Self {
         let width = (headers.len().max(1) as i32 * 120 + 20).max(200);
         Self {
             focus: cx.focus_handle().tab_stop(true),
-            widths: vec![120; headers.len()],
-            headers,
+            columns: TableColumns::new(headers),
             order: (0..rows.len()).collect(),
+            comparators: BTreeMap::new(),
             rows,
             selected: None,
             selection: BTreeSet::new(),
             anchor: None,
-            sort: None,
-            resizing: None,
             viewport: Viewport::new(width, 120, HEADER_HEIGHT),
             theme: Theme::default(),
             language: Language::English,
@@ -366,9 +403,10 @@ impl Table {
     pub fn size(mut self, width: i32, height: i32) -> Self {
         self.viewport.width = width.max(80);
         self.viewport.height = height.max(58);
-        if !self.widths.is_empty() {
-            let columns = self.widths.len() as i32;
-            self.widths
+        if !self.columns.widths.is_empty() {
+            let columns = self.columns.widths.len() as i32;
+            self.columns
+                .widths
                 .fill(((self.viewport.content_width() - 2) / columns).max(30));
         }
         self
@@ -391,6 +429,22 @@ impl Table {
     pub fn selected_rows(&self) -> &BTreeSet<usize> {
         &self.selection
     }
+    pub fn set_size(&mut self, width: i32, height: i32, cx: &mut Context<Self>) {
+        self.viewport.width = width.max(80);
+        self.viewport.height = height.max(40);
+        self.viewport.clamp(self.rows.len());
+        cx.notify();
+    }
+    pub fn set_headers(&mut self, headers: Vec<String>, cx: &mut Context<Self>) {
+        self.comparators.retain(|column, _| *column < headers.len());
+        if self
+            .columns
+            .set_headers(headers, self.viewport.content_width() - 2)
+        {
+            self.order = (0..self.rows.len()).collect();
+        }
+        cx.notify();
+    }
     pub fn rows(&self) -> &[Vec<String>] {
         &self.rows
     }
@@ -404,6 +458,7 @@ impl Table {
     }
     pub fn set_rows(&mut self, rows: Vec<Vec<String>>, cx: &mut Context<Self>) {
         self.rows = rows;
+        self.comparators.clear();
         self.order = (0..self.rows.len()).collect();
         self.selection.retain(|index| *index < self.rows.len());
         if self.selected.is_some_and(|index| index >= self.rows.len()) {
@@ -457,28 +512,40 @@ impl Table {
     }
 
     pub fn sort_by(&mut self, column: usize, descending: bool, cx: &mut Context<Self>) {
-        if column >= self.headers.len() {
+        if column >= self.columns.headers.len() {
             return;
         }
-        self.sort = Some((column, descending));
+        self.columns.sort = Some((column, descending));
         self.apply_sort();
         cx.notify();
     }
 
+    /// Sorts a display column using its underlying row values. Set this after
+    /// replacing rows, which clears comparators for the previous data set.
+    pub fn set_column_comparator(
+        &mut self,
+        column: usize,
+        compare: impl Fn(usize, usize) -> Ordering + 'static,
+        cx: &mut Context<Self>,
+    ) {
+        if column < self.columns.headers.len() {
+            self.comparators.insert(column, Rc::new(compare));
+            self.apply_sort();
+            cx.notify();
+        }
+    }
+
     fn apply_sort(&mut self) {
-        if let Some((column, descending)) = self.sort {
-            self.order.sort_by(|left, right| {
-                let left = self.rows[*left]
-                    .get(column)
-                    .map(String::as_str)
-                    .unwrap_or("");
-                let right = self.rows[*right]
-                    .get(column)
-                    .map(String::as_str)
-                    .unwrap_or("");
-                let order = compare_cells(left, right);
-                if descending { order.reverse() } else { order }
-            });
+        if let Some((column, descending)) = self.columns.sort {
+            sort_rows(
+                &mut self.order,
+                &self.rows,
+                column,
+                descending,
+                self.comparators
+                    .get(&column)
+                    .map(|compare| compare.as_ref()),
+            );
         }
     }
 
@@ -531,13 +598,14 @@ impl Table {
         };
         if y < HEADER_HEIGHT + 2 {
             let mut left = 2;
-            for (column, width) in self.widths.iter().enumerate() {
+            for (column, width) in self.columns.widths.iter().enumerate() {
                 if (x - left - width).abs() <= 3 {
-                    self.resizing = Some((column, x, *width));
+                    self.columns.resizing = Some((column, x, *width));
                     return;
                 }
                 if x >= left && x < left + width {
                     let descending = self
+                        .columns
                         .sort
                         .is_some_and(|(sorted, descending)| sorted == column && !descending);
                     self.sort_by(column, descending, cx);
@@ -574,12 +642,15 @@ impl Table {
             let y = 2 + HEADER_HEIGHT + visible as i32 * ROW_HEIGHT;
             let selected = self.selection.contains(row);
             let mut x = 2;
-            for (column, width) in self.widths.iter().enumerate() {
+            for (column, width) in self.columns.widths.iter().enumerate() {
                 let width = (*width).min(self.viewport.content_width() - x).max(0);
                 if width == 0 {
                     break;
                 }
-                let sorted = self.sort.is_some_and(|(sorted, _)| sorted == column);
+                let sorted = self
+                    .columns
+                    .sort
+                    .is_some_and(|(sorted, _)| sorted == column);
                 let face = if selected {
                     if focused {
                         self.theme.accent.dark
@@ -615,12 +686,12 @@ impl Table {
             }
         }
         let mut x = 2;
-        for (column, width) in self.widths.iter().enumerate() {
+        for (column, width) in self.columns.widths.iter().enumerate() {
             let width = (*width).min(self.viewport.content_width() - x).max(0);
             if width == 0 {
                 break;
             }
-            let sorted = self.sort.filter(|(sorted, _)| *sorted == column);
+            let sorted = self.columns.sort.filter(|(sorted, _)| *sorted == column);
             pen.rect(
                 x,
                 2,
@@ -631,7 +702,7 @@ impl Table {
             pen.bevel(x, 2, width, HEADER_HEIGHT - 1, WHITE, GRAY_7);
             pen.hline(x, HEADER_HEIGHT + 1, width, BLACK);
             let title = elide(
-                &self.headers[column],
+                &self.columns.headers[column],
                 width - if sorted.is_some() { 22 } else { 10 },
                 self.language,
             );
@@ -666,12 +737,13 @@ impl Render for Table {
         let paint = cx.entity();
         let mut x = 2;
         let headers = self
+            .columns
             .headers
             .iter()
             .enumerate()
             .map(|(column, title)| {
                 let left = x;
-                x += self.widths[column];
+                x += self.columns.widths[column];
                 div()
                     .id(("header", column))
                     .role(Role::ColumnHeader)
@@ -679,7 +751,7 @@ impl Render for Table {
                     .absolute()
                     .left(px(left as f32))
                     .top(px(2.))
-                    .w(px(self.widths[column] as f32))
+                    .w(px(self.columns.widths[column] as f32))
                     .h(px(HEADER_HEIGHT as f32))
             })
             .collect::<Vec<_>>();
@@ -719,9 +791,9 @@ impl Render for Table {
                 if !event.dragging() {
                     return;
                 }
-                if let Some((column, start, width)) = this.resizing {
+                if let Some((column, start, width)) = this.columns.resizing {
                     if let Some((x, _)) = this.viewport.local(event.position) {
-                        this.widths[column] = (width + x - start).max(30);
+                        this.columns.widths[column] = (width + x - start).max(30);
                         cx.notify();
                     }
                 } else if this.viewport.drag_scroll(event.position, this.rows.len()) {
@@ -731,14 +803,14 @@ impl Render for Table {
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(|this, _, _, _| {
-                    this.resizing = None;
+                    this.columns.resizing = None;
                     this.viewport.drag = None;
                 }),
             )
             .on_mouse_up_out(
                 MouseButton::Left,
                 cx.listener(|this, _, _, _| {
-                    this.resizing = None;
+                    this.columns.resizing = None;
                     this.viewport.drag = None;
                 }),
             )
@@ -978,6 +1050,25 @@ fn elide(text: &str, width: i32, language: Language) -> String {
     text
 }
 
+fn sort_rows(
+    order: &mut [usize],
+    rows: &[Vec<String>],
+    column: usize,
+    descending: bool,
+    compare: Option<&dyn Fn(usize, usize) -> Ordering>,
+) {
+    order.sort_by(|left, right| {
+        let order = if let Some(compare) = compare {
+            compare(*left, *right)
+        } else {
+            let left = rows[*left].get(column).map(String::as_str).unwrap_or("");
+            let right = rows[*right].get(column).map(String::as_str).unwrap_or("");
+            compare_cells(left, right)
+        };
+        if descending { order.reverse() } else { order }
+    });
+}
+
 fn compare_cells(left: &str, right: &str) -> Ordering {
     match (left.trim().parse::<f64>(), right.trim().parse::<f64>()) {
         (Ok(left), Ok(right)) if left.is_finite() && right.is_finite() => left.total_cmp(&right),
@@ -988,6 +1079,45 @@ fn compare_cells(left: &str, right: &str) -> Ordering {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn display_size_columns_sort_by_bytes_with_folders_after_documents() {
+        let rows = vec![
+            vec!["1 MB".into()],
+            vec!["900K".into()],
+            vec!["—".into()],
+            vec!["84 bytes".into()],
+        ];
+        let values = [(false, 1 << 20), (false, 900 << 10), (true, 0), (false, 84)];
+        let compare = |left: usize, right: usize| values[left].cmp(&values[right]);
+        let mut order = vec![0, 1, 2, 3];
+        sort_rows(&mut order, &rows, 0, false, Some(&compare));
+        assert_eq!(order, [3, 1, 0, 2]);
+        sort_rows(&mut order, &rows, 0, true, Some(&compare));
+        assert_eq!(order, [2, 0, 1, 3]);
+    }
+    #[test]
+    fn replacing_headers_keeps_column_geometry_and_interaction_valid() {
+        let mut columns = TableColumns::new(vec!["Name".into(), "Size".into(), "Kind".into()]);
+        columns.sort = Some((2, true));
+        columns.resizing = Some((2, 30, 120));
+        assert!(columns.set_headers(vec!["Name".into(), "Size".into()], 300));
+        assert_eq!(columns.headers.len(), columns.widths.len());
+        assert_eq!(columns.widths, [150, 150]);
+        assert_eq!(columns.sort, None);
+        assert_eq!(columns.resizing, None);
+        for count in [0, 4, 1, 3] {
+            columns.set_headers((0..count).map(|index| index.to_string()).collect(), 300);
+            assert_eq!(columns.headers.len(), columns.widths.len());
+            for index in 0..columns.headers.len() {
+                assert!(columns.widths[index] >= 30);
+            }
+        }
+        columns.widths[0] = 77;
+        columns.sort = Some((0, false));
+        assert!(!columns.set_headers(vec!["名称".into(), "大小".into(), "类型".into()], 300));
+        assert_eq!(columns.widths[0], 77);
+        assert_eq!(columns.sort, Some((0, false)));
+    }
     #[test]
     fn numeric_columns_sort_by_value_and_other_cells_by_text() {
         assert_eq!(compare_cells("10", "2"), Ordering::Greater);

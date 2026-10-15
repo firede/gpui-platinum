@@ -1,7 +1,7 @@
 //! Pop-up menus with keyboard selection and a floating menu surface.
 
 use crate::{
-    Font, Theme,
+    Font, Language, Theme,
     paint::{Rect, drawing},
     theme::*,
 };
@@ -12,6 +12,9 @@ pub struct MenuItem {
     pub title: SharedString,
     pub disabled: bool,
     pub separator: bool,
+    pub checked: bool,
+    pub key: Option<SharedString>,
+    pub submenu: Vec<MenuItem>,
 }
 
 impl MenuItem {
@@ -20,6 +23,9 @@ impl MenuItem {
             title: title.into(),
             disabled: false,
             separator: false,
+            checked: false,
+            key: None,
+            submenu: Vec::new(),
         }
     }
     pub fn disabled(mut self, disabled: bool) -> Self {
@@ -28,10 +34,22 @@ impl MenuItem {
     }
     pub fn separator() -> Self {
         Self {
-            title: "".into(),
             disabled: true,
             separator: true,
+            ..Self::new("")
         }
+    }
+    pub fn checked(mut self, checked: bool) -> Self {
+        self.checked = checked;
+        self
+    }
+    pub fn shortcut(mut self, key: impl Into<SharedString>) -> Self {
+        self.key = Some(key.into());
+        self
+    }
+    pub fn submenu(mut self, items: Vec<MenuItem>) -> Self {
+        self.submenu = items;
+        self
     }
 }
 
@@ -48,12 +66,14 @@ pub struct PopupMenu {
     focus: FocusHandle,
     items: Vec<MenuItem>,
     selected: usize,
+    has_selection: bool,
     highlighted: Option<usize>,
     open: bool,
     disabled: bool,
     width: i32,
     label: SharedString,
     theme: Theme,
+    language: Language,
 }
 
 impl EventEmitter<MenuEvent> for PopupMenu {}
@@ -72,16 +92,19 @@ impl PopupMenu {
             focus: cx.focus_handle().tab_stop(true),
             items: items.into_iter().map(Into::into).collect(),
             selected: 0,
+            has_selection: true,
             highlighted: None,
             open: false,
             disabled: false,
             width: 180,
             label: "Pop-up menu".into(),
             theme: Theme::default(),
+            language: Language::English,
         }
     }
     pub fn selected(mut self, selected: usize) -> Self {
         self.selected = selected.min(self.items.len().saturating_sub(1));
+        self.has_selection = true;
         self
     }
     pub fn width(mut self, width: i32) -> Self {
@@ -96,12 +119,34 @@ impl PopupMenu {
         self.disabled = disabled;
         self
     }
+    pub fn language(mut self, language: Language) -> Self {
+        self.language = language;
+        self
+    }
+    pub fn set_language(&mut self, language: Language, cx: &mut Context<Self>) {
+        self.language = language;
+        cx.notify();
+    }
     pub fn theme(mut self, theme: Theme) -> Self {
         self.theme = theme;
         self
     }
     pub fn selection(&self) -> usize {
         self.selected
+    }
+    pub fn set_selection(&mut self, selected: usize, cx: &mut Context<Self>) {
+        self.selected = selected.min(self.items.len().saturating_sub(1));
+        self.has_selection = true;
+        cx.notify();
+    }
+    /// Shows the menu label and no checked item until another item is selected.
+    pub fn clear_selection(&mut self, cx: &mut Context<Self>) {
+        self.has_selection = false;
+        cx.notify();
+    }
+    pub fn set_label(&mut self, label: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.label = label.into();
+        cx.notify();
     }
     pub fn is_open(&self) -> bool {
         self.open
@@ -125,6 +170,7 @@ impl PopupMenu {
             return;
         }
         self.selected = selected;
+        self.has_selection = true;
         self.open = false;
         self.highlighted = None;
         cx.emit(MenuEvent(selected));
@@ -184,14 +230,18 @@ impl PopupMenu {
 impl Render for PopupMenu {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let width = self.width;
-        let current = self
-            .items
-            .get(self.selected)
-            .map(|item| item.title.clone())
-            .unwrap_or_default();
+        let current = if self.has_selection {
+            self.items
+                .get(self.selected)
+                .map(|item| item.title.clone())
+                .unwrap_or_default()
+        } else {
+            self.label.clone()
+        };
         let disabled = self.disabled;
         let accent = self.theme.accent;
         let open = self.open;
+        let language = self.language;
         let mut root = div()
             .id("popup")
             .role(Role::ComboBox)
@@ -222,6 +272,7 @@ impl Render for PopupMenu {
                 }),
             )
             .child(drawing(width as f32, 20., move |pen, _, _| {
+                pen.language = language;
                 pen.round_frame(
                     Rect {
                         x: 0,
@@ -270,7 +321,7 @@ impl Render for PopupMenu {
                     let title = item.title.clone();
                     let disabled = item.disabled;
                     let separator = item.separator;
-                    let selected = index == self.selected;
+                    let selected = self.has_selection && index == self.selected;
                     let highlighted = self.highlighted == Some(index) && !disabled;
                     div()
                         .id(index)
@@ -296,6 +347,7 @@ impl Render for PopupMenu {
                             (width - 4) as f32,
                             if separator { 6. } else { 20. },
                             move |pen, _, _| {
+                                pen.language = language;
                                 if separator {
                                     pen.hline(2, 2, pen.width - 4, GRAY_7);
                                     pen.hline(2, 3, pen.width - 4, WHITE);

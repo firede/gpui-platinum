@@ -192,6 +192,9 @@ pub struct TextField {
     placeholder: SharedString,
     label: SharedString,
     multiline: bool,
+    document_left: f32,
+    document_width: Option<f32>,
+    first_indent: f32,
     password: bool,
     disabled: bool,
     read_only: bool,
@@ -239,6 +242,9 @@ impl TextField {
             placeholder: "".into(),
             label: "".into(),
             multiline: false,
+            document_left: INSET,
+            document_width: None,
+            first_indent: 0.,
             password: false,
             disabled: false,
             read_only: false,
@@ -333,6 +339,22 @@ impl TextField {
         self.buffer.selection()
     }
 
+    /// Replace UTF-8 ranges while preserving the editor's styles and undo history.
+    pub fn replace_ranges(
+        &mut self,
+        ranges: &[Range<usize>],
+        text: &str,
+        cx: &mut Context<Self>,
+    ) -> usize {
+        if self.disabled || self.read_only {
+            return 0;
+        }
+        let text = self.normalize_text(text);
+        let count = self.buffer.replace_many(ranges, &text);
+        self.changed(count > 0, cx);
+        count
+    }
+
     pub fn select(&mut self, anchor: usize, caret: usize, cx: &mut Context<Self>) {
         self.buffer.select(anchor, false);
         self.buffer.select(caret, true);
@@ -353,6 +375,23 @@ impl TextField {
             },
             |rich| rich.runs(&self.buffer.text),
         )
+    }
+
+    pub fn alignments(&self) -> Vec<Alignment> {
+        self.buffer
+            .rich
+            .as_ref()
+            .map(|rich| rich.alignments.clone())
+            .unwrap_or_default()
+    }
+
+    /// Restore paragraph alignments when loading a styled document.
+    pub fn set_alignments(&mut self, alignments: &[Alignment], cx: &mut Context<Self>) {
+        if let Some(rich) = &mut self.buffer.rich {
+            rich.alignments = alignments.to_vec();
+            rich.resize(&self.buffer.text);
+            self.activity(cx);
+        }
     }
 
     pub fn set_runs(&mut self, runs: &[Run], cx: &mut Context<Self>) {
@@ -382,6 +421,21 @@ impl TextField {
         }
         self.buffer.set_alignment(alignment);
         self.changed(true, cx);
+    }
+
+    /// Set document margins and the first-line indent, in bitmap pixels.
+    /// A zero wrap width lets the text fill its viewport.
+    pub fn set_document_layout(
+        &mut self,
+        left: f32,
+        width: f32,
+        first: f32,
+        cx: &mut Context<Self>,
+    ) {
+        self.document_left = left.max(0.);
+        self.document_width = (width > 0.).then_some(width.max(24.));
+        self.first_indent = first.max(0.);
+        self.activity(cx);
     }
 
     pub fn set_size(&mut self, width: f32, height: f32, cx: &mut Context<Self>) {
@@ -651,7 +705,7 @@ impl TextField {
         let y = f32::from(position.y - bounds.top()) - self.text_top(f32::from(bounds.size.height))
             + self.scroll_y;
         let row = self.lines.iter().rposition(|line| line.y <= y).unwrap_or(0);
-        let x = f32::from(position.x - bounds.left()) - INSET + self.scroll_x;
+        let x = f32::from(position.x - bounds.left()) - self.document_left + self.scroll_x;
         (row, self.lines[row].index_at(x))
     }
 
@@ -755,14 +809,17 @@ impl TextField {
     fn layout(&mut self, bounds: Bounds<Pixels>) {
         self.bounds = Some(bounds);
         let width = f32::from(bounds.size.width)
-            - INSET * 2.
+            - self.document_left
+            - INSET
             - if self.multiline { SCROLLBAR_WIDTH } else { 0. };
-        self.lines = layout_styled_lines(
+        self.lines = layout_document_lines(
             &self.buffer.text,
             self.language,
             self.password,
-            self.multiline.then_some(width),
+            self.multiline
+                .then_some(self.document_width.unwrap_or(width).min(width).max(1.)),
             self.buffer.rich.as_ref(),
+            self.first_indent,
         );
         self.scroll_y = self.scroll_y.clamp(0., self.max_scroll());
         if self.reveal_caret {
@@ -804,7 +861,7 @@ impl TextField {
         let right = line.x_at(range.end.min(line.end));
         Some(Bounds::new(
             point(
-                bounds.left() + px(INSET + left - self.scroll_x),
+                bounds.left() + px(self.document_left + left - self.scroll_x),
                 bounds.top()
                     + px(self.text_top(f32::from(bounds.size.height)) + line.y - self.scroll_y),
             ),
@@ -847,6 +904,24 @@ impl EntityInputHandler for TextField {
             range: self.buffer.utf16_range(self.buffer.selection()),
             reversed: self.buffer.caret < self.buffer.anchor,
         })
+    }
+
+    fn set_selected_text_range(
+        &mut self,
+        range: Range<usize>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let range = self.buffer.byte_range(range);
+        self.select(range.start, range.end, cx);
+    }
+
+    fn text_length_utf16(&mut self, _: &mut Window, _: &mut Context<Self>) -> Option<usize> {
+        Some(self.buffer.text.encode_utf16().count())
+    }
+
+    fn accepts_text_input(&self, _: &mut Window, _: &mut Context<Self>) -> bool {
+        !self.disabled && !self.read_only
     }
 
     fn marked_text_range(&self, _: &mut Window, _: &mut Context<Self>) -> Option<Range<usize>> {
@@ -903,10 +978,12 @@ impl EntityInputHandler for TextField {
     fn bounds_for_range(
         &mut self,
         range: Range<usize>,
-        _: Bounds<Pixels>,
+        element_bounds: Bounds<Pixels>,
         _: &mut Window,
         _: &mut Context<Self>,
     ) -> Option<Bounds<Pixels>> {
+        // The input method can ask before the next paint after changing marked text.
+        self.layout(element_bounds);
         self.range_bounds(self.buffer.byte_range(range))
     }
 
@@ -916,7 +993,7 @@ impl EntityInputHandler for TextField {
         _: &mut Window,
         _: &mut Context<Self>,
     ) -> Option<usize> {
-        self.bounds?;
+        self.layout(self.bounds?);
         let index = self.index_at(point);
         Some(self.buffer.utf16_range(index..index).start)
     }
@@ -1000,7 +1077,7 @@ impl TextField {
             if y + (line.height as i32) < 2 || y >= height - 2 {
                 continue;
             }
-            let left = (INSET - self.scroll_x).round() as i32;
+            let left = (self.document_left - self.scroll_x).round() as i32;
             if !selection.is_empty() && selection.start <= line.end && selection.end > line.start {
                 let x = line.x_at(selection.start.max(line.start));
                 let right = if selection.end > line.end {
@@ -1059,7 +1136,7 @@ impl TextField {
         if self.buffer.text.is_empty() && !self.placeholder.is_empty() {
             paint_text(
                 &mut text,
-                INSET as i32,
+                self.document_left as i32,
                 top as i32 + Font::Small.ascent(),
                 &self.placeholder,
                 self.language,
@@ -1069,7 +1146,7 @@ impl TextField {
         if self.focused && !self.disabled && self.blink_on && selection.is_empty() {
             let (row, x) = self.cursor_position();
             text.vline(
-                (INSET + x - self.scroll_x).round() as i32,
+                (self.document_left + x - self.scroll_x).round() as i32,
                 (top + self.lines[row].y - self.scroll_y - 1.).round() as i32,
                 self.lines[row].height as i32,
                 BLACK,
@@ -1156,6 +1233,7 @@ fn layout_lines(text: &str, language: Language, password: bool, wrap: Option<f32
     layout_styled_lines(text, language, password, wrap, None)
 }
 
+#[cfg(test)]
 fn layout_styled_lines(
     text: &str,
     language: Language,
@@ -1163,8 +1241,21 @@ fn layout_styled_lines(
     wrap: Option<f32>,
     rich: Option<&RichFormat>,
 ) -> Vec<Line> {
+    layout_document_lines(text, language, password, wrap, rich, 0.)
+}
+
+fn layout_document_lines(
+    text: &str,
+    language: Language,
+    password: bool,
+    wrap: Option<f32>,
+    rich: Option<&RichFormat>,
+    first_indent: f32,
+) -> Vec<Line> {
+    let first_indent = first_indent.min((wrap.unwrap_or(f32::MAX) - 1.).max(0.));
     let mut lines = Vec::new();
     let mut line = Line::new(0);
+    line.offset_x = first_indent;
     let mut character = 0;
     let mut paragraph = 0;
     for (start, grapheme) in text.grapheme_indices(true) {
@@ -1177,6 +1268,7 @@ fn layout_styled_lines(
             line.end = start;
             lines.push(line);
             line = Line::new(start + grapheme.len());
+            line.offset_x = first_indent;
             paragraph += 1;
             line.paragraph = paragraph;
             continue;
@@ -1204,7 +1296,7 @@ fn layout_styled_lines(
                 .cells
                 .last()
                 .is_some_and(|cell| !text[cell.range.clone()].chars().all(char::is_whitespace));
-        if wrap.is_some_and(|wrap| line.width + width > wrap)
+        if wrap.is_some_and(|wrap| line.offset_x + line.width + width > wrap)
             && !line.cells.is_empty()
             && !trailing_space
         {
@@ -1261,8 +1353,8 @@ fn layout_styled_lines(
                 ((LINE_HEIGHT - (above + below) as f32) / 2.).floor() + above as f32 * scale;
         }
         let alignment = rich.map_or(Alignment::Left, |rich| rich.alignments[line.paragraph]);
-        let spare = (wrap.unwrap_or(line.width) - line.width).max(0.);
-        line.offset_x = match alignment {
+        let spare = (wrap.unwrap_or(line.width) - line.offset_x - line.width).max(0.);
+        line.offset_x += match alignment {
             Alignment::Left => 0.,
             Alignment::Center => (spare / 2.).floor(),
             Alignment::Right => spare,
@@ -1446,6 +1538,27 @@ impl Render for TextField {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn first_line_indentation_wraps_and_hit_tests_in_document_coordinates() {
+        let text = "one two three\none two";
+        let width = Font::Small.measure("one two") as f32 + 1.;
+        let lines = layout_document_lines(text, Language::English, false, Some(width), None, 16.);
+        assert_eq!(lines[0].offset_x, 16.);
+        assert_eq!(&text[lines[0].start..lines[0].end], "one ");
+        assert_eq!(lines[1].offset_x, 0.);
+        assert_eq!(
+            lines
+                .iter()
+                .find(|line| line.paragraph == 1)
+                .unwrap()
+                .offset_x,
+            16.
+        );
+        for line in &lines {
+            assert_eq!(line.index_at(line.x_at(line.start)), line.start);
+        }
+    }
 
     #[test]
     fn wrapping_keeps_words_together_and_indices_in_the_original_text() {

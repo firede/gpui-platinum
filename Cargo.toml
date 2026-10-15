@@ -9,6 +9,11 @@ description = "Pixel-drawn Platinum controls for GPUI"
 gpui = { git = "https://github.com/longbridge/gpui-fast", rev = "9690cf8" }
 gpui_platform = { git = "https://github.com/longbridge/gpui-fast", rev = "9690cf8", features = ["runtime_shaders"] }
 unicode-segmentation = "1.12"
+serde_json = "1"
+
+[dev-dependencies]
+chrono = "0.4"
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [profile.dev]
 debug = 1

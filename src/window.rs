@@ -1,6 +1,6 @@
 //! Movable, resizable windows inside a Platinum desktop.
 
-use crate::{Font, Theme, paint::Pen, theme::*};
+use crate::{Font, Language, Theme, paint::Pen, theme::*};
 use gpui::{prelude::*, *};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -49,6 +49,7 @@ pub struct PlatinumWindow {
     pub state: WindowState,
     active: bool,
     theme: Theme,
+    language: Language,
     content: Option<AnyView>,
     drag: Option<Drag>,
     saved_size: Option<WindowState>,
@@ -64,6 +65,7 @@ impl PlatinumWindow {
             state: WindowState::default(),
             active: true,
             theme: Theme::default(),
+            language: Language::English,
             content: None,
             drag: None,
             saved_size: None,
@@ -93,6 +95,14 @@ impl PlatinumWindow {
     pub fn active(mut self, active: bool) -> Self {
         self.active = active;
         self
+    }
+    pub fn language(mut self, language: Language) -> Self {
+        self.language = language;
+        self
+    }
+    pub fn set_language(&mut self, language: Language, cx: &mut Context<Self>) {
+        self.language = language;
+        cx.notify();
     }
     pub fn theme(mut self, theme: Theme) -> Self {
         self.theme = theme;
@@ -168,11 +178,13 @@ impl Render for PlatinumWindow {
         let width = state.width;
         let height = if state.collapsed { 25. } else { state.height };
         let theme = self.theme;
+        let language = self.language;
         let entity = cx.entity().downgrade();
         let frame = canvas(
             |_, _, _| (),
             move |bounds, _, window, _cx| {
                 let mut pen = Pen::new(width as i32, height as i32);
+                pen.language = language;
                 let (w, h) = (pen.width, pen.height);
                 pen.raised(theme.background);
                 pen.frame(2, 2, w - 4, h - 4, GRAY_5);

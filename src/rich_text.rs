@@ -8,7 +8,7 @@ use gpui::{
 };
 
 use crate::{
-    Font, Language, Theme,
+    Font, Language, Menu, MenuEvent, MenuItem, PopupMenu, Theme,
     text_input::{InputEvent, TextField, text_buffer::TextBuffer},
 };
 
@@ -287,9 +287,132 @@ impl RichText {
     }
 }
 
+/// Creates the Size menu for a document's menu bar.
+pub fn size_menu(state: FormatState, language: Language) -> Menu {
+    Menu::new(
+        crate::tr(language, "size"),
+        size_items(state.scale, language),
+    )
+}
+
+fn size_items(scale: u8, language: Language) -> Vec<MenuItem> {
+    (1..=4)
+        .map(|item_scale| {
+            MenuItem::new(
+                crate::tr(language, "points").replace("{size}", &(11 * item_scale).to_string()),
+            )
+            .checked(scale == item_scale)
+        })
+        .collect()
+}
+
+/// A Size pop-up menu that applies its choice to a rich text editor.
+pub struct SizeMenu {
+    editor: Entity<TextField>,
+    menu: Entity<PopupMenu>,
+    scale: Option<u8>,
+    theme: Theme,
+    language: Language,
+    configure: bool,
+    focus_editor: bool,
+    _subscriptions: Vec<Subscription>,
+}
+
+impl SizeMenu {
+    pub fn new(editor: Entity<TextField>, cx: &mut Context<Self>) -> Self {
+        let menu = cx.new(|cx| {
+            PopupMenu::new(size_items(1, Language::English), cx)
+                .label(crate::tr(Language::English, "size"))
+                .width(94)
+        });
+        let observer = cx.observe(&editor, |_, _, cx| cx.notify());
+        let events = cx.subscribe(&menu, |this, _, event: &MenuEvent, cx| {
+            this.editor
+                .update(cx, |editor, cx| editor.set_scale(event.0 as u8 + 1, cx));
+            this.focus_editor = true;
+            cx.notify();
+        });
+        Self {
+            editor,
+            menu,
+            scale: None,
+            theme: Theme::default(),
+            language: Language::English,
+            configure: true,
+            focus_editor: false,
+            _subscriptions: vec![observer, events],
+        }
+    }
+
+    pub fn theme(mut self, theme: Theme) -> Self {
+        self.theme = theme;
+        self
+    }
+
+    pub fn language(mut self, language: Language) -> Self {
+        self.language = language;
+        self
+    }
+
+    pub fn is_open(&self, cx: &App) -> bool {
+        self.menu.read(cx).is_open()
+    }
+
+    pub fn set_theme(&mut self, theme: Theme, cx: &mut Context<Self>) {
+        self.theme = theme;
+        self.menu.update(cx, |menu, cx| menu.set_theme(theme, cx));
+        cx.notify();
+    }
+
+    pub fn set_language(&mut self, language: Language, cx: &mut Context<Self>) {
+        self.language = language;
+        self.configure = true;
+        cx.notify();
+    }
+}
+
+impl Focusable for SizeMenu {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.menu.read(cx).focus_handle(cx)
+    }
+}
+
+impl Render for SizeMenu {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let scale = self
+            .editor
+            .read(cx)
+            .format_state()
+            .map_or(1, |state| state.scale);
+        if self.configure || self.scale != Some(scale) {
+            self.menu.update(cx, |menu, cx| {
+                if self.configure {
+                    menu.set_items(size_items(scale, self.language), cx);
+                    menu.set_label(crate::tr(self.language, "size"), cx);
+                    menu.set_theme(self.theme, cx);
+                    menu.set_language(self.language, cx);
+                }
+                if scale == 0 {
+                    menu.clear_selection(cx);
+                } else {
+                    menu.set_selection(scale as usize - 1, cx);
+                }
+            });
+            self.scale = Some(scale);
+            self.configure = false;
+        }
+        if self.focus_editor {
+            self.focus_editor = false;
+            window.focus(&self.editor.read(cx).focus_handle(cx), cx);
+        }
+        self.menu.clone()
+    }
+}
+
 /// A format bar and a native rich text editor.
 pub struct RichTextArea {
     editor: Entity<TextField>,
+    size_menu: Entity<SizeMenu>,
     value: String,
     initial_text: Option<String>,
     initial_runs: Option<Vec<Run>>,
@@ -304,6 +427,7 @@ pub struct RichTextArea {
 impl RichTextArea {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let editor = cx.new(|cx| TextField::new(cx).multiline(true).rich().label("Document"));
+        let size_menu = cx.new(|cx| SizeMenu::new(editor.clone(), cx));
         let observer = cx.observe(&editor, |this, editor, cx| {
             this.value = editor.read(cx).value().to_owned();
             cx.notify();
@@ -314,6 +438,7 @@ impl RichTextArea {
         });
         Self {
             editor,
+            size_menu,
             value: String::new(),
             initial_text: None,
             initial_runs: None,
@@ -406,13 +531,26 @@ impl RichTextArea {
         self.theme = theme;
         self.editor
             .update(cx, |editor, cx| editor.set_theme(theme, cx));
+        self.size_menu
+            .update(cx, |menu, cx| menu.set_theme(theme, cx));
+        cx.notify();
+    }
+
+    pub fn set_size(&mut self, width: f32, height: f32, cx: &mut Context<Self>) {
+        self.width = width.max(288.);
+        self.height = height.max(80.);
+        self.configure = true;
         cx.notify();
     }
 
     pub fn set_language(&mut self, language: Language, cx: &mut Context<Self>) {
         self.language = language;
-        self.editor
-            .update(cx, |editor, cx| editor.set_language(language, cx));
+        self.editor.update(cx, |editor, cx| {
+            editor.set_language(language, cx);
+            editor.set_label(crate::locale::desk(language, "document"), cx);
+        });
+        self.size_menu
+            .update(cx, |menu, cx| menu.set_language(language, cx));
         cx.notify();
     }
 
@@ -445,6 +583,11 @@ impl Render for RichTextArea {
                 editor.set_size(self.width, self.height - 30., cx);
                 editor.set_theme(self.theme, cx);
                 editor.set_language(self.language, cx);
+                editor.set_label(crate::locale::desk(self.language, "document"), cx);
+            });
+            self.size_menu.update(cx, |menu, cx| {
+                menu.set_theme(self.theme, cx);
+                menu.set_language(self.language, cx);
             });
         }
         let state = self.format_state(cx);
@@ -455,11 +598,11 @@ impl Render for RichTextArea {
             .h(px(28.))
             .flex_shrink_0();
         for (attribute, label, enabled) in [
-            (StyleAttribute::Bold, "Bold", state.style.bold),
-            (StyleAttribute::Italic, "Italic", state.style.italic),
+            (StyleAttribute::Bold, "bold", state.style.bold),
+            (StyleAttribute::Italic, "italic", state.style.italic),
             (
                 StyleAttribute::Underline,
-                "Underline",
+                "underline",
                 state.style.underline,
             ),
         ] {
@@ -468,6 +611,7 @@ impl Render for RichTextArea {
                 FormatIcon::Style(attribute),
                 enabled,
                 self.theme,
+                self.language,
                 cx.listener(move |this, _, window, cx| {
                     this.toggle(attribute, cx);
                     this.focus_editor(window, cx);
@@ -482,15 +626,16 @@ impl Render for RichTextArea {
                 .border_color(rgb(crate::theme::GRAY_7)),
         );
         for (alignment, label) in [
-            (Alignment::Left, "Align Left"),
-            (Alignment::Center, "Align Center"),
-            (Alignment::Right, "Align Right"),
+            (Alignment::Left, "alignLeft"),
+            (Alignment::Center, "alignCenter"),
+            (Alignment::Right, "alignRight"),
         ] {
             bar = bar.child(format_button(
                 label,
                 FormatIcon::Align(alignment),
                 state.alignment == alignment,
                 self.theme,
+                self.language,
                 cx.listener(move |this, _, window, cx| {
                     this.set_alignment(alignment, cx);
                     this.focus_editor(window, cx);
@@ -504,22 +649,7 @@ impl Render for RichTextArea {
                 .border_l_1()
                 .border_color(rgb(crate::theme::GRAY_7)),
         );
-        for scale in 1..=4_u8 {
-            bar = bar.child(
-                crate::bevel_button(
-                    ("text-size", scale as usize),
-                    (scale as usize * 11).to_string(),
-                )
-                .width(28)
-                .height(24)
-                .selected(state.scale == scale)
-                .theme(self.theme)
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.set_scale(scale, cx);
-                    this.focus_editor(window, cx);
-                })),
-            );
-        }
+        bar = bar.child(self.size_menu.clone());
         div()
             .flex()
             .flex_col()
@@ -542,6 +672,7 @@ fn format_button(
     icon: FormatIcon,
     selected: bool,
     theme: Theme,
+    language: Language,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
     div()
@@ -550,7 +681,9 @@ fn format_button(
         .h(px(24.))
         .flex_shrink_0()
         .role(Role::Button)
-        .aria_label(label)
+        .aria_label(crate::tr(language, label))
+        .focusable()
+        .tab_stop(true)
         .aria_toggled(if selected {
             Toggled::True
         } else {

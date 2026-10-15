@@ -12,7 +12,7 @@ use crate::{
     Font, Language, Theme,
     paint::{Pen, drawing},
     theme::*,
-    widgets::{ControlKind, draw_control},
+    widgets::{ControlKind, draw_bevel_button, draw_control, draw_focus_circle},
 };
 
 /// A choice's label and availability.
@@ -86,8 +86,9 @@ impl Kind {
         }
     }
 
-    fn gap(self) -> i32 {
+    fn gap(self, vertical: bool) -> i32 {
         match self {
+            Self::Radio if !vertical => 14,
             Self::Radio => 2,
             Self::Tabs => 0,
             Self::Segments => -1,
@@ -224,11 +225,11 @@ impl ChoiceGroup {
         if self.vertical {
             (
                 *widths.iter().max().unwrap_or(&0),
-                self.kind.height() * count + self.kind.gap() * (count - 1),
+                self.kind.height() * count + self.kind.gap(self.vertical) * (count - 1),
             )
         } else {
             (
-                widths.iter().sum::<i32>() + self.kind.gap() * (count - 1),
+                widths.iter().sum::<i32>() + self.kind.gap(self.vertical) * (count - 1),
                 self.kind.height(),
             )
         }
@@ -348,10 +349,10 @@ impl Element for ChoiceGroup {
                 .h(px(item_height as f32))
                 .flex_shrink_0()
                 .when(index > 0 && self.vertical, |element| {
-                    element.mt(px(kind.gap() as f32))
+                    element.mt(px(kind.gap(self.vertical) as f32))
                 })
                 .when(index > 0 && !self.vertical, |element| {
-                    element.ml(px(kind.gap() as f32))
+                    element.ml(px(kind.gap(self.vertical) as f32))
                 });
             if !disabled {
                 let click_state = state.clone();
@@ -414,7 +415,9 @@ impl Element for ChoiceGroup {
                         && window.last_input_was_keyboard()
                     {
                         if kind == Kind::Radio {
-                            pen.frame(0, 1, 14, 16, theme.accent.dark);
+                            let mut mark = Pen::new(12, 12);
+                            draw_focus_circle(&mut mark, theme.accent.dark);
+                            pen.append(mark, 0, (pen.height - 12) / 2);
                         } else {
                             pen.rect(5, pen.height - 5, pen.width - 10, 2, theme.accent.dark);
                         }
@@ -603,7 +606,7 @@ fn draw_tab(pen: &mut Pen, label: &str, selected: bool, disabled: bool, pressed:
     } else {
         GRAY_4
     };
-    let outline = if disabled { GRAY_6 } else { BLACK };
+    let outline = BLACK;
     for row in 0..height {
         let inset = match row {
             0 => 3,
@@ -639,13 +642,7 @@ fn draw_tab(pen: &mut Pen, label: &str, selected: bool, disabled: bool, pressed:
 
 fn draw_segment(pen: &mut Pen, label: &str, selected: bool, disabled: bool, pressed: bool) {
     let on = selected || pressed;
-    pen.raised(if on { GRAY_4 } else { GRAY_2 });
-    if on {
-        pen.bevel(1, 1, pen.width - 2, pen.height - 2, GRAY_7, WHITE);
-    }
-    if disabled {
-        pen.frame(0, 0, pen.width, pen.height, GRAY_6);
-    }
+    draw_bevel_button(pen, disabled, pressed, selected);
     let x = (pen.width - Font::Bold.measure_in(label, pen.language)) / 2;
     let y = (pen.height - Font::Bold.cap_height()) / 2 + Font::Bold.ascent() + i32::from(on);
     pen.text(
@@ -698,5 +695,76 @@ mod tests {
             assert_eq!(key_target(&items, 0, key), None);
         }
         assert_eq!(entry_index(&items, 0), None);
+    }
+
+    fn assert_original_crop(pen: &Pen, reference: &image::RgbaImage, x: u32, y: u32) {
+        let mut actual = image::RgbaImage::from_pixel(
+            pen.width as u32,
+            pen.height as u32,
+            image::Rgba([0xdd, 0xdd, 0xdd, 255]),
+        );
+        for fill in &pen.fills {
+            let color = image::Rgba([
+                (fill.color >> 16) as u8,
+                (fill.color >> 8) as u8,
+                fill.color as u8,
+                255,
+            ]);
+            for py in fill.rect.y..fill.rect.y + fill.rect.height {
+                for px in fill.rect.x..fill.rect.x + fill.rect.width {
+                    if (0..pen.width).contains(&px) && (0..pen.height).contains(&py) {
+                        actual.put_pixel(px as u32, py as u32, color);
+                    }
+                }
+            }
+        }
+        let differences: Vec<_> = actual
+            .enumerate_pixels()
+            .filter(|(px, py, pixel)| reference.get_pixel(x + *px, y + *py) != *pixel)
+            .map(|(px, py, _)| (px, py))
+            .collect();
+        assert!(
+            differences.is_empty(),
+            "{} pixels differ in crop ({x}, {y}); first: {:?}",
+            differences.len(),
+            differences.first()
+        );
+    }
+
+    #[test]
+    fn joined_segments_match_the_original_pixels() {
+        let reference =
+            image::load_from_memory(include_bytes!("../tests/reference/bevel-states.png"))
+                .unwrap()
+                .to_rgba8();
+        let mut x = 74;
+        for (index, label) in ["Left", "Center", "Right"].iter().enumerate() {
+            let width = Font::Bold.measure(label) + 20;
+            let mut pen = Pen::new(width, 22);
+            draw_segment(&mut pen, label, index == 1, false, false);
+            // The following segment replaces the shared final column.
+            if index < 2 {
+                pen.width -= 1;
+            }
+            assert_original_crop(&pen, &reference, x, 38);
+            x += width as u32 - 1;
+        }
+    }
+
+    #[test]
+    fn raised_and_unselected_tabs_match_the_original_pixels() {
+        let reference =
+            image::load_from_memory(include_bytes!("../tests/reference/group-tabs.png"))
+                .unwrap()
+                .to_rgba8();
+        let mut x = 166;
+        for (index, label) in ["General", "Views", "Labels"].iter().enumerate() {
+            let selected = index == 1;
+            let width = Font::Bold.measure(label) + 24;
+            let mut pen = Pen::new(width, if selected { 24 } else { 22 });
+            draw_tab(&mut pen, label, selected, false, false);
+            assert_original_crop(&pen, &reference, x, if selected { 8 } else { 10 });
+            x += width as u32;
+        }
     }
 }

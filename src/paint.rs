@@ -27,6 +27,13 @@ pub struct Pen {
 }
 
 impl Pen {
+    pub fn append(&mut self, other: Pen, x: i32, y: i32) {
+        self.fills.extend(other.fills.into_iter().map(|mut fill| {
+            fill.rect.x += x;
+            fill.rect.y += y;
+            fill
+        }));
+    }
     pub fn new(width: i32, height: i32) -> Self {
         Self {
             width,
@@ -116,11 +123,9 @@ impl Pen {
     }
 
     pub fn sunken(&mut self) {
-        self.rect(0, 0, self.width, self.height, WHITE);
-        self.frame(0, 0, self.width, self.height, GRAY_7);
-        self.bevel(1, 1, self.width - 2, self.height - 2, BLACK, GRAY_1);
-        self.hline(0, self.height - 1, self.width, WHITE);
-        self.vline(self.width - 1, 0, self.height, WHITE);
+        self.bevel(0, 0, self.width, self.height, GRAY_7, WHITE);
+        self.frame(1, 1, self.width - 2, self.height - 2, BLACK);
+        self.rect(2, 2, self.width - 4, self.height - 4, WHITE);
     }
 
     pub fn text(&mut self, mut x: i32, baseline: i32, text: &str, font: Font, color: u32) {

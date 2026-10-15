@@ -47,6 +47,16 @@ impl Slider {
         self
     }
 
+    pub fn inactive(mut self, inactive: bool) -> Self {
+        self.element.config.inactive = inactive;
+        self
+    }
+
+    /// Draws the slider's current value without installing input handlers.
+    pub fn draw(&self, pen: &mut Pen, pressed: bool) {
+        draw_slider(pen, &self.element.config, self.element.value, pressed);
+    }
+
     pub fn theme(mut self, theme: Theme) -> Self {
         self.element.config.theme = theme;
         self
@@ -121,6 +131,17 @@ impl ScrollBar {
         self
     }
 
+    /// A background window's flat track, without arrows or a thumb.
+    pub fn inactive(mut self, inactive: bool) -> Self {
+        self.element.config.inactive = inactive;
+        self
+    }
+
+    /// Draws the bar's current value without installing input handlers.
+    pub fn draw(&self, pen: &mut Pen, pressed: ScrollPart) {
+        draw_scroll_bar(pen, &self.element.config, self.element.value, pressed);
+    }
+
     pub fn theme(mut self, theme: Theme) -> Self {
         self.element.config.theme = theme;
         self
@@ -161,6 +182,7 @@ struct Config {
     length: i32,
     ticks: u32,
     disabled: bool,
+    inactive: bool,
     theme: Theme,
     label: SharedString,
     on_change: Option<ChangeHandler>,
@@ -184,7 +206,7 @@ impl Config {
     }
 
     fn enabled(&self) -> bool {
-        !self.disabled && self.range.max > self.range.min
+        !self.disabled && !self.inactive && self.range.max > self.range.min
     }
 
     fn dimensions(&self) -> (i32, i32) {
@@ -233,33 +255,33 @@ impl Config {
         }
     }
 
-    fn part_at(&self, at: f32, value: f64) -> Part {
+    fn part_at(&self, at: f32, value: f64) -> ScrollPart {
         if !self.enabled() {
-            return Part::None;
+            return ScrollPart::None;
         }
         match self.kind {
-            Kind::Slider => Part::Thumb,
+            Kind::Slider => ScrollPart::Thumb,
             Kind::ScrollBar {
                 viewport, content, ..
             } => {
                 if at < 0. || at >= self.length as f32 {
-                    return Part::None;
+                    return ScrollPart::None;
                 }
                 if at < BAR_WIDTH as f32 {
-                    return Part::Back;
+                    return ScrollPart::Back;
                 }
                 if at >= (self.length - BAR_WIDTH) as f32 {
-                    return Part::Forward;
+                    return ScrollPart::Forward;
                 }
                 let Some(thumb) = scroll_thumb(self.length, value, viewport, content) else {
-                    return Part::None;
+                    return ScrollPart::None;
                 };
                 if at < thumb.position as f32 {
-                    Part::PageBack
+                    ScrollPart::PageBack
                 } else if at >= (thumb.position + thumb.length) as f32 {
-                    Part::PageForward
+                    ScrollPart::PageForward
                 } else {
-                    Part::Thumb
+                    ScrollPart::Thumb
                 }
             }
         }
@@ -384,7 +406,7 @@ fn nonnegative(value: f64) -> f64 {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-enum Part {
+pub enum ScrollPart {
     #[default]
     None,
     Back,
@@ -400,7 +422,7 @@ struct RangeState {
     value: f64,
     bounds: Bounds<Pixels>,
     pointer: Point<Pixels>,
-    pressed: Part,
+    pressed: ScrollPart,
     grab: f32,
     repeat: Option<Task<()>>,
 }
@@ -423,6 +445,7 @@ impl RangeElement {
                 length: 160,
                 ticks: 0,
                 disabled: false,
+                inactive: false,
                 theme: Theme::default(),
                 label: SharedString::default(),
                 on_change: None,
@@ -505,7 +528,7 @@ impl Element for RangeElement {
                         value,
                         bounds,
                         pointer: Point::default(),
-                        pressed: Part::None,
+                        pressed: ScrollPart::None,
                         grab: 0.,
                         repeat: None,
                     }))
@@ -516,7 +539,7 @@ impl Element for RangeElement {
                     current.value = value;
                     current.bounds = bounds;
                     if !config.enabled() {
-                        current.pressed = Part::None;
+                        current.pressed = ScrollPart::None;
                         current.repeat = None;
                     }
                 }
@@ -623,15 +646,18 @@ impl Element for RangeElement {
             let at = state.config.coordinate(state.pointer, bounds);
             let over_pressed_part = bounds.contains(&state.pointer)
                 && state.config.part_at(at, state.value) == state.pressed;
-            let pressed = if state.pressed == Part::Thumb || over_pressed_part {
+            let pressed = if state.pressed == ScrollPart::Thumb || over_pressed_part {
                 state.pressed
             } else {
-                Part::None
+                ScrollPart::None
             };
             match state.config.kind {
-                Kind::Slider => {
-                    draw_slider(&mut pen, &state.config, state.value, pressed == Part::Thumb)
-                }
+                Kind::Slider => draw_slider(
+                    &mut pen,
+                    &state.config,
+                    state.value,
+                    pressed == ScrollPart::Thumb,
+                ),
                 Kind::ScrollBar { .. } => {
                     draw_scroll_bar(&mut pen, &state.config, state.value, pressed)
                 }
@@ -640,7 +666,13 @@ impl Element for RangeElement {
                 && state.focus.is_focused(window)
                 && window.last_input_was_keyboard()
             {
-                pen.frame(0, 0, width, height, state.config.theme.accent.dark);
+                if matches!(state.config.kind, Kind::Slider) {
+                    let mut focus = Pen::new(width, SLIDER_HEIGHT);
+                    crate::draw_focus_ring(&mut focus, 0, state.config.theme.accent.dark);
+                    pen.fills.extend(focus.fills);
+                } else {
+                    pen.frame(0, 0, width, height, state.config.theme.accent.dark);
+                }
             }
             pen.paint(point(bounds.left().round(), bounds.top().round()), window);
         }
@@ -651,17 +683,17 @@ impl Element for RangeElement {
             }
             let next = {
                 let mut state = move_state.borrow_mut();
-                if state.pressed == Part::None {
+                if state.pressed == ScrollPart::None {
                     return;
                 }
                 state.pointer = event.position;
                 if !event.dragging() {
-                    state.pressed = Part::None;
+                    state.pressed = ScrollPart::None;
                     state.repeat = None;
                     window.refresh();
                     return;
                 }
-                if state.pressed == Part::Thumb {
+                if state.pressed == ScrollPart::Thumb {
                     let at = state.config.coordinate(event.position, state.bounds);
                     Some(state.config.drag_value(at, state.grab))
                 } else {
@@ -680,8 +712,8 @@ impl Element for RangeElement {
                 return;
             }
             let mut state = up_state.borrow_mut();
-            if state.pressed != Part::None {
-                state.pressed = Part::None;
+            if state.pressed != ScrollPart::None {
+                state.pressed = ScrollPart::None;
                 state.repeat = None;
                 window.refresh();
                 cx.stop_propagation();
@@ -720,7 +752,7 @@ fn pointer_down(state: &SharedState, position: Point<Pixels>, window: &mut Windo
         state.pointer = position;
         let at = config.coordinate(position, state.bounds);
         state.pressed = config.part_at(at, state.value);
-        if state.pressed == Part::Thumb {
+        if state.pressed == ScrollPart::Thumb {
             let next = match config.kind {
                 Kind::Slider => {
                     let center = 5.
@@ -744,7 +776,7 @@ fn pointer_down(state: &SharedState, position: Point<Pixels>, window: &mut Windo
                     None
                 }
             };
-            (Part::Thumb, next)
+            (ScrollPart::Thumb, next)
         } else {
             (state.pressed, None)
         }
@@ -752,21 +784,21 @@ fn pointer_down(state: &SharedState, position: Point<Pixels>, window: &mut Windo
     if let Some(next) = next {
         set_value(state, next, window, cx);
     }
-    if part != Part::Thumb && part != Part::None {
+    if part != ScrollPart::Thumb && part != ScrollPart::None {
         act(state, part, window, cx);
         start_repeat(state, window, cx);
     }
     window.refresh();
 }
 
-fn act(state: &SharedState, part: Part, window: &mut Window, cx: &mut App) {
+fn act(state: &SharedState, part: ScrollPart, window: &mut Window, cx: &mut App) {
     let next = {
         let state = state.borrow();
         let amount = match part {
-            Part::Back => -state.config.key_step(),
-            Part::Forward => state.config.key_step(),
-            Part::PageBack => -state.config.page_step(),
-            Part::PageForward => state.config.page_step(),
+            ScrollPart::Back => -state.config.key_step(),
+            ScrollPart::Forward => state.config.key_step(),
+            ScrollPart::PageBack => -state.config.page_step(),
+            ScrollPart::PageForward => state.config.page_step(),
             _ => return,
         };
         state.value + amount
@@ -789,7 +821,7 @@ fn start_repeat(state: &SharedState, window: &mut Window, cx: &mut App) {
                     let part = {
                         let state = state.borrow();
                         if !state.config.enabled()
-                            || state.pressed == Part::None
+                            || state.pressed == ScrollPart::None
                             || !window.is_window_active()
                         {
                             return false;
@@ -844,18 +876,38 @@ fn thumb_face(theme: Theme) -> u32 {
     let b = theme.accent.mid;
     let mut result = 0;
     for shift in [0, 8, 16] {
-        result |= ((((a >> shift) & 255) + ((b >> shift) & 255)) / 2) << shift;
+        result |= (((a >> shift) & 255) + ((b >> shift) & 255)).div_ceil(2) << shift;
     }
     result
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SliderState {
+    Normal,
+    Pressed,
+    Disabled,
+    Inactive,
+}
+
 fn draw_slider(pen: &mut Pen, config: &Config, value: f64, pressed: bool) {
     let track_width = pen.width - 10;
-    let enabled = config.enabled();
-    let line = if enabled { GRAY_11 } else { GRAY_6 };
+    let state = if config.disabled || config.range.max <= config.range.min {
+        SliderState::Disabled
+    } else if config.inactive {
+        SliderState::Inactive
+    } else if pressed {
+        SliderState::Pressed
+    } else {
+        SliderState::Normal
+    };
+    let (line, empty) = match state {
+        SliderState::Disabled => (GRAY_6, GRAY_3),
+        SliderState::Inactive => (GRAY_8, GRAY_3),
+        _ => (GRAY_11, GRAY_4),
+    };
     pen.bevel(3, 4, track_width + 4, 6, GRAY_7, WHITE);
     pen.frame(4, 5, track_width + 2, 4, line);
-    pen.rect(5, 6, track_width, 2, if enabled { GRAY_4 } else { GRAY_3 });
+    pen.rect(5, 6, track_width, 2, empty);
     if config.ticks > 1 {
         // More ticks than pixels cannot add detail, and would waste drawing work.
         let ticks = config.ticks.min(track_width as u32);
@@ -865,46 +917,55 @@ fn draw_slider(pen: &mut Pen, config: &Config, value: f64, pressed: bool) {
         }
     }
     let x = (config.range.fraction(value) * (track_width - 1) as f64).round() as i32;
-    let (frame, face, top, bottom) = if !enabled {
-        (GRAY_6, GRAY_2, GRAY_1, GRAY_4)
-    } else if pressed {
-        (
+    let mut thumb = Pen::new(THUMB_WIDTH, 16);
+    draw_slider_thumb(&mut thumb, state, config.theme);
+    for mut fill in thumb.fills {
+        fill.rect.x += x;
+        pen.fills.push(fill);
+    }
+}
+
+/// Draws the pointed eleven-by-sixteen-pixel thumb used by a slider.
+pub fn draw_slider_thumb(pen: &mut Pen, state: SliderState, theme: Theme) {
+    let (frame, face, top, bottom) = match state {
+        SliderState::Disabled => (GRAY_6, GRAY_2, GRAY_1, GRAY_4),
+        SliderState::Inactive => (GRAY_8, GRAY_2, GRAY_2, GRAY_2),
+        SliderState::Pressed => (
             BLACK,
-            config.theme.accent.mid,
-            config.theme.accent.dark,
-            config.theme.accent.light,
-        )
-    } else {
-        (
-            BLACK,
-            thumb_face(config.theme),
-            WHITE,
-            config.theme.accent.dark,
-        )
+            theme.accent.mid,
+            theme.accent.dark,
+            theme.accent.light,
+        ),
+        SliderState::Normal => (BLACK, thumb_face(theme), WHITE, theme.accent.dark),
     };
     for y in 0..16 {
         let inset = (y - 10).max(0);
         let width = THUMB_WIDTH - inset * 2;
-        pen.hline(x + inset, y, width, frame);
+        pen.hline(inset, y, width, frame);
         if y > 0 && width > 2 {
-            pen.hline(x + inset + 1, y, width - 2, if y == 1 { top } else { face });
+            pen.hline(inset + 1, y, width - 2, if y == 1 { top } else { face });
             if y < 11 {
-                pen.dot(x + inset + 1, y, top);
+                pen.dot(inset + 1, y, top);
             }
             if y > 1 {
-                pen.dot(x + inset + width - 2, y, bottom);
+                pen.dot(inset + width - 2, y, bottom);
             }
         }
     }
-    if enabled {
+    if matches!(state, SliderState::Normal | SliderState::Pressed) {
         for ridge in 0..3 {
-            pen.hline(x + 3, 4 + 2 * ridge, 5, config.theme.accent.dark);
-            pen.hline(x + 4, 5 + 2 * ridge, 5, WHITE);
+            pen.hline(3, 4 + 2 * ridge, 5, theme.accent.dark);
+            pen.hline(4, 5 + 2 * ridge, 5, WHITE);
         }
     }
 }
 
-fn draw_scroll_bar(pen: &mut Pen, config: &Config, value: f64, pressed: Part) {
+fn draw_scroll_bar(pen: &mut Pen, config: &Config, value: f64, pressed: ScrollPart) {
+    if config.inactive {
+        pen.rect(0, 0, pen.width, pen.height, GRAY_2);
+        pen.frame(0, 0, pen.width, pen.height, BLACK);
+        return;
+    }
     let Kind::ScrollBar {
         viewport,
         content,
@@ -943,7 +1004,7 @@ fn draw_scroll_bar(pen: &mut Pen, config: &Config, value: f64, pressed: Part) {
             GRAY_3,
         );
         if let Some(thumb) = thumb {
-            if pressed == Part::PageBack {
+            if pressed == ScrollPart::PageBack {
                 rect(
                     2,
                     BAR_WIDTH + 1,
@@ -952,7 +1013,7 @@ fn draw_scroll_bar(pen: &mut Pen, config: &Config, value: f64, pressed: Part) {
                     GRAY_6,
                 );
             }
-            if pressed == Part::PageForward {
+            if pressed == ScrollPart::PageForward {
                 rect(
                     2,
                     thumb.position + thumb.length,
@@ -963,7 +1024,10 @@ fn draw_scroll_bar(pen: &mut Pen, config: &Config, value: f64, pressed: Part) {
             }
         }
     }
-    for (y, part) in [(0, Part::Back), (length - BAR_WIDTH, Part::Forward)] {
+    for (y, part) in [
+        (0, ScrollPart::Back),
+        (length - BAR_WIDTH, ScrollPart::Forward),
+    ] {
         let (face, top, bottom) = if pressed == part {
             (GRAY_5, GRAY_7, GRAY_3)
         } else {
@@ -976,7 +1040,7 @@ fn draw_scroll_bar(pen: &mut Pen, config: &Config, value: f64, pressed: Part) {
         rect(14, y + 2, 1, 12, bottom);
         let ink = if active { BLACK } else { GRAY_6 };
         for row in 0..4 {
-            let draw_y = if part == Part::Back {
+            let draw_y = if part == ScrollPart::Back {
                 y + 6 + row
             } else {
                 y + 9 - row
@@ -987,7 +1051,7 @@ fn draw_scroll_bar(pen: &mut Pen, config: &Config, value: f64, pressed: Part) {
     if active && let Some(thumb) = thumb {
         let pos = thumb.position;
         let length = thumb.length;
-        let face = if pressed == Part::Thumb {
+        let face = if pressed == ScrollPart::Thumb {
             config.theme.accent.mid
         } else {
             thumb_face(config.theme)
@@ -1070,7 +1134,7 @@ mod tests {
         assert_eq!(bar.drag_value(19., 4.), 0.);
         assert_eq!(bar.drag_value(139., 4.), 300.);
         assert_eq!(bar.drag_value(79., 4.), 150.);
-        assert_eq!(bar.part_at(80., 0.), Part::PageForward);
+        assert_eq!(bar.part_at(80., 0.), ScrollPart::PageForward);
     }
 
     #[test]

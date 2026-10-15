@@ -80,7 +80,7 @@ impl Kind {
 
     fn height(self) -> i32 {
         match self {
-            Self::Radio => 18,
+            Self::Radio => 16,
             Self::Tabs => 24,
             Self::Segments => 22,
         }
@@ -206,7 +206,7 @@ impl ChoiceGroup {
             .map(|item| {
                 self.item_width.unwrap_or_else(|| {
                     let padding = match self.kind {
-                        Kind::Radio => 18,
+                        Kind::Radio => 17,
                         Kind::Tabs => 24,
                         Kind::Segments => 20,
                     };
@@ -283,6 +283,7 @@ impl Element for ChoiceGroup {
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
+        let inactive = crate::window::content_is_inactive();
         let state = window.with_element_state(
             id.expect("choice group id"),
             |state: Option<Rc<RefCell<ChoiceState>>>, _| {
@@ -298,7 +299,7 @@ impl Element for ChoiceGroup {
                     current
                         .focus
                         .resize_with(self.items.len(), || cx.focus_handle());
-                    let tab_stop = if self.disabled {
+                    let tab_stop = if self.disabled || inactive {
                         None
                     } else {
                         entry_index(&self.items, self.selected)
@@ -354,7 +355,7 @@ impl Element for ChoiceGroup {
                 .when(index > 0 && !self.vertical, |element| {
                     element.ml(px(kind.gap(self.vertical) as f32))
                 });
-            if !disabled {
+            if !disabled && !inactive {
                 let click_state = state.clone();
                 let key_state = state.clone();
                 let click_handler = self.on_change.clone();
@@ -397,7 +398,9 @@ impl Element for ChoiceGroup {
                 item_height as f32,
                 move |pen, window, _| {
                     pen.language = language;
-                    let pressed = !disabled && window.text_style().color == rgb(WHITE).into();
+                    let inactive = crate::window::content_is_inactive();
+                    let pressed =
+                        !disabled && !inactive && window.text_style().color == rgb(WHITE).into();
                     match kind {
                         Kind::Radio => draw_control(
                             pen,
@@ -411,6 +414,7 @@ impl Element for ChoiceGroup {
                         Kind::Segments => draw_segment(pen, &label, selected, disabled, pressed),
                     }
                     if !disabled
+                        && !inactive
                         && paint_focus.is_focused(window)
                         && window.last_input_was_keyboard()
                     {
@@ -598,6 +602,7 @@ fn key_target(items: &[ChoiceItem], current: usize, key: &str) -> Option<usize> 
 }
 
 fn draw_tab(pen: &mut Pen, label: &str, selected: bool, disabled: bool, pressed: bool) {
+    let inactive = crate::window::content_is_inactive();
     let (width, height) = (pen.width, pen.height);
     let face = if pressed {
         GRAY_5
@@ -606,7 +611,7 @@ fn draw_tab(pen: &mut Pen, label: &str, selected: bool, disabled: bool, pressed:
     } else {
         GRAY_4
     };
-    let outline = BLACK;
+    let outline = if inactive { GRAY_8 } else { BLACK };
     for row in 0..height {
         let inset = match row {
             0 => 3,
@@ -620,11 +625,13 @@ fn draw_tab(pen: &mut Pen, label: &str, selected: bool, disabled: bool, pressed:
     }
     pen.dot(2, 1, outline);
     pen.dot(width - 3, 1, outline);
-    pen.hline(3, 1, width - 6, WHITE);
-    pen.dot(2, 2, WHITE);
-    pen.vline(1, 3, height - 3, WHITE);
-    pen.vline(width - 2, 3, height - 3, GRAY_7);
-    pen.dot(width - 3, 2, GRAY_7);
+    let light = if inactive { face } else { WHITE };
+    let dark = if inactive { face } else { GRAY_7 };
+    pen.hline(3, 1, width - 6, light);
+    pen.dot(2, 2, light);
+    pen.vline(1, 3, height - 3, light);
+    pen.vline(width - 2, 3, height - 3, dark);
+    pen.dot(width - 3, 2, dark);
     if !selected {
         pen.hline(0, height - 1, width, outline);
     }
@@ -636,7 +643,7 @@ fn draw_tab(pen: &mut Pen, label: &str, selected: bool, disabled: bool, pressed:
         baseline,
         label,
         Font::Bold,
-        if disabled { GRAY_8 } else { BLACK },
+        if disabled || inactive { GRAY_8 } else { BLACK },
     );
 }
 
@@ -650,7 +657,11 @@ fn draw_segment(pen: &mut Pen, label: &str, selected: bool, disabled: bool, pres
         y,
         label,
         Font::Bold,
-        if disabled { GRAY_8 } else { BLACK },
+        if disabled || crate::window::content_is_inactive() {
+            GRAY_8
+        } else {
+            BLACK
+        },
     );
 }
 

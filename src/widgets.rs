@@ -6,6 +6,180 @@ use crate::{
     theme::*,
 };
 use gpui::{prelude::*, *};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+    time::Duration,
+};
+
+const BUTTON_FLASH_DURATION: Duration = Duration::from_millis(130);
+
+struct ControlInteraction {
+    focus: FocusHandle,
+    flash: Rc<Cell<u64>>,
+}
+
+#[derive(Clone)]
+struct ButtonTarget {
+    focus: FocusHandle,
+    bounds: Bounds<Pixels>,
+    click: ClickHandler,
+    flash: Rc<Cell<u64>>,
+}
+
+#[derive(Default)]
+struct ButtonScopeState {
+    default: Option<ButtonTarget>,
+    cancel: Option<ButtonTarget>,
+    buttons: Vec<FocusHandle>,
+}
+
+#[derive(Default)]
+struct ButtonScopes(Vec<Rc<RefCell<ButtonScopeState>>>);
+
+impl Global for ButtonScopes {}
+
+/// Routes unconsumed Return and cancel keys to the buttons in this container.
+/// Nested scopes, such as a dialog inside a window, keep their own buttons.
+pub fn button_scope(id: impl Into<ElementId>, content: impl IntoElement) -> ButtonScope {
+    ButtonScope {
+        id: id.into(),
+        content: content.into_any_element(),
+        state: Rc::new(RefCell::new(ButtonScopeState::default())),
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ButtonShortcut {
+    Default,
+    Cancel,
+}
+
+fn button_shortcut(event: &KeyDownEvent) -> Option<ButtonShortcut> {
+    let modifiers = event.keystroke.modifiers;
+    match event.keystroke.key.as_str() {
+        "enter" if !modifiers.modified() => Some(ButtonShortcut::Default),
+        "escape" if !modifiers.modified() => Some(ButtonShortcut::Cancel),
+        "." if modifiers.platform && !modifiers.control && !modifiers.alt && !modifiers.shift => {
+            Some(ButtonShortcut::Cancel)
+        }
+        _ => None,
+    }
+}
+
+pub struct ButtonScope {
+    id: ElementId,
+    content: AnyElement,
+    state: Rc<RefCell<ButtonScopeState>>,
+}
+
+impl IntoElement for ButtonScope {
+    type Element = Self;
+
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl Element for ButtonScope {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        Some(self.id.clone())
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, ()) {
+        (self.content.request_layout(window, cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        *self.state.borrow_mut() = ButtonScopeState::default();
+        cx.default_global::<ButtonScopes>()
+            .0
+            .push(self.state.clone());
+        self.content.prepaint(window, cx);
+        cx.global_mut::<ButtonScopes>().0.pop();
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut (),
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let keyboard = self.state.clone();
+        window.on_key_event(move |event: &KeyDownEvent, phase, window, cx| {
+            if !phase.bubble() {
+                return;
+            }
+            let Some(shortcut) = button_shortcut(event) else {
+                return;
+            };
+            let state = keyboard.borrow();
+            let target = match shortcut {
+                ButtonShortcut::Default
+                    if !state.buttons.iter().any(|focus| focus.is_focused(window)) =>
+                {
+                    state.default.clone()
+                }
+                ButtonShortcut::Cancel => state.cancel.clone(),
+                _ => None,
+            };
+            drop(state);
+            if let Some(target) = target {
+                flash_button(target.flash.clone(), window, cx);
+                (target.click)(
+                    &ClickEvent::Keyboard(KeyboardClickEvent {
+                        button: KeyboardButton::Enter,
+                        bounds: target.bounds,
+                    }),
+                    window,
+                    cx,
+                );
+            }
+            cx.stop_propagation();
+        });
+        self.content.paint(window, cx);
+    }
+}
+
+fn flash_button(flash: Rc<Cell<u64>>, window: &mut Window, cx: &mut App) {
+    let generation = flash.get().wrapping_add(1).max(1);
+    flash.set(generation);
+    window.refresh();
+    window
+        .spawn(cx, async move |cx| {
+            cx.background_executor().timer(BUTTON_FLASH_DURATION).await;
+            if flash.get() == generation {
+                flash.set(0);
+                cx.update(|window, _| window.refresh()).ok();
+            }
+        })
+        .detach();
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CheckState {
@@ -39,6 +213,7 @@ pub struct Control {
     icon_only: bool,
     pub(crate) disabled: bool,
     default: bool,
+    cancel: bool,
     pub(crate) selected: bool,
     toggle: bool,
     theme: Theme,
@@ -64,6 +239,7 @@ impl Control {
             icon_only: false,
             disabled: false,
             default: false,
+            cancel: false,
             selected: false,
             toggle: false,
             theme: Theme::default(),
@@ -105,6 +281,10 @@ impl Control {
     }
     pub fn default_button(mut self) -> Self {
         self.default = true;
+        self
+    }
+    pub fn cancel_button(mut self) -> Self {
+        self.cancel = true;
         self
     }
     pub fn selected(mut self, selected: bool) -> Self {
@@ -159,11 +339,11 @@ impl Control {
             ),
             ControlKind::Checkbox(_) | ControlKind::Radio(_) | ControlKind::Disclosure(_) => (
                 if label_width > 0 {
-                    label_width + 18
+                    label_width + 17
                 } else {
                     12
                 },
-                18,
+                16,
             ),
             ControlKind::Swatch(_) => (42, 24),
             _ => (label_width + 20, 24),
@@ -259,18 +439,49 @@ impl Element for Control {
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
-        let focus = window.with_element_state(
+        let inactive = crate::window::content_is_inactive();
+        let interaction = window.with_element_state(
             id.expect("control id"),
-            |previous: Option<FocusHandle>, _| {
-                let focus = self
-                    .focus
-                    .clone()
-                    .or(previous)
-                    .unwrap_or_else(|| cx.focus_handle());
-                let focus = focus.tab_stop(!self.disabled && self.tab_stop);
-                (focus.clone(), focus)
+            |previous: Option<ControlInteraction>, _| {
+                let previous = previous.unwrap_or_else(|| ControlInteraction {
+                    focus: cx.focus_handle(),
+                    flash: Rc::new(Cell::new(0)),
+                });
+                let focus = self.focus.clone().unwrap_or(previous.focus);
+                let focus = focus.tab_stop(!self.disabled && !inactive && self.tab_stop);
+                let interaction = ControlInteraction {
+                    focus,
+                    flash: previous.flash,
+                };
+                (
+                    (interaction.focus.clone(), interaction.flash.clone()),
+                    interaction,
+                )
             },
         );
+        let (focus, flash) = interaction;
+        if !self.disabled
+            && !inactive
+            && let Some(click) = &self.click
+            && let Some(scope) = cx
+                .try_global::<ButtonScopes>()
+                .and_then(|scopes| scopes.0.last())
+        {
+            let target = ButtonTarget {
+                focus: focus.clone(),
+                bounds,
+                click: click.clone(),
+                flash: flash.clone(),
+            };
+            let mut scope = scope.borrow_mut();
+            scope.buttons.push(target.focus.clone());
+            if self.default {
+                scope.default = Some(target.clone());
+            }
+            if self.cancel {
+                scope.cancel = Some(target);
+            }
+        }
         let (width, height) = self.dimensions();
         let extra = if self.default { 8 } else { 0 };
         let mut element = div()
@@ -279,7 +490,7 @@ impl Element for Control {
             .h(bounds.size.height)
             .flex_shrink_0()
             .text_color(rgb(BLACK));
-        if !self.disabled {
+        if !self.disabled && !inactive {
             element = element
                 .role(self.role())
                 .aria_label(self.label.clone())
@@ -335,8 +546,11 @@ impl Element for Control {
                 (width + extra) as f32,
                 (height + extra) as f32,
                 move |pen, window, _| {
+                    let inactive = crate::window::content_is_inactive();
                     let pressed = !disabled
-                        && (window.text_style().color == rgb(WHITE).into()
+                        && !inactive
+                        && (flash.get() != 0
+                            || window.text_style().color == rgb(WHITE).into()
                             || (selected && kind != ControlKind::Bevel));
                     let mut inner = Pen::new(width, height);
                     inner.language = language;
@@ -353,7 +567,11 @@ impl Element for Control {
                     } else {
                         draw_control(&mut inner, &label, kind, disabled, pressed, theme);
                     }
-                    if !disabled && focus.is_focused(window) && window.last_input_was_keyboard() {
+                    if !disabled
+                        && !inactive
+                        && focus.is_focused(window)
+                        && window.last_input_was_keyboard()
+                    {
                         draw_control_focus(&mut inner, kind, theme.accent.dark);
                     }
                     if default {
@@ -440,7 +658,15 @@ pub fn draw_bevel_content(
             .rposition(|row| row.bytes().any(|byte| byte != b'.' && byte != b' '))
             .map_or(ink_top, |y| y + 1);
         let y = (pen.height - (ink_bottom - ink_top) as i32) / 2 - ink_top as i32 + offset;
-        crate::bitmap_icons::draw_bitmap_icon(pen, rows, x, y, theme.accent, false, disabled);
+        crate::bitmap_icons::draw_bitmap_icon(
+            pen,
+            rows,
+            x,
+            y,
+            theme.accent,
+            false,
+            disabled || crate::window::content_is_inactive(),
+        );
         x += icon_width + 4;
     }
     pen.text(
@@ -448,7 +674,11 @@ pub fn draw_bevel_content(
         (pen.height - 9) / 2 + 9 + offset,
         label,
         Font::Bold,
-        if disabled { GRAY_8 } else { BLACK },
+        if disabled || crate::window::content_is_inactive() {
+            GRAY_8
+        } else {
+            BLACK
+        },
     );
 }
 
@@ -507,10 +737,14 @@ pub fn text_in_language(
         .role(Role::Label)
         .aria_label(text.clone())
         .flex_shrink_0()
-        .child(drawing(width as f32, 18., move |pen, _, _| {
-            pen.language = language;
-            pen.text(0, 13, &text, font, color)
-        }))
+        .child(drawing(
+            width as f32,
+            font.line_height() as f32,
+            move |pen, _, _| {
+                pen.language = language;
+                pen.text(0, font.ascent(), &text, font, color)
+            },
+        ))
 }
 
 pub fn separator(width: i32) -> impl IntoElement {
@@ -521,32 +755,85 @@ pub fn separator(width: i32) -> impl IntoElement {
 }
 
 #[track_caller]
-pub fn group_box(title: impl Into<SharedString>, width: i32) -> Div {
+pub fn group_box(title: impl Into<SharedString>, width: i32) -> Stateful<Div> {
     group_box_in(title, width, Language::English)
 }
 
 #[track_caller]
-pub fn group_box_in(title: impl Into<SharedString>, width: i32, language: Language) -> Div {
+pub fn group_box_in(
+    title: impl Into<SharedString>,
+    width: i32,
+    language: Language,
+) -> Stateful<Div> {
     let title = title.into();
+    let top = if title.is_empty() {
+        12
+    } else {
+        Font::Bold.line_height() + 8
+    };
+    let accessible_title = title.clone();
     div()
+        .id(ElementId::NamedChild(
+            std::sync::Arc::new(ElementId::from(std::panic::Location::caller())),
+            title.clone(),
+        ))
         .relative()
         .w(px(width as f32))
         .flex()
         .flex_col()
         .gap(px(6.))
         .p(px(12.))
-        .pt(px(18.))
-        .border_1()
-        .border_color(rgb(GRAY_7))
+        .pt(px(top as f32))
+        .when(!accessible_title.is_empty(), |element| {
+            element.role(Role::Group).aria_label(accessible_title)
+        })
         .child(
-            div()
-                .absolute()
-                .left(px(8.))
-                .top(px(-9.))
-                .px(px(4.))
-                .bg(rgb(GRAY_2))
-                .child(label_in(title, language)),
+            canvas(
+                |_, _, _| (),
+                move |bounds, _, window, _| {
+                    let mut pen = Pen::new(
+                        f32::from(bounds.size.width).round() as i32,
+                        f32::from(bounds.size.height).round() as i32,
+                    );
+                    pen.language = language;
+                    draw_group_box(&mut pen, &title, crate::window::content_is_inactive());
+                    pen.paint(bounds.origin, window);
+                },
+            )
+            .absolute()
+            .inset_0()
+            .size_full(),
         )
+}
+
+pub fn draw_group_box(pen: &mut Pen, title: &str, disabled: bool) {
+    let top = if title.is_empty() {
+        0
+    } else {
+        Font::Bold.cap_height() / 2
+    };
+    let (width, height) = (pen.width, pen.height - top);
+    pen.frame(0, top, width - 1, height - 1, GRAY_7);
+    pen.hline(1, top + 1, width - 3, WHITE);
+    pen.vline(1, top + 2, height - 4, WHITE);
+    pen.hline(0, top + height - 1, width, WHITE);
+    pen.vline(width - 1, top, height, WHITE);
+    if !title.is_empty() {
+        pen.rect(
+            8,
+            top,
+            Font::Bold.measure_in(title, pen.language) + 6,
+            2,
+            GRAY_2,
+        );
+        pen.text(
+            11,
+            Font::Bold.ascent(),
+            title,
+            Font::Bold,
+            if disabled { GRAY_8 } else { BLACK },
+        );
+    }
 }
 
 pub fn progress_bar(value: f64, width: i32, theme: Theme) -> impl IntoElement {
@@ -633,7 +920,8 @@ pub fn draw_control(
     theme: Theme,
 ) {
     let (w, h) = (pen.width, pen.height);
-    let text = if disabled {
+    let inactive = crate::window::content_is_inactive();
+    let text = if disabled || inactive {
         GRAY_8
     } else if pressed {
         WHITE
@@ -650,7 +938,7 @@ pub fn draw_control(
                 (h - 9) / 2 + 9 + offset,
                 label,
                 Font::Bold,
-                if disabled { GRAY_8 } else { BLACK },
+                if disabled || inactive { GRAY_8 } else { BLACK },
             );
         }
         ControlKind::Tab(_) => {
@@ -674,25 +962,25 @@ pub fn draw_control(
         ControlKind::Checkbox(state) => {
             let mut mark = Pen::new(12, 12);
             draw_checkbox(&mut mark, state, disabled, pressed);
-            pen.append(mark, 0, 3);
+            pen.append(mark, 0, (h - 12) / 2);
             pen.text(
-                18,
-                13,
+                17,
+                (h - 9) / 2 + 9,
                 label,
                 Font::Bold,
-                if disabled { GRAY_8 } else { BLACK },
+                if disabled || inactive { GRAY_8 } else { BLACK },
             );
         }
         ControlKind::Radio(on) => {
             let mut mark = Pen::new(12, 12);
             draw_radio(&mut mark, on, disabled, pressed);
-            pen.append(mark, 0, 3);
+            pen.append(mark, 0, (h - 12) / 2);
             pen.text(
-                18,
-                13,
+                17,
+                (h - 9) / 2 + 9,
                 label,
                 Font::Bold,
-                if disabled { GRAY_8 } else { BLACK },
+                if disabled || inactive { GRAY_8 } else { BLACK },
             );
         }
         ControlKind::Disclosure(open) => {
@@ -700,11 +988,11 @@ pub fn draw_control(
             draw_disclosure(&mut mark, open, disabled, pressed);
             pen.append(mark, 0, (h - 12) / 2);
             pen.text(
-                18,
+                17,
                 (h - 9) / 2 + 9,
                 label,
                 Font::Bold,
-                if disabled { GRAY_8 } else { BLACK },
+                if disabled || inactive { GRAY_8 } else { BLACK },
             );
         }
         ControlKind::MenuItem(selected) => {
@@ -743,6 +1031,8 @@ pub fn draw_control(
 pub fn draw_disclosure(pen: &mut Pen, open: bool, disabled: bool, pressed: bool) {
     let (line, fill, highlight) = if disabled {
         (GRAY_6, GRAY_3, GRAY_3)
+    } else if crate::window::content_is_inactive() {
+        (GRAY_8, GRAY_2, GRAY_2)
     } else if pressed {
         (BLACK, BLACK, BLACK)
     } else {
@@ -800,6 +1090,9 @@ pub fn draw_bevel_button(pen: &mut Pen, disabled: bool, pressed: bool, on: bool)
     if disabled {
         (frame, top, bottom, inner_top, inner_bottom) = (GRAY_6, GRAY_1, GRAY_4, GRAY_2, GRAY_2);
         face = if on { GRAY_3 } else { GRAY_2 };
+    } else if crate::window::content_is_inactive() {
+        (frame, top, bottom, inner_top, inner_bottom) = (GRAY_8, GRAY_2, GRAY_2, GRAY_2, GRAY_2);
+        face = if on { GRAY_3 } else { GRAY_2 };
     }
     pen.rect(1, 1, w - 2, h - 2, face);
     pen.frame(0, 0, w, h, frame);
@@ -811,6 +1104,8 @@ pub fn draw_button(pen: &mut Pen, label: &str, disabled: bool, pressed: bool) {
     let (w, h) = (pen.width, pen.height);
     let (line, face, top, bottom, inner_top, inner_bottom, text) = if disabled {
         (GRAY_6, GRAY_2, GRAY_1, GRAY_4, GRAY_2, GRAY_2, GRAY_8)
+    } else if crate::window::content_is_inactive() {
+        (GRAY_8, GRAY_2, GRAY_2, GRAY_2, GRAY_2, GRAY_2, GRAY_8)
     } else if pressed {
         (BLACK, GRAY_9, GRAY_11, GRAY_7, GRAY_10, GRAY_8, WHITE)
     } else {
@@ -842,6 +1137,20 @@ pub fn draw_button(pen: &mut Pen, label: &str, disabled: bool, pressed: bool) {
 
 pub fn draw_default_ring(pen: &mut Pen, disabled: bool) {
     let (w, h) = (pen.width, pen.height);
+    if !disabled && crate::window::content_is_inactive() {
+        pen.round_frame(
+            Rect {
+                x: 0,
+                y: 0,
+                width: w,
+                height: h,
+            },
+            4,
+            GRAY_8,
+            Some(GRAY_2),
+        );
+        return;
+    }
     let face = if disabled { GRAY_2 } else { GRAY_4 };
     let top = if disabled { GRAY_1 } else { WHITE };
     let bottom = if disabled { GRAY_4 } else { GRAY_7 };
@@ -980,6 +1289,8 @@ pub fn draw_radio(pen: &mut Pen, on: bool, disabled: bool, pressed: bool) {
 fn mark_colors(disabled: bool, pressed: bool) -> (u32, u32, u32, u32, u32) {
     if disabled {
         (GRAY_6, GRAY_2, GRAY_2, GRAY_2, GRAY_6)
+    } else if crate::window::content_is_inactive() {
+        (GRAY_8, GRAY_2, GRAY_2, GRAY_2, GRAY_8)
     } else if pressed {
         (BLACK, GRAY_4, GRAY_7, GRAY_1, BLACK)
     } else {

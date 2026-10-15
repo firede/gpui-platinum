@@ -1,14 +1,23 @@
 use gpui::{prelude::*, *};
-use gpui_platinum::text_input;
 
+#[path = "support/capture.rs"]
+mod capture;
 #[path = "support/catalog.rs"]
 mod catalog;
 use catalog::{Controls, NextFocus, PreviousFocus, Quit};
 
 fn main() {
+    let arguments: Vec<_> = std::env::args().collect();
+    if let Some(path) = capture::argument(&arguments, "--png") {
+        let scale = capture::argument(&arguments, "--scale")
+            .map(|value| value.parse().expect("numeric image scale"))
+            .unwrap_or(2.);
+        capture::render_png(path, 820., 540., scale, |_, cx| cx.new(Controls::new))
+            .expect("render Controls image");
+        return;
+    }
     gpui_platform::application().run(|cx: &mut App| {
-        text_input::init(cx);
-        gpui_platinum::dialogs::init(cx);
+        gpui_platinum::init(cx);
         cx.bind_keys([
             KeyBinding::new("tab", NextFocus, Some("Controls")),
             KeyBinding::new("shift-tab", PreviousFocus, Some("Controls")),

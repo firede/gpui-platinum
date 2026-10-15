@@ -64,6 +64,17 @@ impl ColorWell {
         self.value = color & 0xffffff;
         cx.notify();
     }
+    pub fn set_disabled(&mut self, disabled: bool, cx: &mut Context<Self>) {
+        self.style.disabled = disabled;
+        if disabled {
+            self.open = false;
+        }
+        cx.notify();
+    }
+    pub fn set_label(&mut self, label: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.style.label = label.into();
+        cx.notify();
+    }
     pub fn set_theme(&mut self, theme: Theme, cx: &mut Context<Self>) {
         self.style.theme = theme;
         cx.notify();
@@ -139,10 +150,11 @@ impl Render for ColorWell {
             }))
             .child(drawing(44., 22., move |pen, _, _| {
                 crate::draw_bevel_button(pen, disabled, open, false);
+                pen.set_dimmed(crate::window::content_is_inactive());
                 let offset = i32::from(open);
                 pen.frame(5 + offset, 5 + offset, 34, 12, BLACK);
                 pen.rect(6 + offset, 6 + offset, 32, 10, shown);
-                if focus_visible && !disabled {
+                if focus_visible && !disabled && !crate::window::content_is_inactive() {
                     crate::draw_focus_ring(pen, 0, theme.accent.dark);
                 }
             }));

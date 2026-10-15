@@ -1,9 +1,10 @@
 //! An editable sheet with a formula bar and a rectangular selection.
 
 use gpui::{
-    App, Bounds, ClipboardItem, ContentMask, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, Point, Role,
-    ScrollWheelEvent, SharedString, Subscription, Window, canvas, div, point, prelude::*, px,
+    AccessibleAction, App, Bounds, ClipboardItem, ContentMask, Context, Entity, EventEmitter,
+    FocusHandle, Focusable, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels,
+    Point, Role, ScrollWheelEvent, SharedString, Subscription, Window, canvas, div, point,
+    prelude::*, px,
 };
 
 use crate::{
@@ -474,7 +475,8 @@ impl SheetView {
     }
 
     fn paint(&self, bounds: Bounds<Pixels>, window: &mut Window) {
-        let focused = self.focus.is_focused(window) || self.cell_editing;
+        let inactive = crate::window::content_is_inactive();
+        let focused = (self.focus.is_focused(window) || self.cell_editing) && !inactive;
         let mut pen = Pen::new(self.grid_width(), self.grid_height());
         pen.language = self.language;
         pen.rect(0, 0, pen.width, pen.height, WHITE);
@@ -484,6 +486,7 @@ impl SheetView {
         for visible in 0..self.visible_rows().min(self.rows.saturating_sub(self.top)) {
             let row = self.top + visible;
             let y = 2 + CELL_HEIGHT + visible as i32 * CELL_HEIGHT;
+            pen.set_dimmed(inactive);
             pen.rect(
                 2,
                 y,
@@ -504,6 +507,7 @@ impl SheetView {
                 Font::Small,
                 BLACK,
             );
+            pen.set_dimmed(false);
             for visible_col in 0..self.visible_cols().min(self.cols.saturating_sub(self.left)) {
                 let cell = Cell::new(self.left + visible_col, row);
                 let x = 2 + ROW_HEADER + visible_col as i32 * CELL_WIDTH;
@@ -532,6 +536,7 @@ impl SheetView {
                 pen.text(x, y + 13, &text, Font::Small, BLACK);
             }
         }
+        pen.set_dimmed(inactive);
         pen.rect(2, 2, ROW_HEADER, CELL_HEIGHT, GRAY_2);
         pen.bevel(2, 2, ROW_HEADER, CELL_HEIGHT, WHITE, GRAY_7);
         for visible in 0..self.visible_cols().min(self.cols.saturating_sub(self.left)) {
@@ -558,6 +563,7 @@ impl SheetView {
                 BLACK,
             );
         }
+        pen.set_dimmed(false);
         let cell = self.model.cursor;
         if cell.col >= self.left
             && cell.col < self.left + self.visible_cols()
@@ -626,12 +632,84 @@ impl Render for SheetView {
         let horizontal = cx.entity();
         let cursor = self.model.cursor;
         let reference = cursor.to_string();
+        let mut accessible_rows = Vec::new();
+        let visible_cols = self.visible_cols().min(self.cols.saturating_sub(self.left));
+        accessible_rows.push(
+            div()
+                .id("headers")
+                .role(Role::Row)
+                .absolute()
+                .left(px((2 + ROW_HEADER) as f32))
+                .top(px(2.))
+                .h(px(CELL_HEIGHT as f32))
+                .flex()
+                .children((0..visible_cols).map(|visible| {
+                    let col = self.left + visible;
+                    div()
+                        .id(col)
+                        .role(Role::ColumnHeader)
+                        .aria_column_index(col + 1)
+                        .aria_label(Cell::column_name(col))
+                        .w(px(CELL_WIDTH as f32))
+                        .h(px(CELL_HEIGHT as f32))
+                        .flex_shrink_0()
+                })),
+        );
+        for visible in 0..self.visible_rows().min(self.rows.saturating_sub(self.top)) {
+            let row = self.top + visible;
+            let cells = (0..visible_cols)
+                .map(|visible_col| {
+                    let cell = Cell::new(self.left + visible_col, row);
+                    let entity = cx.entity();
+                    div()
+                        .id(cell.col)
+                        .role(Role::GridCell)
+                        .aria_row_index(cell.row + 1)
+                        .aria_column_index(cell.col + 1)
+                        .aria_label(cell.to_string())
+                        .aria_value(self.model.value(cell))
+                        .aria_selected(self.model.selected(cell))
+                        .w(px(CELL_WIDTH as f32))
+                        .h(px(CELL_HEIGHT as f32))
+                        .flex_shrink_0()
+                        .on_a11y_action(AccessibleAction::Click, move |_, window, cx| {
+                            entity.update(cx, |this, cx| {
+                                this.select(cell, false, cx);
+                                window.focus(&this.focus, cx);
+                            });
+                        })
+                })
+                .collect::<Vec<_>>();
+            accessible_rows.push(
+                div()
+                    .id(row)
+                    .role(Role::Row)
+                    .aria_row_index(row + 1)
+                    .absolute()
+                    .left(px(2.))
+                    .top(px((2 + CELL_HEIGHT + visible as i32 * CELL_HEIGHT) as f32))
+                    .h(px(CELL_HEIGHT as f32))
+                    .flex()
+                    .child(
+                        div()
+                            .id("row-header")
+                            .role(Role::RowHeader)
+                            .aria_label((row + 1).to_string())
+                            .w(px(ROW_HEADER as f32))
+                            .h(px(CELL_HEIGHT as f32))
+                            .flex_shrink_0(),
+                    )
+                    .children(cells),
+            );
+        }
         let grid = div()
             .id("sheet-grid")
             .relative()
             .role(Role::Grid)
             .aria_label(self.label.clone())
-            .aria_value(reference.clone())
+            .aria_value(format!("{reference} {}", self.model.value(cursor)))
+            .aria_row_count(self.rows)
+            .aria_column_count(self.cols)
             .track_focus(&self.focus)
             .tab_stop(true)
             .w(px(self.grid_width() as f32))
@@ -680,6 +758,7 @@ impl Render for SheetView {
                 )
                 .size_full(),
             )
+            .children(accessible_rows)
             .when(self.cell_editing, |grid| {
                 grid.child(
                     div()
@@ -729,6 +808,7 @@ impl Render for SheetView {
                         self.visible_rows() as f64 * CELL_HEIGHT as f64,
                         self.rows as f64 * CELL_HEIGHT as f64,
                     )
+                    .tab_stop(false)
                     .step(CELL_HEIGHT as f64)
                     .length(self.grid_height())
                     .theme(theme)
@@ -759,6 +839,7 @@ impl Render for SheetView {
                             self.visible_cols() as f64 * CELL_WIDTH as f64,
                             self.cols as f64 * CELL_WIDTH as f64,
                         )
+                        .tab_stop(false)
                         .horizontal()
                         .step(CELL_WIDTH as f64)
                         .length(self.grid_width() - ROW_HEADER)

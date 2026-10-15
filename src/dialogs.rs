@@ -7,7 +7,10 @@ mod modal;
 mod notifications;
 mod page_setup;
 
-pub use alert::{Alert, AlertEvent, AlertKind, Dialog, DialogEvent, ProgressDialog, ProgressEvent};
+pub use alert::{
+    Alert, AlertEvent, AlertKind, Dialog, DialogEvent, ProgressDialog, ProgressEvent, alert_icon,
+    draw_alert_icon, draw_small_alert_icon,
+};
 pub use file::{FileDialogEvent, OpenDialog, SaveDialog, SaveTarget};
 pub use find::{FindEvent, FindOptions, FindReplace, find_next, find_ranges, replace_all};
 pub use modal::init;

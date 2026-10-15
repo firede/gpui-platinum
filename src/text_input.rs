@@ -72,6 +72,7 @@ actions!(
 
 /// Register the text editing bindings once when the application starts.
 pub fn init(cx: &mut App) {
+    crate::font::init(cx);
     cx.bind_keys([
         KeyBinding::new("backspace", Backspace, Some("PlatinumText")),
         KeyBinding::new("delete", Delete, Some("PlatinumText")),
@@ -208,7 +209,6 @@ pub struct TextField {
     scroll_x: f32,
     scroll_y: f32,
     selecting: bool,
-    scrollbar_drag: Option<f32>,
     preferred_x: Option<f32>,
     preceding_line: bool,
     reveal_caret: bool,
@@ -258,7 +258,6 @@ impl TextField {
             scroll_x: 0.,
             scroll_y: 0.,
             selecting: false,
-            scrollbar_drag: None,
             preferred_x: None,
             preceding_line: false,
             reveal_caret: false,
@@ -316,7 +315,7 @@ impl TextField {
 
     pub fn size(mut self, width: f32, height: f32) -> Self {
         self.width = width.max(24.);
-        self.height = height.max(22.);
+        self.height = height.max(if self.borderless { 18. } else { 22. });
         self
     }
 
@@ -440,7 +439,7 @@ impl TextField {
 
     pub fn set_size(&mut self, width: f32, height: f32, cx: &mut Context<Self>) {
         self.width = width.max(24.);
-        self.height = height.max(22.);
+        self.height = height.max(if self.borderless { 18. } else { 22. });
         self.activity(cx);
     }
 
@@ -667,6 +666,7 @@ impl TextField {
             self.replace_text_in_range(None, "\n", window, cx);
         } else {
             cx.emit(InputEvent::Submitted);
+            cx.propagate();
         }
     }
 
@@ -721,26 +721,6 @@ impl TextField {
             return;
         }
         window.focus(&self.focus_handle, cx);
-        if let Some(bounds) = self.bounds {
-            let x = f32::from(event.position.x - bounds.left());
-            if self.multiline && x >= f32::from(bounds.size.width) - SCROLLBAR_WIDTH - 1. {
-                let y = f32::from(event.position.y - bounds.top());
-                let (thumb_y, thumb_height) = self.scrollbar_thumb();
-                if y < 17. {
-                    self.scroll_y = (self.scroll_y - LINE_HEIGHT).max(0.);
-                } else if y >= f32::from(bounds.size.height) - 17. {
-                    self.scroll_y = (self.scroll_y + LINE_HEIGHT).min(self.max_scroll());
-                } else if y >= thumb_y && y <= thumb_y + thumb_height {
-                    self.scrollbar_drag = Some(y - thumb_y);
-                } else {
-                    let direction = if y < thumb_y { -1. } else { 1. };
-                    self.scroll_y = (self.scroll_y + direction * self.viewport_height())
-                        .clamp(0., self.max_scroll());
-                }
-                cx.notify();
-                return;
-            }
-        }
         let (row, index) = self.position_at(event.position);
         if event.click_count >= 3 {
             let line = &self.lines[row];
@@ -760,22 +740,13 @@ impl TextField {
 
     fn on_mouse_up(&mut self, _: &MouseUpEvent, _: &mut Window, _: &mut Context<Self>) {
         self.selecting = false;
-        self.scrollbar_drag = None;
     }
 
     fn on_mouse_move(&mut self, event: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
         if self.disabled || !event.dragging() {
             return;
         }
-        if let (Some(grab), Some(bounds)) = (self.scrollbar_drag, self.bounds) {
-            let (_, thumb_height) = self.scrollbar_thumb();
-            let track = f32::from(bounds.size.height) - 34. - thumb_height;
-            if track > 0. {
-                let y = f32::from(event.position.y - bounds.top()) - 17. - grab;
-                self.scroll_y = (y / track * self.max_scroll()).clamp(0., self.max_scroll());
-                cx.notify();
-            }
-        } else if self.selecting {
+        if self.selecting {
             let (row, index) = self.position_at(event.position);
             self.buffer.select(index, true);
             self.activity(cx);
@@ -791,19 +762,6 @@ impl TextField {
             .clamp(0., self.max_scroll());
         cx.stop_propagation();
         cx.notify();
-    }
-
-    fn scrollbar_thumb(&self) -> (f32, f32) {
-        let track = (self.height - 34.).max(1.);
-        let total = self.content_height();
-        let height = (track * self.viewport_height() / total).clamp(14_f32.min(track), track);
-        let travel = track - height;
-        let top = if self.max_scroll() > 0. {
-            self.scroll_y / self.max_scroll() * travel
-        } else {
-            0.
-        };
-        (17. + top, height)
     }
 
     fn layout(&mut self, bounds: Bounds<Pixels>) {
@@ -920,8 +878,8 @@ impl EntityInputHandler for TextField {
         Some(self.buffer.text.encode_utf16().count())
     }
 
-    fn accepts_text_input(&self, _: &mut Window, _: &mut Context<Self>) -> bool {
-        !self.disabled && !self.read_only
+    fn accepts_text_input(&self, window: &mut Window, _: &mut Context<Self>) -> bool {
+        !self.disabled && !self.read_only && self.focus_handle.is_focused(window)
     }
 
     fn marked_text_range(&self, _: &mut Window, _: &mut Context<Self>) -> Option<Range<usize>> {
@@ -940,10 +898,10 @@ impl EntityInputHandler for TextField {
         &mut self,
         range: Option<Range<usize>>,
         text: &str,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.disabled || self.read_only {
+        if self.disabled || self.read_only || !self.focus_handle.is_focused(window) {
             return;
         }
         let text = self.normalize_text(text);
@@ -960,10 +918,10 @@ impl EntityInputHandler for TextField {
         range: Option<Range<usize>>,
         text: &str,
         selection: Option<Range<usize>>,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.disabled || self.read_only {
+        if self.disabled || self.read_only || !self.focus_handle.is_focused(window) {
             return;
         }
         let text = self.normalize_text(text);
@@ -1008,6 +966,7 @@ impl TextField {
         let origin = point(bounds.origin.x.round(), bounds.origin.y.round());
         let face = if self.disabled { GRAY_2 } else { WHITE };
         let ink = if self.disabled { GRAY_8 } else { BLACK };
+        let inactive = crate::window::content_is_inactive();
         let mut pen = Pen::new(width, height);
         if self.borderless {
             pen.rect(0, 0, width, height, face);
@@ -1018,10 +977,16 @@ impl TextField {
                 1,
                 width - 2,
                 height - 2,
-                if self.disabled { GRAY_6 } else { BLACK },
+                if inactive {
+                    GRAY_8
+                } else if self.disabled {
+                    GRAY_6
+                } else {
+                    BLACK
+                },
             );
             pen.rect(2, 2, width - 4, height - 4, face);
-            if self.focused && !self.disabled {
+            if self.focused && !self.disabled && !inactive {
                 pen.frame(0, 0, width, height, self.theme.accent.dark);
             }
         }
@@ -1031,43 +996,14 @@ impl TextField {
             } else {
                 2
             };
-        if self.multiline {
-            let x = width - SCROLLBAR_WIDTH as i32 - 1;
-            pen.rect(x, 1, SCROLLBAR_WIDTH as i32, height - 2, GRAY_2);
-            pen.vline(x, 1, height - 2, BLACK);
-            for y in 17..height - 17 {
-                for dx in 1..15 {
-                    if (dx + y) % 2 == 0 {
-                        pen.dot(x + dx, y, GRAY_4);
-                    }
-                }
-            }
-            for (y, down) in [(1, false), (height - 17, true)] {
-                pen.frame(x, y, 16, 16, BLACK);
-                pen.bevel(x + 1, y + 1, 14, 14, WHITE, GRAY_7);
-                for row in 0..4 {
-                    let dy = if down { 5 + row } else { 8 - row };
-                    pen.hline(x + 4 + row, y + dy, 7 - row * 2, ink);
-                }
-            }
-            if self.max_scroll() > 0. {
-                let (top, thumb_height) = self.scrollbar_thumb();
-                let y = top.round() as i32;
-                let h = thumb_height.round() as i32;
-                pen.rect(x + 1, y, 14, h, self.theme.accent.mid);
-                pen.frame(x, y, 16, h, BLACK);
-                pen.bevel(x + 1, y + 1, 14, h - 2, WHITE, self.theme.accent.dark);
-                for dy in [-2, 0, 2] {
-                    pen.hline(x + 4, y + h / 2 + dy, 8, self.theme.accent.dark);
-                }
-            }
-        }
         pen.paint(origin, window);
 
         let mut text = Pen::new(width, height);
         let selection = self.buffer.selection();
         let top = self.text_top(height as f32);
-        let selection_color = if self.focused {
+        let selection_color = if inactive {
+            GRAY_4
+        } else if self.focused {
             self.theme.accent.light
         } else {
             GRAY_3
@@ -1143,7 +1079,7 @@ impl TextField {
                 GRAY_7,
             );
         }
-        if self.focused && !self.disabled && self.blink_on && selection.is_empty() {
+        if self.focused && !self.disabled && !inactive && self.blink_on && selection.is_empty() {
             let (row, x) = self.cursor_position();
             text.vline(
                 (self.document_left + x - self.scroll_x).round() as i32,
@@ -1192,28 +1128,43 @@ fn paint_styled_text(
 ) {
     let font = style.font();
     let scale = style.scale.clamp(1, 4) as i32;
-    for ch in text.chars() {
-        if ch == '\t' {
+    for grapheme in text.graphemes(true) {
+        if grapheme == "\t" {
             x += font.glyph_or_replacement(' ', language).advance * 4 * scale;
             continue;
         }
-        let glyph = font.glyph_or_replacement(ch, language);
-        let east_asian = matches!(ch as u32, 0x1100..=0x11ff | 0x2e80..=0xa4cf | 0xac00..=0xd7af | 0xf900..=0xfaff | 0xfe30..=0xffef | 0x20000..=0x3134f);
-        glyph.for_each_run(|dx, dy, width| {
-            let slant = if style.italic && !east_asian {
-                (-dy + 1).div_euclid(2)
-            } else {
-                0
-            };
-            pen.rect(
-                x + (dx + slant) * scale,
-                baseline + dy * scale,
-                width * scale,
-                scale,
+        if !font.has_bitmap_grapheme(grapheme, language)
+            && let Some(advance) = pen.system_text(
+                (x, baseline),
+                grapheme,
+                font,
                 color,
-            );
-        });
-        x += glyph.advance * scale;
+                scale as u8,
+                style.italic,
+            )
+        {
+            x += advance;
+            continue;
+        }
+        for ch in grapheme.chars() {
+            let glyph = font.glyph_or_replacement(ch, language);
+            let east_asian = matches!(ch as u32, 0x1100..=0x11ff | 0x2e80..=0xa4cf | 0xac00..=0xd7af | 0xf900..=0xfaff | 0xfe30..=0xffef | 0x20000..=0x3134f);
+            glyph.for_each_run(|dx, dy, width| {
+                let slant = if style.italic && !east_asian {
+                    (-dy + 1).div_euclid(2)
+                } else {
+                    0
+                };
+                pen.rect(
+                    x + (dx + slant) * scale,
+                    baseline + dy * scale,
+                    width * scale,
+                    scale,
+                    color,
+                );
+            });
+            x += glyph.advance * scale;
+        }
     }
 }
 
@@ -1276,16 +1227,11 @@ fn layout_document_lines(
         let visible = if password { "•" } else { grapheme };
         let font = style.font();
         let scale = style.scale.clamp(1, 4) as i32;
-        let mut advance = visible
-            .chars()
-            .map(|ch| {
-                if ch == '\t' {
-                    font.glyph_or_replacement(' ', language).advance * 4
-                } else {
-                    font.glyph_or_replacement(ch, language).advance
-                }
-            })
-            .sum::<i32>();
+        let mut advance = if visible == "\t" {
+            font.advance(" ", language) * 4
+        } else {
+            font.advance(visible, language)
+        };
         let next_style = rich.and_then(|rich| rich.styles.get(character)).copied();
         if style.italic && next_style.is_none_or(|next| !next.italic || next.scale != style.scale) {
             advance += Font::Small.ascent() / 2;
@@ -1367,8 +1313,16 @@ fn layout_document_lines(
 impl Render for TextField {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.focused = self.focus_handle.is_focused(window);
+        let bounds = self.bounds.unwrap_or_else(|| {
+            Bounds::new(point(px(0.), px(0.)), size(px(self.width), px(self.height)))
+        });
+        self.layout(Bounds::new(
+            bounds.origin,
+            size(px(self.width), px(self.height)),
+        ));
         let layout_entity = cx.entity();
         let paint_entity = cx.entity();
+        let scroll_entity = cx.entity();
         let role = if self.password {
             Role::PasswordInput
         } else if self.multiline {
@@ -1381,8 +1335,11 @@ impl Render for TextField {
         } else {
             self.buffer.text.clone()
         };
+        let disabled = self.disabled;
+        let read_only = self.read_only;
         div()
             .id("platinum-text")
+            .relative()
             .w(px(self.width))
             .h(px(self.height))
             .flex_shrink_0()
@@ -1394,6 +1351,15 @@ impl Render for TextField {
             .aria_label(self.label.clone())
             .aria_placeholder(self.placeholder.clone())
             .aria_value(value)
+            .a11y_synthetic_children(move |builder| {
+                let node = builder.parent_node();
+                if disabled {
+                    node.set_disabled();
+                }
+                if read_only {
+                    node.set_read_only();
+                }
+            })
             .cursor(if self.disabled {
                 CursorStyle::Arrow
             } else {
@@ -1532,6 +1498,29 @@ impl Render for TextField {
                 )
                 .size_full(),
             )
+            .when(self.multiline, |element| {
+                element.child(
+                    div().absolute().right(px(1.)).top(px(1.)).child(
+                        crate::ScrollBar::new(
+                            "text-scroll",
+                            self.scroll_y as f64,
+                            self.viewport_height() as f64,
+                            self.content_height() as f64,
+                        )
+                        .length((self.height - 2.) as i32)
+                        .step(LINE_HEIGHT as f64)
+                        .theme(self.theme)
+                        .tab_stop(false)
+                        .disabled(self.disabled)
+                        .on_change(move |value, _, cx| {
+                            scroll_entity.update(cx, |field, cx| {
+                                field.scroll_y = (value as f32).clamp(0., field.max_scroll());
+                                cx.notify();
+                            })
+                        }),
+                    ),
+                )
+            })
     }
 }
 

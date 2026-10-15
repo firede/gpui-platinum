@@ -1,15 +1,19 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+    time::Duration,
+};
 
-use chrono::{Datelike, Local};
+use chrono::{DateTime, Datelike, FixedOffset, Local};
 use gpui::{
-    AnyView, App, Bounds, Context, DispatchPhase, Entity, FocusHandle, KeyDownEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, RenderImage, Role, Window,
-    actions, canvas, div, img, point, prelude::*, px,
+    AnyView, App, Bounds, Context, DispatchPhase, Entity, FocusHandle, Focusable, KeyDownEvent,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, RenderImage, Role,
+    Window, actions, canvas, div, img, point, prelude::*, px,
 };
 use gpui_platinum::locale::desk;
 use gpui_platinum::{
-    Font, IconKind, Language, Menu, MenuBar, MenuChoice, MenuItem, PlatinumWindow, PopupWindow,
-    PopupWindowEvent, Theme, WindowEvent, WindowState, button, label_in,
+    Font, IconDrag, IconKind, Language, Menu, MenuBar, MenuChoice, MenuItem, PlatinumWindow,
+    PopupWindow, PopupWindowEvent, Theme, WindowEvent, WindowState, button, label_in,
     models::{FileTree, NodeKind, TreeNode},
     paint::drawing,
     theme::*,
@@ -17,11 +21,13 @@ use gpui_platinum::{
 
 use super::{
     accessories::{
-        Accessories, AppKind, ClockChanged, LanguageChanged, PATTERNS, PatternChanged, ThemeChanged,
+        Accessories, AppKind, ClockChanged, LanguageChanged, PATTERNS, PanelSettings,
+        PatternChanged, ThemeChanged,
     },
     catalog::Controls,
     documents::{DocumentKind, Documents, DocumentsEvent},
     file_apps::{About, Cabinet, FileAppEvent, FindFile, GetInfo, count, message},
+    menu_icons::{DESK_LOGO, application_icon},
 };
 
 actions!(platinum_desktop, [NextFocus, PreviousFocus]);
@@ -39,6 +45,12 @@ enum Launch {
     About,
 }
 impl Launch {
+    fn application_key(self) -> &'static str {
+        match self {
+            Self::Folder(_) | Self::Info(_) | Self::About | Self::Find => "desk",
+            _ => self.title_key(),
+        }
+    }
     fn title_key(self) -> &'static str {
         match self {
             Self::Folder(_) | Self::Info(_) => "desk",
@@ -63,25 +75,25 @@ impl Launch {
     fn size(self) -> (i32, i32) {
         match self {
             Self::Folder(_) => (340, 230),
-            Self::Controls => (820, 500),
-            Self::Find => (492, 292),
+            Self::Controls => (620, 380),
+            Self::Find => (470, 270),
             Self::Info(_) => (262, 338),
             Self::About => (332, 232),
-            Self::Document(DocumentKind::Jotter) => (286, 280),
-            Self::Document(DocumentKind::Scribe) => (570, 430),
-            Self::Document(DocumentKind::Ledger) => (600, 350),
+            Self::Document(DocumentKind::Jotter) => (240, 220),
+            Self::Document(DocumentKind::Scribe) => (420, 300),
+            Self::Document(DocumentKind::Ledger) => (360, 240),
             Self::Accessory(kind) => {
                 let (width, height) = match kind {
                     AppKind::Calculator => (156, 196),
-                    AppKind::Puzzle => (168, 194),
-                    AppKind::AlarmClock => (236, 170),
+                    AppKind::Puzzle => (184, 214),
+                    AppKind::AlarmClock => (220, 150),
                     AppKind::Appearance => (300, 250),
                     AppKind::DateTime => (390, 240),
                     AppKind::Sound => (300, 220),
                     AppKind::Mouse => (300, 200),
                     AppKind::Language => (300, 280),
                 };
-                (width + 12, height + 32)
+                (width, height)
             }
         }
     }
@@ -98,6 +110,17 @@ enum Content {
     About(Entity<About>),
 }
 impl Content {
+    fn focus_handle(&self, cx: &App) -> Option<FocusHandle> {
+        Some(match self {
+            Self::Cabinet(view) => view.focus_handle(cx),
+            Self::Accessory(view) => view.focus_handle(cx),
+            Self::Document(view) => view.focus_handle(cx),
+            Self::Controls(view) => view.focus_handle(cx),
+            Self::Find(view) => view.focus_handle(cx),
+            Self::Info(view) => view.focus_handle(cx),
+            Self::About(_) => return None,
+        })
+    }
     fn view(&self) -> AnyView {
         match self {
             Self::Cabinet(view) => view.clone().into(),
@@ -137,6 +160,7 @@ impl Content {
             Self::Find(view) => view.update(cx, |view, cx| view.set_size(width, height, cx)),
             Self::Document(view) => view.update(cx, |view, cx| view.set_size(width, height, cx)),
             Self::About(view) => view.update(cx, |view, cx| view.set_size(width, height, cx)),
+            Self::Accessory(view) => view.update(cx, |view, cx| view.set_size(width, height, cx)),
             _ => {}
         }
     }
@@ -148,6 +172,8 @@ struct DeskWindow {
     content: Content,
     frame: Entity<PlatinumWindow>,
     popup: Option<Entity<PopupWindow>>,
+    focus_scope: FocusHandle,
+    last_focus: Option<FocusHandle>,
 }
 
 struct BackgroundCache {
@@ -166,6 +192,11 @@ enum Command {
     CloseId(usize),
     Trash,
     TrashNode(usize),
+    Drop {
+        source: usize,
+        target: usize,
+        copying: bool,
+    },
     PutAway,
     Info,
     Duplicate,
@@ -194,6 +225,7 @@ pub struct Desktop {
     trash_parents: HashMap<usize, usize>,
     windows: Vec<DeskWindow>,
     active: Option<usize>,
+    focused_window: Option<usize>,
     next_id: usize,
     menu: Entity<MenuBar>,
     application_menu: Entity<MenuBar>,
@@ -205,9 +237,13 @@ pub struct Desktop {
     language: Language,
     pattern: usize,
     clock_offset: i64,
+    fixed_time: Option<DateTime<FixedOffset>>,
+    panel_settings: PanelSettings,
     show_date: bool,
     balloons: bool,
     emptying: bool,
+    empty_focus: FocusHandle,
+    before_empty_focus: Option<FocusHandle>,
     selected_icon: Option<usize>,
     icon_positions: [Option<Point<i32>>; 2],
     icon_drag: Option<(usize, Point<Pixels>, Point<i32>)>,
@@ -217,6 +253,9 @@ pub struct Desktop {
 
 impl Desktop {
     pub fn new(language: Language, scene: bool, cx: &mut Context<Self>) -> Self {
+        let fixed_time = scene.then(|| {
+            DateTime::parse_from_rfc3339("2026-10-14T09:41:00Z").expect("reference scene time")
+        });
         let mut model = FileTree::sample();
         model.roots.push(TreeNode::new(
             TRASH,
@@ -249,6 +288,7 @@ impl Desktop {
                     _ => None,
                 };
                 if let Some(launch) = launch {
+                    node.set_data(launch);
                     apps.insert(node.id, launch);
                     labels.insert(node.id, launch.title_key());
                     node.title = desk(language, launch.title_key());
@@ -281,6 +321,16 @@ impl Desktop {
             }
         }
         scan(&mut model.roots, language, &mut app_nodes, &mut node_labels);
+        sort_folders(&mut model.roots);
+        if let Some(time) = fixed_time {
+            fn set_modified(nodes: &mut [TreeNode], time: std::time::SystemTime) {
+                for node in nodes {
+                    node.modified = time;
+                    set_modified(&mut node.children, time);
+                }
+            }
+            set_modified(&mut model.roots, time.into());
+        }
         node_labels.insert(TRASH, "wastebasket");
         let files = cx.new(|_| model);
         let comments = cx.new(|_| HashMap::new());
@@ -327,6 +377,7 @@ impl Desktop {
             trash_parents: HashMap::new(),
             windows: Vec::new(),
             active: None,
+            focused_window: None,
             next_id: 1,
             menu,
             application_menu,
@@ -338,9 +389,13 @@ impl Desktop {
             language,
             pattern: 0,
             clock_offset: 0,
+            fixed_time,
+            panel_settings: PanelSettings::default(),
             show_date: false,
             balloons: false,
             emptying: false,
+            empty_focus: cx.focus_handle(),
+            before_empty_focus: None,
             selected_icon: None,
             icon_positions: [None, None],
             icon_drag: None,
@@ -351,9 +406,8 @@ impl Desktop {
         if scene {
             for (kind, x, y, width, height) in [
                 (Launch::Folder(DISK), 24., 20., 360, 220),
-                (Launch::Document(DocumentKind::Jotter), 420., 250., 260, 250),
-                (Launch::Accessory(AppKind::Calculator), 620., 40., 168, 228),
-                (Launch::Accessory(AppKind::Puzzle), 120., 290., 180, 226),
+                (Launch::Document(DocumentKind::Jotter), 420., 250., 240, 200),
+                (Launch::Accessory(AppKind::Calculator), 620., 40., 156, 196),
             ] {
                 let id = this.launch(kind, cx);
                 if let Some(entry) = this.windows.iter().find(|entry| entry.id == id) {
@@ -364,9 +418,50 @@ impl Desktop {
                         frame.state.height = height as f32;
                         cx.notify();
                     });
-                    entry.content.set_size(width - 12, height - 32, cx);
+                    entry.content.set_size(width - 12, height - 25, cx);
+                    if let Content::Accessory(view) = &entry.content {
+                        view.update(cx, |view, cx| {
+                            view.calculate(&["1", "2", "×", "3", "+", "6", "="], cx)
+                        });
+                    }
                 }
             }
+            for (key, x, width, height, open) in [
+                ("documents", 610., 250, 104, true),
+                ("applications", 390., 200, 150, false),
+            ] {
+                let folder = this
+                    .node_labels
+                    .iter()
+                    .find(|(_, label)| **label == key)
+                    .map(|(id, _)| *id)
+                    .unwrap();
+                let id = this.launch(Launch::Folder(folder), cx);
+                let entry = this.windows.iter().find(|entry| entry.id == id).unwrap();
+                entry.frame.update(cx, |frame, cx| {
+                    frame.state.x = x;
+                    frame.state.width = width as f32;
+                    cx.notify();
+                });
+                this.toggle_dock(cx);
+                let entry = this.windows.iter().find(|entry| entry.id == id).unwrap();
+                entry.popup.as_ref().unwrap().update(cx, |popup, cx| {
+                    popup.set_size(width, height, cx);
+                    popup.set_open(open, cx);
+                });
+                entry.content.set_size(width - 12, height - 6, cx);
+            }
+            let id = this.launch(Launch::Accessory(AppKind::Puzzle), cx);
+            this.windows
+                .iter()
+                .find(|entry| entry.id == id)
+                .unwrap()
+                .frame
+                .update(cx, |frame, cx| {
+                    frame.state.x = 120.;
+                    frame.state.y = 290.;
+                    cx.notify();
+                });
         }
         this
     }
@@ -421,11 +516,27 @@ impl Desktop {
             entry
                 .frame
                 .update(cx, |frame, cx| frame.set_title(title.clone(), cx));
+            let path = self.window_path(entry.kind, cx);
+            entry.frame.update(cx, |frame, cx| frame.set_path(path, cx));
             if let Some(popup) = &entry.popup {
                 popup.update(cx, |popup, cx| popup.set_title(title, cx));
             }
         }
         self.refresh_about(cx);
+    }
+    fn window_path(&self, kind: Launch, cx: &App) -> Vec<String> {
+        let Launch::Folder(id) = kind else {
+            return Vec::new();
+        };
+        if id == TRASH {
+            return Vec::new();
+        }
+        let files = self.files.read(cx);
+        let mut path = files.path(id);
+        path.pop();
+        path.into_iter()
+            .filter_map(|id| files.find(id).map(|node| node.title.clone()))
+            .collect()
     }
     fn refresh_about(&mut self, cx: &mut Context<Self>) {
         let applications: Vec<_> = self
@@ -453,7 +564,7 @@ impl Desktop {
                         cx.notify();
                     });
                     view.update(cx, |view, cx| {
-                        view.set_size(state.width as i32 - 12, height - 32, cx)
+                        view.set_size(state.width as i32 - 12, height - 25, cx)
                     });
                 }
             }
@@ -469,6 +580,9 @@ impl Desktop {
             self.windows.push(entry);
             self.active = Some(id);
             for entry in &self.windows {
+                if let Some(popup) = &entry.popup {
+                    popup.update(cx, |popup, cx| popup.set_active(entry.id == id, cx));
+                }
                 if entry.id != id {
                     entry
                         .frame
@@ -481,7 +595,65 @@ impl Desktop {
             cx.notify();
         }
     }
+    fn sync_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.emptying {
+            return;
+        }
+        if let Some(focus) = window.focused(cx) {
+            for entry in &mut self.windows {
+                if entry.focus_scope.contains(&focus, window) {
+                    entry.last_focus = Some(focus.clone());
+                }
+            }
+        }
+        if self.focused_window == self.active {
+            return;
+        }
+        self.focused_window = self.active;
+        let target = self.front().map(|entry| {
+            if let Some(popup) = &entry.popup
+                && !popup.read(cx).is_open()
+            {
+                popup.focus_handle(cx)
+            } else if entry.frame.read(cx).state.collapsed {
+                entry.focus_scope.clone()
+            } else {
+                entry
+                    .last_focus
+                    .clone()
+                    .or_else(|| entry.content.focus_handle(cx))
+                    .unwrap_or_else(|| entry.focus_scope.clone())
+            }
+        });
+        window.focus(target.as_ref().unwrap_or(&self.focus), cx);
+    }
+    fn cycle_focus(&self, backwards: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(entry) = self.front() else {
+            window.focus(&self.focus, cx);
+            return;
+        };
+        let initial = window.focused(cx);
+        for _ in 0..1024 {
+            if backwards {
+                window.focus_prev(cx);
+            } else {
+                window.focus_next(cx);
+            }
+            if entry.focus_scope.contains_focused(window, cx) {
+                return;
+            }
+            if window.focused(cx) == initial {
+                break;
+            }
+        }
+        window.focus(&entry.focus_scope, cx);
+    }
     fn remove_window(&mut self, id: usize, cx: &mut Context<Self>) {
+        if let Some(entry) = self.windows.iter().find(|entry| entry.id == id)
+            && let Content::Accessory(view) = &entry.content
+        {
+            view.read(cx).store_settings(&mut self.panel_settings, cx);
+        }
         self.windows.retain(|entry| entry.id != id);
         if self.active == Some(id) {
             self.active = self.windows.last().map(|entry| entry.id);
@@ -502,6 +674,17 @@ impl Desktop {
             FileAppEvent::Info(id) => self.pending = Some(Command::Launch(Launch::Info(id))),
             FileAppEvent::Trash(id) => self.pending = Some(Command::TrashNode(id)),
             FileAppEvent::Selection(_) => self.refresh_menus(cx),
+            FileAppEvent::Drop {
+                source,
+                target,
+                copying,
+            } => {
+                self.pending = Some(Command::Drop {
+                    source,
+                    target,
+                    copying,
+                })
+            }
         }
         cx.notify();
     }
@@ -547,6 +730,7 @@ impl Desktop {
                 })
                 .detach();
                 cx.subscribe(&view, |this, _, event: &LanguageChanged, cx| {
+                    this.panel_settings.language_choice = event.1;
                     this.set_language(event.0, cx)
                 })
                 .detach();
@@ -572,8 +756,10 @@ impl Desktop {
                 })
                 .detach();
                 view.update(cx, |view, cx| {
+                    view.restore_settings(&self.panel_settings, cx);
                     view.set_pattern(self.pattern, cx);
                     view.set_clock_offset(self.clock_offset, cx);
+                    view.set_fixed_time(self.fixed_time, cx);
                 });
                 Content::Accessory(view)
             }
@@ -598,7 +784,7 @@ impl Desktop {
         content.set_theme(self.theme, cx);
         content.set_language(self.language, cx);
         let (width, height) = kind.size();
-        content.set_size(width - 12, height - 32, cx);
+        content.set_size(width - 12, height - 25, cx);
         let title = if let Content::Document(view) = &content {
             view.read(cx).title().to_owned()
         } else {
@@ -609,10 +795,16 @@ impl Desktop {
         let theme = self.theme;
         let frame = cx.new(|cx| {
             PlatinumWindow::new(title, cx)
-                .position(24. + cascade * 28., 20. + cascade * 24.)
+                .position(40. + cascade * 22., 16. + cascade * 22.)
                 .size(width as f32, height as f32)
                 .theme(theme)
+                .options(gpui_platinum::window::PlatinumWindowOptions {
+                    no_grow: matches!(kind, Launch::Accessory(_) | Launch::Info(_) | Launch::About),
+                    no_zoom: matches!(kind, Launch::Accessory(_) | Launch::Info(_) | Launch::About),
+                    ..Default::default()
+                })
                 .language(self.language)
+                .path(self.window_path(kind, cx))
                 .content(view)
                 .zoom_to(WindowState {
                     x: 8.,
@@ -633,11 +825,21 @@ impl Desktop {
                     let state = frame.read(cx).state;
                     entry
                         .content
-                        .set_size(state.width as i32 - 12, state.height as i32 - 32, cx);
+                        .set_size(state.width as i32 - 12, state.height as i32 - 25, cx);
                 }
                 cx.notify();
             }
             WindowEvent::Moved => cx.notify(),
+            WindowEvent::PathChosen(index) => {
+                if let Launch::Folder(folder) = kind {
+                    let mut path = this.files.read(cx).path(folder);
+                    path.pop();
+                    if let Some(folder) = path.get(*index) {
+                        this.pending = Some(Command::OpenNode(*folder));
+                        cx.notify();
+                    }
+                }
+            }
         })
         .detach();
         self.windows.push(DeskWindow {
@@ -646,6 +848,8 @@ impl Desktop {
             content,
             frame,
             popup: None,
+            focus_scope: cx.focus_handle(),
+            last_focus: None,
         });
         self.raise(id, cx);
         id
@@ -656,9 +860,21 @@ impl Desktop {
         };
         if node.kind.is_container() {
             self.launch(Launch::Folder(id), cx);
-        } else if let Some(app) = self.app_nodes.get(&id).copied() {
+        } else if let Some(app) = self
+            .app_nodes
+            .get(&id)
+            .copied()
+            .or_else(|| node.data::<Launch>().copied())
+        {
             self.launch(app, cx);
         } else if node.kind == NodeKind::Document {
+            if let Some(id) = self.windows.iter().find_map(|entry| match &entry.content {
+                Content::Document(view) if view.read(cx).file() == Some(id) => Some(entry.id),
+                _ => None,
+            }) {
+                self.raise(id, cx);
+                return;
+            }
             let window_id = self.launch(Launch::Document(DocumentKind::Scribe), cx);
             if let Some(DeskWindow {
                 content: Content::Document(view),
@@ -697,6 +913,7 @@ impl Desktop {
                     node.title = desk(language, key);
                 }
             }
+            sort_folders(&mut files.roots);
             cx.notify();
         });
         for entry in &self.windows {
@@ -736,6 +953,50 @@ impl Desktop {
             self.trash_parents.insert(id, parent);
         }
         self.refresh_menus(cx);
+    }
+    fn drop_node(&mut self, source: usize, target: usize, copying: bool, cx: &mut Context<Self>) {
+        if target == TRASH {
+            self.move_to_trash(source, cx);
+            return;
+        }
+        let files = self.files.read(cx);
+        let Some(node) = files.find(source) else {
+            return;
+        };
+        if !matches!(node.kind, NodeKind::Document | NodeKind::Folder)
+            || files.path(target).contains(&source)
+            || files.path(source).contains(&TRASH)
+        {
+            return;
+        }
+        if !copying {
+            self.files.update(cx, |files, cx| {
+                files.move_node(source, target);
+                cx.notify();
+            });
+            return;
+        }
+        let original = node.title.clone();
+        let Some(folder) = files.find(target).filter(|node| node.kind.is_container()) else {
+            return;
+        };
+        let mut title = original.clone();
+        if folder.children.iter().any(|node| node.title == title) {
+            title = message(self.language, "copyName", &[("name", original.clone())]);
+            let mut number = 2;
+            while folder.children.iter().any(|node| node.title == title) {
+                title = message(
+                    self.language,
+                    "copyNameN",
+                    &[("name", original.clone()), ("n", number.to_string())],
+                );
+                number += 1;
+            }
+        }
+        self.files.update(cx, |files, cx| {
+            files.duplicate(source, target, title);
+            cx.notify();
+        });
     }
     fn close(&mut self, id: usize, window: &mut Window, cx: &mut Context<Self>) {
         let content = self
@@ -782,6 +1043,11 @@ impl Desktop {
                 }
             }
             Command::TrashNode(id) => self.move_to_trash(id, cx),
+            Command::Drop {
+                source,
+                target,
+                copying,
+            } => self.drop_node(source, target, copying, cx),
             Command::PutAway => {
                 if let Some(id) = self.selected_node(cx) {
                     let parent = self
@@ -891,6 +1157,7 @@ impl Desktop {
             Command::Mode(mode) => {
                 if let Some(view) = self.cabinet() {
                     view.update(cx, |view, cx| view.set_mode(mode, cx));
+                    window.focus(&view.focus_handle(cx), cx);
                 }
             }
             Command::Sort(column) => {
@@ -900,7 +1167,11 @@ impl Desktop {
             }
             Command::Dock => self.toggle_dock(cx),
             Command::Cleanup => self.icon_positions = [None, None],
-            Command::EmptyTrash => self.emptying = true,
+            Command::EmptyTrash => {
+                self.before_empty_focus = window.focused(cx);
+                self.emptying = true;
+                window.focus(&self.empty_focus, cx);
+            }
             Command::ConfirmEmpty => {
                 self.files.update(cx, |files, cx| {
                     if let Some(trash) = files.find_mut(TRASH) {
@@ -910,20 +1181,31 @@ impl Desktop {
                 });
                 self.trash_parents.clear();
                 self.emptying = false;
+                if let Some(focus) = self.before_empty_focus.take() {
+                    window.focus(&focus, cx);
+                }
             }
             Command::Balloons => self.balloons = !self.balloons,
             Command::HideCurrent | Command::HideOthers | Command::ShowAll => {
+                let current_app = self
+                    .front()
+                    .map(|entry| entry.kind.application_key())
+                    .unwrap_or("desk");
                 for entry in &self.windows {
                     let hide = match command {
-                        Command::HideCurrent => Some(entry.id) == self.active,
-                        Command::HideOthers => Some(entry.id) != self.active,
+                        Command::HideCurrent => entry.kind.application_key() == current_app,
+                        Command::HideOthers => entry.kind.application_key() != current_app,
                         _ => false,
                     };
                     entry.frame.update(cx, |frame, cx| {
                         frame.state.collapsed = hide;
                         cx.notify();
                     });
+                    if let Some(popup) = &entry.popup {
+                        popup.update(cx, |popup, cx| popup.set_open(!hide, cx));
+                    }
                 }
+                self.focused_window = None;
             }
         }
         self.refresh_menus(cx);
@@ -940,7 +1222,7 @@ impl Desktop {
             let state = self.windows[index].frame.read(cx).state;
             self.windows[index].content.set_size(
                 state.width as i32 - 12,
-                state.height as i32 - 32,
+                state.height as i32 - 25,
                 cx,
             );
             self.raise(id, cx);
@@ -963,13 +1245,29 @@ impl Desktop {
                 .content(content)
         });
         cx.subscribe(&popup, move |this, _, event, cx| {
+            if *event == PopupWindowEvent::Activated {
+                this.raise(id, cx);
+            }
+            if let PopupWindowEvent::Dropped { source, copying } = event
+                && let Some(DeskWindow {
+                    kind: Launch::Folder(target),
+                    ..
+                }) = this.windows.iter().find(|entry| entry.id == id)
+            {
+                this.pending = Some(Command::Drop {
+                    source: *source,
+                    target: *target,
+                    copying: *copying,
+                });
+                cx.notify();
+            }
             if *event == PopupWindowEvent::TornOff {
                 if let Some(entry) = this.windows.iter_mut().find(|entry| entry.id == id) {
                     entry.popup = None;
                     let state = entry.frame.read(cx).state;
                     entry
                         .content
-                        .set_size(state.width as i32 - 12, state.height as i32 - 32, cx);
+                        .set_size(state.width as i32 - 12, state.height as i32 - 25, cx);
                 }
                 this.raise(id, cx);
             }
@@ -1277,7 +1575,7 @@ impl Desktop {
             MenuItem::new(desk(language, "shutDown")).disabled(true),
         ];
         let mut menus = vec![
-            Menu::new(desk(language, "desk"), desk_items),
+            Menu::new(desk(language, "desk"), desk_items).icon(DESK_LOGO),
             Menu::new(desk(language, "menuFile"), file),
             Menu::new(desk(language, "menuEdit"), edit),
             Menu::new(desk(language, "menuView"), view),
@@ -1355,7 +1653,7 @@ impl Desktop {
             menu.set_menus(menus, cx);
             menu.set_language(language, cx);
         });
-        let app_name = desk(language, front_kind.map_or("desk", Launch::title_key));
+        let app_name = desk(language, front_kind.map_or("desk", Launch::application_key));
         let mut apps = vec![
             MenuItem::new(message(language, "hideApp", &[("name", app_name.clone())]))
                 .disabled(self.active.is_none()),
@@ -1369,10 +1667,13 @@ impl Desktop {
             Command::ShowAll,
             Command::ShowAll,
         ];
+        let mut seen = HashSet::new();
         for entry in self.windows.iter().rev() {
-            apps.push(
-                MenuItem::new(self.title(entry.kind, cx)).checked(self.active == Some(entry.id)),
-            );
+            let key = entry.kind.application_key();
+            if !seen.insert(key) {
+                continue;
+            }
+            apps.push(MenuItem::new(desk(language, key)).checked(app_name == desk(language, key)));
             self.app_commands.push(Command::Raise(entry.id));
         }
         if self.windows.is_empty() {
@@ -1380,7 +1681,11 @@ impl Desktop {
             self.app_commands.push(Command::ShowAll);
         }
         self.application_menu.update(cx, |menu, cx| {
-            menu.set_menus(vec![Menu::new(app_name, apps)], cx);
+            let icon = application_icon(front_kind.map_or("desk", Launch::application_key));
+            menu.set_menus(
+                vec![Menu::new(app_name, apps).icon(icon).icon_title(true)],
+                cx,
+            );
             menu.set_language(language, cx);
         });
     }
@@ -1390,6 +1695,9 @@ impl Desktop {
             match event.keystroke.key.as_str() {
                 "escape" => {
                     self.emptying = false;
+                    if let Some(focus) = self.before_empty_focus.take() {
+                        window.focus(&focus, cx);
+                    }
                     cx.notify();
                 }
                 "enter" => {
@@ -1421,6 +1729,29 @@ impl Desktop {
             cx.stop_propagation();
             return;
         }
+        if event.keystroke.modifiers.platform
+            && let Some(cabinet) = self.cabinet()
+        {
+            let cabinet = cabinet.read(cx);
+            let target = match event.keystroke.key.as_str() {
+                "up" => self
+                    .files
+                    .read(cx)
+                    .path(cabinet.folder())
+                    .iter()
+                    .rev()
+                    .nth(1)
+                    .copied(),
+                "down" => cabinet.selection(),
+                _ => None,
+            };
+            if let Some(target) = target {
+                self.pending = Some(Command::OpenNode(target));
+                cx.notify();
+                cx.stop_propagation();
+                return;
+            }
+        }
         if self
             .menu
             .update(cx, |menu, cx| menu.dispatch_shortcut(event, window, cx))
@@ -1448,12 +1779,8 @@ impl Desktop {
     fn icon_position(&self, index: usize) -> Point<i32> {
         self.icon_positions[index].unwrap_or_else(|| {
             point(
-                (f32::from(self.desk_bounds.size.width).round() as i32 - 84).max(0),
-                if index == 0 {
-                    12
-                } else {
-                    (f32::from(self.desk_bounds.size.height).round() as i32 - 76).max(76)
-                },
+                (f32::from(self.desk_bounds.size.width).round() as i32 - 92).max(0),
+                12 + index as i32 * 64,
             )
         })
     }
@@ -1468,6 +1795,9 @@ impl Desktop {
         self.active = None;
         self.selected_icon = Some(index);
         for entry in &self.windows {
+            if let Some(popup) = &entry.popup {
+                popup.update(cx, |popup, cx| popup.set_active(false, cx));
+            }
             entry
                 .frame
                 .update(cx, |frame, cx| frame.set_active(false, cx));
@@ -1514,7 +1844,10 @@ impl Desktop {
         image
     }
     fn clock_title(&self) -> String {
-        let now = Local::now() + chrono::Duration::seconds(self.clock_offset);
+        let now = self
+            .fixed_time
+            .unwrap_or_else(|| Local::now().fixed_offset())
+            + chrono::Duration::seconds(self.clock_offset);
         if self.show_date {
             match self.language {
                 Language::English => now.format("%a, %b %-d, %Y").to_string(),
@@ -1522,7 +1855,12 @@ impl Desktop {
                 _ => format!("{}年{}月{}日", now.year(), now.month(), now.day()),
             }
         } else {
-            now.format("%H:%M").to_string()
+            now.format(if self.language == Language::English {
+                "%-I:%M %p"
+            } else {
+                "%H:%M"
+            })
+            .to_string()
         }
     }
 }
@@ -1532,6 +1870,7 @@ impl Render for Desktop {
         if let Some(command) = self.pending.take() {
             self.execute(command, window, cx);
         }
+        self.sync_focus(window, cx);
         let viewport = window.viewport_size();
         let width = f32::from(viewport.width);
         let height = (f32::from(viewport.height) - 20.).max(1.);
@@ -1565,6 +1904,9 @@ impl Render for Desktop {
                             this.selected_icon = None;
                             this.active = None;
                             for entry in &this.windows {
+                                if let Some(popup) = &entry.popup {
+                                    popup.update(cx, |popup, cx| popup.set_active(false, cx));
+                                }
                                 entry
                                     .frame
                                     .update(cx, |frame, cx| frame.set_active(false, cx));
@@ -1644,8 +1986,9 @@ impl Render for Desktop {
                     "wastebasket"
                 },
             );
+            let title = Font::Small.truncate_in(&title, 76, language);
             let label_width = Font::Small.measure_in(&title, language) + 4;
-            let label_x = (position.x + (84 - label_width) / 2)
+            let label_x = (position.x + (80 - label_width) / 2)
                 .clamp(0, (width as i32 - label_width).max(0))
                 - position.x;
             let icon = div()
@@ -1653,20 +1996,29 @@ impl Render for Desktop {
                 .role(Role::Button)
                 .aria_label(title.clone())
                 .aria_selected(selected)
-                .w(px(84.))
-                .h(px(64.))
+                .w(px(80.))
+                .h(px(50.))
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |this, event, window, cx| {
                         this.icon_down(index, event, window, cx)
                     }),
                 )
-                .child(drawing(84., 64., move |pen, _, _| {
+                .on_drop(cx.listener(move |this, drag: &IconDrag, window, cx| {
+                    this.pending = Some(Command::Drop {
+                        source: drag.data,
+                        target: if index == 0 { DISK } else { TRASH },
+                        copying: window.modifiers().alt,
+                    });
+                    cx.notify();
+                    cx.stop_propagation();
+                }))
+                .child(drawing(80., 50., move |pen, _, _| {
                     pen.language = language;
                     gpui_platinum::draw_icon(
                         pen,
-                        26,
-                        4,
+                        24,
+                        0,
                         if index == 0 {
                             IconKind::Disk
                         } else if trash_full {
@@ -1678,14 +2030,14 @@ impl Render for Desktop {
                     );
                     pen.rect(
                         label_x,
-                        38,
+                        34,
                         label_width,
-                        13,
-                        if selected { theme.accent.dark } else { WHITE },
+                        12,
+                        if selected { BLACK } else { WHITE },
                     );
                     pen.text(
                         label_x + 2,
-                        48,
+                        43,
                         &title,
                         Font::Small,
                         if selected { WHITE } else { BLACK },
@@ -1695,8 +2047,8 @@ impl Render for Desktop {
                 .absolute()
                 .left(px(position.x as f32))
                 .top(px(position.y as f32))
-                .w(px(84.))
-                .h(px(64.));
+                .w(px(80.))
+                .h(px(50.));
             body = if self.balloons {
                 body.child(positioned.child(gpui_platinum::Balloon::new(
                     ("desk-help", index),
@@ -1715,56 +2067,69 @@ impl Render for Desktop {
             };
         }
         for entry in &self.windows {
-            if let Some(popup) = &entry.popup {
-                body = body.child(popup.clone());
+            let content = if let Some(popup) = &entry.popup {
+                popup.clone().into_any_element()
             } else {
-                body = body.child(entry.frame.clone());
-            }
-        }
-        let mut root = div()
-            .id("platinum-desktop")
-            .flex()
-            .flex_col()
-            .size_full()
-            .overflow_hidden()
-            .bg(gpui::rgb(WHITE))
-            .capture_key_down(cx.listener(Self::key_down))
-            .on_action(|_: &NextFocus, window, cx| window.focus_next(cx))
-            .on_action(|_: &PreviousFocus, window, cx| window.focus_prev(cx))
-            .child(
+                entry.frame.clone().into_any_element()
+            };
+            body = body.child(
                 div()
-                    .flex()
-                    .w_full()
-                    .h(px(20.))
-                    .flex_shrink_0()
-                    .bg(gpui::rgb(WHITE))
-                    .border_b_1()
-                    .border_color(gpui::rgb(BLACK))
-                    .child(div().flex_1().min_w_0().child(self.menu.clone()))
-                    .child(
-                        div()
-                            .id("desk-clock")
-                            .role(Role::Button)
-                            .aria_label(clock.clone())
-                            .w(px(clock_width as f32))
-                            .flex_shrink_0()
-                            .h(px(19.))
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|this, _, _, cx| {
-                                    this.show_date = !this.show_date;
-                                    cx.notify();
-                                    cx.stop_propagation();
-                                }),
-                            )
-                            .child(drawing(clock_width as f32, 19., move |pen, _, _| {
-                                pen.language = language;
-                                pen.text(10, 14, &clock, Font::Bold, BLACK);
-                            })),
-                    )
-                    .child(self.application_menu.clone()),
-            )
-            .child(body);
+                    .id(("desk-window-scope", entry.id))
+                    .absolute()
+                    .inset_0()
+                    .track_focus(&entry.focus_scope)
+                    .child(content),
+            );
+        }
+        let mut root =
+            div()
+                .id("platinum-desktop")
+                .flex()
+                .flex_col()
+                .size_full()
+                .overflow_hidden()
+                .bg(gpui::rgb(WHITE))
+                .capture_key_down(cx.listener(Self::key_down))
+                .on_action(cx.listener(|this, _: &NextFocus, window, cx| {
+                    this.cycle_focus(false, window, cx)
+                }))
+                .on_action(cx.listener(|this, _: &PreviousFocus, window, cx| {
+                    this.cycle_focus(true, window, cx)
+                }))
+                .child(
+                    div()
+                        .flex()
+                        .w_full()
+                        .h(px(20.))
+                        .flex_shrink_0()
+                        .bg(gpui::rgb(GRAY_2))
+                        .border_b_1()
+                        .border_color(gpui::rgb(BLACK))
+                        .child(div().flex_1().min_w_0().child(self.menu.clone()))
+                        .child(
+                            div()
+                                .id("desk-clock")
+                                .role(Role::Button)
+                                .aria_label(clock.clone())
+                                .w(px(clock_width as f32))
+                                .flex_shrink_0()
+                                .h(px(19.))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|this, _, _, cx| {
+                                        this.show_date = !this.show_date;
+                                        cx.notify();
+                                        cx.stop_propagation();
+                                    }),
+                                )
+                                .child(drawing(clock_width as f32, 19., move |pen, _, _| {
+                                    pen.language = language;
+                                    pen.text(10, 14, &clock, Font::Bold, BLACK);
+                                })),
+                        )
+                        .child(self.application_menu.clone()),
+                )
+                .child(body);
         if self.emptying {
             let amount = self
                 .files
@@ -1783,6 +2148,7 @@ impl Render for Desktop {
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .child(
                         div()
+                            .track_focus(&self.empty_focus)
                             .w(px(360.))
                             .bg(gpui::rgb(GRAY_2))
                             .border_2()
@@ -1801,8 +2167,12 @@ impl Render for Desktop {
                                         button("cancel-empty", desk(language, "cancel"))
                                             .theme(theme)
                                             .language(language)
-                                            .on_click(cx.listener(|this, _, _, cx| {
+                                            .on_click(cx.listener(|this, _, window, cx| {
                                                 this.emptying = false;
+                                                if let Some(focus) = this.before_empty_focus.take()
+                                                {
+                                                    window.focus(&focus, cx);
+                                                }
                                                 cx.notify();
                                             })),
                                     )
@@ -1834,4 +2204,153 @@ fn menu_item(
 ) -> MenuItem {
     commands.insert((menu, vec![index]), command);
     MenuItem::new(desk(language, key))
+}
+
+fn sort_folders(nodes: &mut [TreeNode]) {
+    for node in nodes {
+        sort_folders(&mut node.children);
+        node.children
+            .sort_by_cached_key(|child| child.title.to_lowercase());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[gpui::test]
+    fn opening_a_document_again_raises_its_existing_editor(cx: &mut gpui::TestAppContext) {
+        let desktop = cx.update(|cx| cx.new(|cx| Desktop::new(Language::English, false, cx)));
+        cx.update(|cx| {
+            desktop.update(cx, |desktop, cx| {
+                let document = desktop.files.read(cx).roots[0]
+                    .children
+                    .iter()
+                    .find(|node| node.title == "Documents")
+                    .unwrap()
+                    .children[0]
+                    .id;
+                desktop.open_node(document, cx);
+                let first = desktop.active;
+                desktop.open_node(document, cx);
+                assert_eq!(desktop.active, first);
+                assert_eq!(desktop.windows.len(), 1);
+            })
+        });
+    }
+
+    #[gpui::test]
+    fn file_drops_move_or_copy_without_copying_into_descendants(cx: &mut gpui::TestAppContext) {
+        let desktop = cx.update(|cx| cx.new(|cx| Desktop::new(Language::English, false, cx)));
+        cx.update(|cx| {
+            desktop.update(cx, |desktop, cx| {
+                let documents = desktop.files.read(cx).roots[0]
+                    .children
+                    .iter()
+                    .find(|node| node.title == "Documents")
+                    .unwrap();
+                let folder = documents.id;
+                let document = documents.children[0].id;
+                let title = documents.children[0].title.clone();
+                desktop.drop_node(document, DISK, true, cx);
+                let copied = desktop.files.read(cx).roots[0]
+                    .children
+                    .iter()
+                    .find(|node| node.title == title)
+                    .unwrap()
+                    .id;
+                assert_ne!(copied, document);
+                assert!(
+                    desktop
+                        .files
+                        .read(cx)
+                        .find(folder)
+                        .unwrap()
+                        .find(document)
+                        .is_some()
+                );
+                desktop.drop_node(document, DISK, false, cx);
+                assert!(!desktop.files.read(cx).path(document).contains(&folder));
+                desktop.drop_node(folder, folder, true, cx);
+                assert!(
+                    desktop
+                        .files
+                        .read(cx)
+                        .find(folder)
+                        .unwrap()
+                        .children
+                        .is_empty()
+                        || desktop
+                            .files
+                            .read(cx)
+                            .find(folder)
+                            .unwrap()
+                            .children
+                            .iter()
+                            .all(|node| node.title != "Documents")
+                );
+            })
+        });
+    }
+
+    #[gpui::test]
+    fn activating_another_window_moves_native_text_input_and_restores_focus(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(|cx| {
+            gpui_platinum::text_input::init(cx);
+            gpui_platinum::dialogs::init(cx);
+        });
+        let (desktop, cx) = cx.add_window_view(|_, cx| Desktop::new(Language::English, false, cx));
+        let scribe = desktop.update(cx, |desktop, cx| {
+            desktop.launch(Launch::Document(DocumentKind::Scribe), cx)
+        });
+        cx.run_until_parked();
+        cx.simulate_input("alpha");
+        desktop.update(cx, |desktop, cx| {
+            desktop.launch(Launch::Accessory(AppKind::Calculator), cx);
+        });
+        cx.run_until_parked();
+        cx.simulate_input("background");
+        cx.read(|cx| {
+            let desktop = desktop.read(cx);
+            let Content::Document(document) = &desktop
+                .windows
+                .iter()
+                .find(|entry| entry.id == scribe)
+                .unwrap()
+                .content
+            else {
+                panic!("Scribe content");
+            };
+            assert_eq!(document.read(cx).text(cx), "alpha");
+        });
+        desktop.update(cx, |desktop, cx| desktop.raise(scribe, cx));
+        cx.run_until_parked();
+        cx.simulate_input(" beta");
+        cx.read(|cx| {
+            let desktop = desktop.read(cx);
+            let Content::Document(document) = &desktop.front().unwrap().content else {
+                panic!("Scribe content");
+            };
+            assert_eq!(document.read(cx).text(cx), "alpha beta");
+        });
+    }
+
+    #[gpui::test]
+    fn sound_panel_settings_survive_closing_its_window(cx: &mut gpui::TestAppContext) {
+        let desktop = cx.update(|cx| cx.new(|cx| Desktop::new(Language::English, false, cx)));
+        cx.update(|cx| {
+            desktop.update(cx, |desktop, cx| {
+                desktop.panel_settings.volume = 1.;
+                desktop.panel_settings.muted = true;
+                let id = desktop.launch(Launch::Accessory(AppKind::Sound), cx);
+                desktop.remove_window(id, cx);
+                let id = desktop.launch(Launch::Accessory(AppKind::Sound), cx);
+                desktop.remove_window(id, cx);
+                assert_eq!(desktop.panel_settings.volume, 1.);
+                assert!(desktop.panel_settings.muted);
+            })
+        });
+    }
 }

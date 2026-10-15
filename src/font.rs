@@ -3,7 +3,24 @@
 //! Glyph coordinates are pixels from the baseline, with y growing downward.
 //! The original font data and licenses are in `assets/fonts`.
 
-use std::sync::OnceLock;
+use std::{
+    cell::RefCell,
+    sync::{Arc, OnceLock},
+};
+use unicode_segmentation::UnicodeSegmentation;
+
+thread_local! {
+    static SYSTEM_TEXT: RefCell<Option<Arc<gpui::WindowTextSystem>>> = const { RefCell::new(None) };
+}
+
+/// Enables the platform's font fallback for characters outside the bitmap faces.
+pub fn init(cx: &gpui::App) {
+    SYSTEM_TEXT.with(|system| {
+        *system.borrow_mut() = Some(Arc::new(gpui::WindowTextSystem::new(
+            cx.text_system().clone(),
+        )));
+    });
+}
 
 /// The language whose East Asian letterforms the text uses.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -54,10 +71,90 @@ impl Font {
     /// The width of one line using the language's East Asian letterforms.
     pub fn measure_in(self, text: &str, language: Language) -> i32 {
         let advance: i32 = text
-            .chars()
-            .map(|character| self.glyph_or_replacement(character, language).advance)
+            .graphemes(true)
+            .map(|grapheme| self.advance(grapheme, language))
             .sum();
         (advance - 1).max(0)
+    }
+
+    /// Cuts a line at a grapheme boundary and appends an ellipsis when needed.
+    pub fn truncate(self, text: &str, width: i32) -> String {
+        self.truncate_in(text, width, Language::English)
+    }
+
+    /// Truncates using the language's East Asian letterforms and native fallback.
+    pub fn truncate_in(self, text: &str, width: i32, language: Language) -> String {
+        if self.measure_in(text, language) <= width {
+            return text.to_owned();
+        }
+        let ellipsis = self.advance("…", language);
+        if ellipsis - 1 > width {
+            return String::new();
+        }
+        let mut advance = 0;
+        let mut end = 0;
+        for (index, grapheme) in text.grapheme_indices(true) {
+            let next = self.advance(grapheme, language);
+            if advance + next + ellipsis - 1 > width {
+                break;
+            }
+            advance += next;
+            end = index + grapheme.len();
+        }
+        format!("{}…", &text[..end])
+    }
+
+    /// Advances one grapheme, retaining the bitmap face's one-pixel tracking.
+    /// Unsupported graphemes are shaped together so combining marks and emoji
+    /// sequences use the platform's normal font fallback.
+    pub fn advance(self, grapheme: &str, language: Language) -> i32 {
+        if self.has_bitmap_grapheme(grapheme, language) {
+            return grapheme
+                .chars()
+                .map(|ch| self.glyph_or_replacement(ch, language).advance)
+                .sum();
+        }
+        self.system_line(grapheme, 1, false)
+            .map(|line| f32::from(line.width).ceil() as i32 + 1)
+            .unwrap_or_else(|| self.glyph_or_replacement('\u{fffd}', language).advance)
+    }
+
+    pub(crate) fn has_bitmap_grapheme(self, text: &str, language: Language) -> bool {
+        text.chars().all(|ch| self.glyph(ch, language).is_some())
+    }
+
+    pub(crate) fn system_line(
+        self,
+        text: &str,
+        scale: u8,
+        italic: bool,
+    ) -> Option<Arc<gpui::LineLayout>> {
+        SYSTEM_TEXT.with(|system| {
+            let system = system.borrow();
+            let system = system.as_ref()?;
+            let mut font = gpui::Font::default();
+            if matches!(self, Self::Bold | Self::SmallBold) {
+                font = font.bold();
+            }
+            if italic {
+                font = font.italic();
+            }
+            let size = if matches!(self, Self::Small | Self::SmallBold) {
+                11.
+            } else {
+                12.
+            };
+            Some(system.layout_line(
+                text,
+                gpui::px(size * scale.clamp(1, 4) as f32),
+                &[gpui::TextRun {
+                    len: text.len(),
+                    font,
+                    ..Default::default()
+                }],
+                None,
+            ))
+        })
     }
 
     /// The rows of the Latin face above its baseline.
@@ -418,6 +515,21 @@ mod tests {
             let replacement = font.glyph('\u{fffd}', Language::English).unwrap();
             assert_eq!(font.measure("\u{10ffff}"), replacement.advance - 1);
         }
+    }
+
+    #[test]
+    fn truncation_fits_the_available_width_and_preserves_graphemes() {
+        let font = Font::Small;
+        let text = "Platinum Controls";
+        assert_eq!(font.truncate(text, font.measure(text)), text);
+        assert_eq!(font.truncate(text, 0), "");
+        assert_eq!(font.truncate(text, font.measure("Pla…")), "Pla…");
+        let chinese = font.truncate_in("控制面板设置", 30, Language::SimplifiedChinese);
+        assert!(chinese.ends_with('…'));
+        assert!(font.measure_in(&chinese, Language::SimplifiedChinese) <= 30);
+        let combined = "e\u{301}".repeat(8);
+        let width = font.measure("e\u{301}…");
+        assert_eq!(font.truncate(&combined, width), "e\u{301}…");
     }
 
     #[test]

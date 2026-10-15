@@ -1,4 +1,5 @@
-use std::{cmp::Ordering, time::SystemTime};
+use gpui::ImageSource;
+use std::{any::Any, cmp::Ordering, rc::Rc, time::SystemTime};
 
 /// The kinds of items in the desk's in-memory disk.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -27,7 +28,7 @@ impl NodeKind {
 }
 
 /// An item of the tree. IDs stay the same when items move or are sorted.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct TreeNode {
     pub id: usize,
     pub title: String,
@@ -38,6 +39,27 @@ pub struct TreeNode {
     pub alignments: Option<Vec<crate::Alignment>>,
     pub children: Vec<TreeNode>,
     pub open: bool,
+    pub icon: Option<ImageSource>,
+    data: Option<Rc<dyn Any>>,
+}
+
+impl std::fmt::Debug for TreeNode {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("TreeNode")
+            .field("id", &self.id)
+            .field("title", &self.title)
+            .field("kind", &self.kind)
+            .field("text", &self.text)
+            .field("modified", &self.modified)
+            .field("runs", &self.runs)
+            .field("alignments", &self.alignments)
+            .field("children", &self.children)
+            .field("open", &self.open)
+            .field("custom_icon", &self.icon.is_some())
+            .field("has_data", &self.data.is_some())
+            .finish()
+    }
 }
 
 impl TreeNode {
@@ -52,7 +74,37 @@ impl TreeNode {
             alignments: None,
             children: Vec::new(),
             open: false,
+            icon: None,
+            data: None,
         }
+    }
+
+    /// Creates an item without requiring a desktop application kind.
+    pub fn item(id: usize, title: impl Into<String>) -> Self {
+        Self::new(id, title, NodeKind::Document)
+    }
+
+    pub fn with_children(mut self, children: Vec<TreeNode>) -> Self {
+        self.children = children;
+        self
+    }
+
+    pub fn with_icon(mut self, icon: impl Into<ImageSource>) -> Self {
+        self.icon = Some(icon.into());
+        self
+    }
+
+    pub fn with_data<T: Any>(mut self, data: T) -> Self {
+        self.set_data(data);
+        self
+    }
+
+    pub fn set_data<T: Any>(&mut self, data: T) {
+        self.data = Some(Rc::new(data));
+    }
+
+    pub fn data<T: Any>(&self) -> Option<&T> {
+        self.data.as_ref()?.downcast_ref()
     }
 
     pub fn size(&self) -> usize {
@@ -427,7 +479,11 @@ impl FileTree {
         node.title = title.into();
         node.modified = SystemTime::now();
         let id = node.id;
-        self.find_mut(parent)?.children.push(node);
+        let destination = self.find_mut(parent)?;
+        destination.children.push(node);
+        destination
+            .children
+            .sort_by(|left, right| compare_nodes(left, right, SortColumn::Name));
         Some(id)
     }
 }
@@ -444,6 +500,32 @@ fn compare_nodes(left: &TreeNode, right: &TreeNode, column: SortColumn) -> Order
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn arbitrary_node_data_survives_cloning_and_tree_navigation() {
+        #[derive(Debug, PartialEq)]
+        struct Entry {
+            key: String,
+            revision: u32,
+        }
+        let child = TreeNode::item(2, "Item").with_data(Entry {
+            key: "record".into(),
+            revision: 7,
+        });
+        let mut tree = FileTree::new(vec![TreeNode::item(1, "Group").with_children(vec![child])]);
+        tree.toggle(1);
+        tree.select(1);
+        tree.right();
+        assert_eq!(tree.selected, Some(2));
+        let cloned = tree.clone();
+        assert_eq!(
+            cloned.find(2).unwrap().data::<Entry>(),
+            Some(&Entry {
+                key: "record".into(),
+                revision: 7
+            })
+        );
+        assert!(cloned.find(2).unwrap().data::<String>().is_none());
+    }
     #[test]
     fn saving_document_content_updates_its_modified_time() {
         let mut node = TreeNode::new(1, "Letter", NodeKind::Document);

@@ -3,8 +3,8 @@
 use std::ops::Range;
 
 use gpui::{
-    App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, MouseButton, Role,
-    Subscription, Toggled, Window, div, prelude::*, px, rgb,
+    App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Window,
+    div, prelude::*, px,
 };
 
 use crate::{
@@ -418,6 +418,7 @@ pub struct RichTextArea {
     initial_runs: Option<Vec<Run>>,
     width: f32,
     height: f32,
+    show_size_menu: bool,
     theme: Theme,
     language: Language,
     configure: bool,
@@ -444,6 +445,7 @@ impl RichTextArea {
             initial_runs: None,
             width: 360.,
             height: 210.,
+            show_size_menu: true,
             theme: Theme::default(),
             language: Language::English,
             configure: true,
@@ -468,6 +470,12 @@ impl RichTextArea {
     pub fn size(mut self, width: f32, height: f32) -> Self {
         self.width = width.max(288.);
         self.height = height.max(80.);
+        self
+    }
+
+    /// Shows the optional point-size control beside the format buttons.
+    pub fn show_size_menu(mut self, show: bool) -> Self {
+        self.show_size_menu = show;
         self
     }
 
@@ -580,7 +588,7 @@ impl Render for RichTextArea {
         if self.configure {
             self.configure = false;
             self.editor.update(cx, |editor, cx| {
-                editor.set_size(self.width, self.height - 30., cx);
+                editor.set_size(self.width, self.height - 38., cx);
                 editor.set_theme(self.theme, cx);
                 editor.set_language(self.language, cx);
                 editor.set_label(crate::locale::desk(self.language, "document"), cx);
@@ -591,12 +599,10 @@ impl Render for RichTextArea {
             });
         }
         let state = self.format_state(cx);
-        let mut bar = div()
-            .flex()
-            .items_center()
-            .gap(px(2.))
-            .h(px(28.))
-            .flex_shrink_0();
+        let mut bar = crate::Toolbar::new()
+            .id("format-bar")
+            .theme(self.theme)
+            .language(self.language);
         for (attribute, label, enabled) in [
             (StyleAttribute::Bold, "bold", state.style.bold),
             (StyleAttribute::Italic, "italic", state.style.italic),
@@ -606,7 +612,7 @@ impl Render for RichTextArea {
                 state.style.underline,
             ),
         ] {
-            bar = bar.child(format_button(
+            bar = bar.item(format_button(
                 label,
                 FormatIcon::Style(attribute),
                 enabled,
@@ -618,19 +624,13 @@ impl Render for RichTextArea {
                 }),
             ));
         }
-        bar = bar.child(
-            div()
-                .w(px(4.))
-                .h(px(20.))
-                .border_l_1()
-                .border_color(rgb(crate::theme::GRAY_7)),
-        );
+        bar = bar.separator();
         for (alignment, label) in [
             (Alignment::Left, "alignLeft"),
             (Alignment::Center, "alignCenter"),
             (Alignment::Right, "alignRight"),
         ] {
-            bar = bar.child(format_button(
+            bar = bar.item(format_button(
                 label,
                 FormatIcon::Align(alignment),
                 state.alignment == alignment,
@@ -642,18 +642,25 @@ impl Render for RichTextArea {
                 }),
             ));
         }
-        bar = bar.child(
-            div()
-                .w(px(4.))
-                .h(px(20.))
-                .border_l_1()
-                .border_color(rgb(crate::theme::GRAY_7)),
-        );
-        bar = bar.child(self.size_menu.clone());
+        let bar = div()
+            .relative()
+            .w_full()
+            .h(px(32.))
+            .flex_shrink_0()
+            .child(bar)
+            .when(self.show_size_menu, |bar| {
+                bar.child(
+                    div()
+                        .absolute()
+                        .left(px(190.))
+                        .top(px(6.))
+                        .child(self.size_menu.clone()),
+                )
+            });
         div()
             .flex()
             .flex_col()
-            .gap(px(2.))
+            .gap(px(6.))
             .w(px(self.width))
             .h(px(self.height))
             .child(bar)
@@ -674,126 +681,23 @@ fn format_button(
     theme: Theme,
     language: Language,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-) -> impl IntoElement {
-    div()
-        .id(label)
-        .w(px(24.))
-        .h(px(24.))
-        .flex_shrink_0()
-        .role(Role::Button)
-        .aria_label(crate::tr(language, label))
-        .focusable()
-        .tab_stop(true)
-        .aria_toggled(if selected {
-            Toggled::True
-        } else {
-            Toggled::False
-        })
-        .cursor_pointer()
-        .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+) -> crate::Control {
+    use crate::bitmap_icons::*;
+    let rows = match icon {
+        FormatIcon::Style(StyleAttribute::Bold) => ICON_BOLD,
+        FormatIcon::Style(StyleAttribute::Italic) => ICON_ITALIC,
+        FormatIcon::Style(StyleAttribute::Underline) => ICON_UNDERLINE,
+        FormatIcon::Align(Alignment::Left) => ICON_ALIGN_LEFT,
+        FormatIcon::Align(Alignment::Center) => ICON_ALIGN_CENTER,
+        FormatIcon::Align(Alignment::Right) => ICON_ALIGN_RIGHT,
+    };
+    crate::bevel_button(label, crate::tr(language, label))
+        .icon_only(rows)
+        .selected(selected)
+        .theme(theme)
+        .language(language)
         .on_click(on_click)
-        .child(crate::paint::drawing(24., 24., move |pen, _, _| {
-            use crate::theme::{BLACK, GRAY_2, GRAY_7, WHITE};
-            pen.rect(
-                0,
-                0,
-                24,
-                24,
-                if selected { theme.accent.light } else { GRAY_2 },
-            );
-            pen.frame(0, 0, 24, 24, BLACK);
-            pen.bevel(
-                1,
-                1,
-                22,
-                22,
-                if selected { GRAY_7 } else { WHITE },
-                if selected { WHITE } else { GRAY_7 },
-            );
-            match icon {
-                FormatIcon::Style(attribute) => {
-                    let rows = match attribute {
-                        StyleAttribute::Bold => &ICON_BOLD,
-                        StyleAttribute::Italic => &ICON_ITALIC,
-                        StyleAttribute::Underline => &ICON_UNDERLINE,
-                    };
-                    for (y, row) in rows.iter().enumerate() {
-                        for (x, pixel) in row.bytes().enumerate() {
-                            if pixel == b'#' {
-                                pen.dot(x as i32 + 4, y as i32 + 4, BLACK);
-                            }
-                        }
-                    }
-                }
-                FormatIcon::Align(alignment) => {
-                    for row in 0..6 {
-                        let width = if row % 2 == 0 { 12 } else { 8 };
-                        let x = match alignment {
-                            Alignment::Left => 6,
-                            Alignment::Center => 6 + (12 - width) / 2,
-                            Alignment::Right => 6 + 12 - width,
-                        };
-                        pen.hline(x, 6 + row * 2, width, BLACK);
-                    }
-                }
-            }
-        }))
 }
-
-const ICON_BOLD: [&str; 16] = [
-    "................",
-    "................",
-    "..#########.....",
-    "...###...###....",
-    "...###....###...",
-    "...###....###...",
-    "...###...###....",
-    "...########.....",
-    "...###....###...",
-    "...###.....###..",
-    "...###.....###..",
-    "...###....###...",
-    "..##########....",
-    "................",
-    "................",
-    "................",
-];
-const ICON_ITALIC: [&str; 16] = [
-    "................",
-    "................",
-    "......#######...",
-    ".........##.....",
-    ".........##.....",
-    "........##......",
-    "........##......",
-    ".......##.......",
-    ".......##.......",
-    "......##........",
-    "......##........",
-    ".....##.........",
-    "...#######......",
-    "................",
-    "................",
-    "................",
-];
-const ICON_UNDERLINE: [&str; 16] = [
-    "................",
-    "................",
-    "..####....####..",
-    "...##......##...",
-    "...##......##...",
-    "...##......##...",
-    "...##......##...",
-    "...##......##...",
-    "...##......##...",
-    "....##....##....",
-    ".....######.....",
-    "................",
-    "..############..",
-    "................",
-    "................",
-    "................",
-];
 
 #[cfg(test)]
 mod tests {

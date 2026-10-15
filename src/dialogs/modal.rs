@@ -13,7 +13,6 @@ pub fn init(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("tab", Next, Some("PlatinumModal")),
         KeyBinding::new("shift-tab", Previous, Some("PlatinumModal")),
-        KeyBinding::new("enter", Accept, Some("PlatinumModal")),
         KeyBinding::new("escape", Cancel, Some("PlatinumModal")),
         KeyBinding::new("cmd-.", Cancel, Some("PlatinumModal")),
     ]);
@@ -161,27 +160,19 @@ pub(super) fn modal<T: Render + 'static>(
                 f32::from(bounds.size.height).round() as i32,
             );
             pen.language = language;
-            draw_frame(&mut pen, theme);
             if movable {
-                for y in (5..20).step_by(2) {
-                    pen.hline(5, y, pen.width - 10, GRAY_7);
-                }
-                let text_width = Font::Bold.measure_in(&frame_title, language);
-                pen.rect(
-                    (pen.width - text_width) / 2 - 5,
-                    3,
-                    text_width + 10,
-                    19,
-                    theme.background,
-                );
-                pen.text(
-                    (pen.width - text_width) / 2,
-                    16,
+                crate::window::draw_window_frame(
+                    &mut pen,
                     &frame_title,
-                    Font::Bold,
-                    BLACK,
+                    crate::window::PlatinumWindowOptions {
+                        modal: true,
+                        ..Default::default()
+                    },
+                    false,
+                    crate::window::WindowPart::None,
                 );
-                pen.hline(3, 22, pen.width - 6, BLACK);
+            } else {
+                draw_frame(&mut pen, theme);
             }
             pen.paint(bounds.origin, window);
             let moving = drag.clone();
@@ -216,18 +207,23 @@ pub(super) fn modal<T: Render + 'static>(
     .size_full();
     let mut panel = div()
         .id("modal-panel")
-        .role(Role::Dialog)
+        .role(if movable {
+            Role::Dialog
+        } else {
+            Role::AlertDialog
+        })
         .aria_label(title)
-        .absolute()
-        .left(position.x)
-        .top(position.y)
+        .relative()
+        .when(movable, |element| {
+            element.absolute().left(position.x).top(position.y)
+        })
         .w(px(width))
         .flex()
         .flex_col()
         .gap(px(10.))
-        .px(px(15.))
-        .pb(px(15.))
-        .pt(px(if movable { 35. } else { 15. }))
+        .px(px(if movable { 20. } else { 15. }))
+        .pb(px(if movable { 20. } else { 15. }))
+        .pt(px(if movable { 31. } else { 15. }))
         .child(frame)
         .child(content);
     if movable {
@@ -235,9 +231,9 @@ pub(super) fn modal<T: Render + 'static>(
             div()
                 .id("modal-title")
                 .absolute()
-                .left(px(3.))
-                .right(px(3.))
-                .top(px(3.))
+                .left(px(0.))
+                .right(px(0.))
+                .top(px(0.))
                 .h(px(19.))
                 .on_mouse_down(
                     MouseButton::Left,
@@ -254,6 +250,9 @@ pub(super) fn modal<T: Render + 'static>(
     let backdrop = div()
         .id("modal-backdrop")
         .relative()
+        .flex()
+        .items_center()
+        .justify_center()
         .w(viewport.width)
         .h(viewport.height)
         .occlude()
@@ -273,16 +272,14 @@ pub(super) fn modal<T: Render + 'static>(
         )
         .on_action(cx.listener(move |this, _: &Accept, window, cx| accept(this, window, cx)))
         .on_action(cx.listener(move |this, _: &Cancel, window, cx| cancel(this, window, cx)))
-        .capture_action(
-            cx.listener(move |this, _: &crate::text_input::Enter, window, cx| {
-                accept(this, window, cx);
-                cx.stop_propagation();
-            }),
-        )
         .child(panel);
-    deferred(anchored().position(point(px(0.), px(0.))).child(backdrop))
-        .priority(20)
-        .into_any_element()
+    deferred(
+        anchored()
+            .position(point(px(0.), px(0.)))
+            .child(crate::button_scope("modal-buttons", backdrop)),
+    )
+    .priority(20)
+    .into_any_element()
 }
 
 pub(super) fn draw_frame(pen: &mut Pen, theme: Theme) {
@@ -299,12 +296,7 @@ pub(super) fn text(
     font: Font,
     language: Language,
 ) -> impl IntoElement {
-    let text = text.into();
-    let width = font.measure_in(&text, language).max(1);
-    crate::paint::drawing(width as f32, 16., move |pen, _, _| {
-        pen.language = language;
-        pen.text(0, 12, &text, font, BLACK);
-    })
+    crate::text_in_language(text, font, BLACK, language)
 }
 
 pub(super) fn paragraph(
@@ -315,11 +307,17 @@ pub(super) fn paragraph(
 ) -> impl IntoElement {
     let value = text_value.into();
     let lines = crate::display::wrap(&value, font, width);
-    div().flex().flex_col().w(px(width as f32)).children(
-        lines
-            .into_iter()
-            .map(move |line| text(line, font, language)),
-    )
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(2.))
+        .pb(px(2.))
+        .w(px(width as f32))
+        .children(
+            lines
+                .into_iter()
+                .map(move |line| text(line, font, language)),
+        )
 }
 
 #[cfg(test)]

@@ -73,7 +73,25 @@ pub struct Documents {
     file_subscriptions: Vec<Subscription>,
 }
 impl EventEmitter<DocumentsEvent> for Documents {}
+impl Focusable for Documents {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        match &self.content {
+            Content::Jotter { pages, page, .. } => pages[*page].focus_handle(cx),
+            Content::Scribe { area, .. } => area.focus_handle(cx),
+            Content::Ledger(sheet) => sheet.focus_handle(cx),
+        }
+    }
+}
 impl Documents {
+    pub fn file(&self) -> Option<usize> {
+        self.file
+    }
+    #[cfg(test)]
+    pub(super) fn text(&self, cx: &App) -> String {
+        self.editor(cx)
+            .map(|editor| editor.read(cx).value().to_owned())
+            .unwrap_or_default()
+    }
     pub fn new(kind: DocumentKind, cx: &mut Context<Self>) -> Self {
         let mut subscriptions = Vec::new();
         let content = match kind {

@@ -114,6 +114,12 @@ impl ScrollBar {
         self
     }
 
+    /// Keeps an embedded bar out of the tab order while retaining pointer input.
+    pub fn tab_stop(mut self, tab_stop: bool) -> Self {
+        self.element.config.tab_stop = tab_stop;
+        self
+    }
+
     pub fn horizontal(mut self) -> Self {
         if let Kind::ScrollBar { horizontal, .. } = &mut self.element.config.kind {
             *horizontal = true;
@@ -183,6 +189,7 @@ struct Config {
     ticks: u32,
     disabled: bool,
     inactive: bool,
+    tab_stop: bool,
     theme: Theme,
     label: SharedString,
     on_change: Option<ChangeHandler>,
@@ -224,7 +231,7 @@ impl Config {
         }
     }
 
-    fn normalized_value(&self, value: f64) -> f64 {
+    fn input_value(&self, value: f64) -> f64 {
         match self.kind {
             Kind::Slider => self.range.snap(value, self.step),
             Kind::ScrollBar { .. } => self.range.clamp(value),
@@ -304,7 +311,7 @@ impl Config {
                 (at - grab - (BAR_WIDTH - 1) as f32) as f64 / travel as f64
             }
         };
-        self.normalized_value(self.range.at_fraction(fraction))
+        self.input_value(self.range.at_fraction(fraction))
     }
 
     fn key_value(&self, key: &str, value: f64) -> Option<f64> {
@@ -348,7 +355,7 @@ impl Config {
             "end" => self.range.max,
             _ => return None,
         };
-        Some(self.normalized_value(next))
+        Some(self.input_value(next))
     }
 }
 
@@ -446,6 +453,7 @@ impl RangeElement {
                 ticks: 0,
                 disabled: false,
                 inactive: false,
+                tab_stop: true,
                 theme: Theme::default(),
                 label: SharedString::default(),
                 on_change: None,
@@ -485,7 +493,7 @@ impl Element for RangeElement {
 
     fn write_a11y_info(&self, node: &mut gpui::accesskit::Node) {
         node.set_label(self.config.label.to_string());
-        node.set_numeric_value(self.config.normalized_value(self.value));
+        node.set_numeric_value(self.config.range.clamp(self.value));
         node.set_min_numeric_value(self.config.range.min);
         node.set_max_numeric_value(self.config.range.max);
         node.set_orientation(self.config.orientation());
@@ -517,13 +525,13 @@ impl Element for RangeElement {
         cx: &mut App,
     ) -> PrepaintState {
         let config = self.config.clone();
-        let value = config.normalized_value(self.value);
+        let value = config.range.clamp(self.value);
         let state = window.with_element_state(
             id.expect("range element id"),
             |state: Option<SharedState>, _| {
                 let state = state.unwrap_or_else(|| {
                     Rc::new(RefCell::new(RangeState {
-                        focus: cx.focus_handle().tab_stop(true),
+                        focus: cx.focus_handle().tab_stop(config.tab_stop),
                         config: config.clone(),
                         value,
                         bounds,
@@ -536,6 +544,7 @@ impl Element for RangeElement {
                 {
                     let mut current = state.borrow_mut();
                     current.config = config.clone();
+                    current.focus = current.focus.clone().tab_stop(config.tab_stop);
                     current.value = value;
                     current.bounds = bounds;
                     if !config.enabled() {
@@ -565,7 +574,7 @@ impl Element for RangeElement {
             let wheel_state = state.clone();
             element = element
                 .track_focus(&focus)
-                .tab_stop(true)
+                .tab_stop(config.tab_stop)
                 .on_mouse_down(MouseButton::Left, move |event, window, cx| {
                     pointer_down(&down_state, event.position, window, cx);
                     cx.stop_propagation();
@@ -641,7 +650,9 @@ impl Element for RangeElement {
         prepaint.element.paint(window, cx);
         {
             let state = prepaint.state.borrow();
-            let (width, height) = state.config.dimensions();
+            let mut config = state.config.clone();
+            config.inactive |= crate::window::content_is_inactive();
+            let (width, height) = config.dimensions();
             let mut pen = Pen::new(width, height);
             let at = state.config.coordinate(state.pointer, bounds);
             let over_pressed_part = bounds.contains(&state.pointer)
@@ -651,18 +662,13 @@ impl Element for RangeElement {
             } else {
                 ScrollPart::None
             };
-            match state.config.kind {
-                Kind::Slider => draw_slider(
-                    &mut pen,
-                    &state.config,
-                    state.value,
-                    pressed == ScrollPart::Thumb,
-                ),
-                Kind::ScrollBar { .. } => {
-                    draw_scroll_bar(&mut pen, &state.config, state.value, pressed)
+            match config.kind {
+                Kind::Slider => {
+                    draw_slider(&mut pen, &config, state.value, pressed == ScrollPart::Thumb)
                 }
+                Kind::ScrollBar { .. } => draw_scroll_bar(&mut pen, &config, state.value, pressed),
             }
-            if state.config.enabled()
+            if config.enabled()
                 && state.focus.is_focused(window)
                 && window.last_input_was_keyboard()
             {
@@ -728,7 +734,7 @@ fn set_value(state: &SharedState, value: f64, window: &mut Window, cx: &mut App)
         if !state.config.enabled() {
             return;
         }
-        let value = state.config.normalized_value(value);
+        let value = state.config.input_value(value);
         if state.value == value {
             return;
         }
@@ -748,7 +754,11 @@ fn pointer_down(state: &SharedState, position: Point<Pixels>, window: &mut Windo
         if !config.enabled() {
             return;
         }
-        state.focus.focus(window, cx);
+        if config.tab_stop {
+            state.focus.focus(window, cx);
+        } else {
+            window.prevent_default();
+        }
         state.pointer = position;
         let at = config.coordinate(position, state.bounds);
         state.pressed = config.part_at(at, state.value);

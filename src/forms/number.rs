@@ -128,6 +128,11 @@ impl NumberField {
         self.value = clamp(value, self.min, self.max);
         self.sync_text(cx);
     }
+    pub fn set_disabled(&mut self, disabled: bool, cx: &mut Context<Self>) {
+        self.style.disabled = disabled;
+        self.style.dirty = true;
+        cx.notify();
+    }
 
     pub fn commit(&mut self, cx: &mut Context<Self>) {
         if self.style.disabled {

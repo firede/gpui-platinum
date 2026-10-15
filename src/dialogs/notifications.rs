@@ -1,8 +1,4 @@
-use super::{
-    AlertKind,
-    alert::icon,
-    modal::{draw_frame, text},
-};
+use super::{AlertKind, alert::icon, modal::draw_frame};
 use crate::{
     Font, Language, Theme, button,
     paint::{Pen, drawing},
@@ -89,7 +85,9 @@ impl Render for Banner {
         let mut row = div()
             .id("banner")
             .role(Role::Status)
+            .aria_label(self.text.clone())
             .relative()
+            .w_full()
             .h(px(30.))
             .flex()
             .items_center()
@@ -97,11 +95,7 @@ impl Render for Banner {
             .px(px(8.))
             .child(frame(self.theme))
             .child(icon(self.kind, true))
-            .child(div().flex_1().overflow_hidden().child(text(
-                self.text.clone(),
-                Font::Small,
-                self.language,
-            )));
+            .child(notification_text(self.text.clone(), None, self.language));
         if let Some(action) = &self.action {
             row = row.child(
                 button("action", action.clone())
@@ -238,7 +232,8 @@ impl Toasts {
     }
 }
 impl Render for Toasts {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let max_text_width = (f32::from(window.viewport_size().width).round() as i32 - 120).max(0);
         div()
             .id("toasts")
             .absolute()
@@ -257,9 +252,13 @@ impl Render for Toasts {
                 } else {
                     format!("{} — {}", toast.title, toast.description)
                 };
+                let text_width = Font::Small
+                    .measure_in(&words, self.language)
+                    .min(max_text_width);
                 let mut row = div()
                     .id(id)
                     .role(Role::Status)
+                    .aria_label(words.clone())
                     .relative()
                     .h(px(30.))
                     .max_w_full()
@@ -269,11 +268,11 @@ impl Render for Toasts {
                     .px(px(8.))
                     .child(frame(self.theme))
                     .child(icon(toast.kind, true))
-                    .child(
-                        div()
-                            .overflow_hidden()
-                            .child(text(words, Font::Small, self.language)),
-                    );
+                    .child(notification_text(
+                        words.into(),
+                        Some(text_width),
+                        self.language,
+                    ));
                 if let Some(action) = &toast.action {
                     row = row.child(
                         button(("action", id), action.clone())
@@ -301,6 +300,34 @@ impl Render for Toasts {
             }))
     }
 }
+
+fn notification_text(
+    value: SharedString,
+    width: Option<i32>,
+    language: Language,
+) -> impl IntoElement {
+    canvas(
+        |_, _, _| (),
+        move |bounds, _, window, _| {
+            let width = f32::from(bounds.size.width).round() as i32;
+            let mut pen = Pen::new(width, Font::Small.line_height());
+            pen.language = language;
+            pen.text(
+                0,
+                Font::Small.ascent(),
+                &Font::Small.truncate_in(&value, width, language),
+                Font::Small,
+                BLACK,
+            );
+            pen.paint(bounds.origin, window);
+        },
+    )
+    .h(px(Font::Small.line_height() as f32))
+    .when_some(width, |element, width| {
+        element.w(px(width as f32)).flex_shrink_0()
+    })
+    .when(width.is_none(), |element| element.flex_1().min_w_0())
+}
 fn frame(theme: Theme) -> impl IntoElement {
     canvas(
         |_, _, _| (),
@@ -326,15 +353,15 @@ fn close_box(id: impl Into<ElementId>, focus: &FocusHandle, language: Language) 
         .aria_label(tr(language, "close"))
         .track_focus(focus)
         .tab_stop(true)
-        .w(px(12.))
-        .h(px(12.))
+        .w(px(11.))
+        .h(px(11.))
         .text_color(rgb(BLACK))
         .active(|style| style.text_color(rgb(WHITE)))
         .on_mouse_down(MouseButton::Left, move |_, window, cx| {
             window.focus(&handle, cx)
         })
-        .child(drawing(12., 12., |pen, window, _| {
+        .child(drawing(11., 11., |pen, window, _| {
             let pressed = window.text_style().color == rgb(WHITE).into();
-            pen.raised(if pressed { GRAY_4 } else { GRAY_2 });
+            crate::window::draw_title_box(pen, crate::window::WindowPart::Close, pressed);
         }))
 }

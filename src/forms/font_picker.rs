@@ -119,6 +119,19 @@ impl FontPicker {
         self.style.label = label.into();
         self
     }
+    pub fn width(mut self, width: i32) -> Self {
+        self.style.width = width.max(1);
+        self
+    }
+    pub fn set_width(&mut self, width: i32, cx: &mut Context<Self>) {
+        self.style.width = width.max(1);
+        cx.notify();
+    }
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.style.disabled = disabled;
+        self.style.dirty = true;
+        self
+    }
     pub fn families(mut self, families: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.families = families.into_iter().map(Into::into).collect();
         if !self.families.contains(&self.choice.family) {
@@ -157,6 +170,19 @@ impl FontPicker {
         self.style.dirty = true;
         cx.notify();
     }
+    pub fn set_disabled(&mut self, disabled: bool, cx: &mut Context<Self>) {
+        self.style.disabled = disabled;
+        self.style.dirty = true;
+        cx.notify();
+    }
+    pub fn set_families(&mut self, families: Vec<String>, cx: &mut Context<Self>) {
+        self.families = families;
+        if !self.families.contains(&self.choice.family) {
+            self.choice.family = self.families.first().cloned().unwrap_or_default();
+        }
+        self.families_dirty = true;
+        cx.notify();
+    }
     pub fn set_language(&mut self, language: Language, cx: &mut Context<Self>) {
         self.style.language = language;
         self.style.dirty = true;
@@ -188,16 +214,19 @@ impl Render for FontPicker {
         if self.style.dirty {
             self.family_list.update(cx, |list, cx| {
                 list.set_theme(theme, cx);
+                list.set_disabled(self.style.disabled, cx);
                 list.set_label(super::word(language, "families"), cx);
             });
             self.size_list.update(cx, |list, cx| {
                 list.set_theme(theme, cx);
+                list.set_disabled(self.style.disabled, cx);
                 list.set_label(super::word(language, "sizes"), cx);
             });
             self.size_field.update(cx, |field, cx| {
                 field.set_theme(theme, cx);
                 field.set_language(language, cx);
                 field.set_label(super::word(language, "size"), cx);
+                field.set_disabled(self.style.disabled, cx);
             });
             self.style.dirty = false;
         }
@@ -223,6 +252,7 @@ impl Render for FontPicker {
                 )
                 .language(language)
                 .theme(theme)
+                .disabled(self.style.disabled)
                 .on_click(cx.listener(move |this, _, _, cx| {
                     match index {
                         0 => this.choice.bold = !this.choice.bold,
@@ -242,6 +272,7 @@ impl Render for FontPicker {
             .id("font-picker")
             .role(Role::Group)
             .aria_label(title)
+            .w(px(self.style.width as f32))
             .flex()
             .flex_col()
             .gap(px(8.))
@@ -282,7 +313,7 @@ impl Render for FontPicker {
                     .role(Role::Image)
                     .aria_label(super::word(language, "sample"))
                     .overflow_hidden()
-                    .child(drawing(360., 40., move |pen, _, _| {
+                    .child(drawing(self.style.width as f32, 40., move |pen, _, _| {
                         draw_sample(pen, &choice, language)
                     })),
             )
@@ -290,6 +321,7 @@ impl Render for FontPicker {
 }
 
 fn draw_sample(pen: &mut Pen, choice: &FontChoice, language: Language) {
+    pen.set_dimmed(crate::window::content_is_inactive());
     pen.sunken();
     let font = if choice.bold {
         Font::SmallBold

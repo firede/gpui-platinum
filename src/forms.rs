@@ -67,9 +67,5 @@ fn word(language: Language, key: &str) -> String {
 }
 
 fn form_label(text: String, language: Language) -> impl gpui::IntoElement {
-    let width = crate::Font::Bold.measure_in(&text, language);
-    crate::paint::drawing(width as f32, 18., move |pen, _, _| {
-        pen.language = language;
-        pen.text(0, 13, &text, crate::Font::Bold, crate::theme::BLACK);
-    })
+    crate::text_in_language(text, crate::Font::Bold, crate::theme::BLACK, language)
 }

@@ -72,6 +72,7 @@ impl Combobox {
     }
     pub fn width(mut self, width: i32) -> Self {
         self.style.width = width.max(64);
+        self.style.dirty = true;
         self
     }
     pub fn disabled(mut self, disabled: bool) -> Self {
@@ -95,8 +96,26 @@ impl Combobox {
         self.open = false;
         cx.notify();
     }
+    pub fn set_width(&mut self, width: i32, cx: &mut Context<Self>) {
+        self.style.width = width.max(64);
+        self.style.dirty = true;
+        cx.notify();
+    }
     pub fn set_theme(&mut self, theme: Theme, cx: &mut Context<Self>) {
         self.style.theme = theme;
+        self.style.dirty = true;
+        cx.notify();
+    }
+    pub fn set_disabled(&mut self, disabled: bool, cx: &mut Context<Self>) {
+        self.style.disabled = disabled;
+        self.style.dirty = true;
+        if disabled {
+            self.open = false;
+        }
+        cx.notify();
+    }
+    pub fn set_label(&mut self, label: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.style.label = label.into();
         self.style.dirty = true;
         cx.notify();
     }
@@ -136,7 +155,7 @@ impl Combobox {
 
 impl Render for Combobox {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.style.apply(&self.field, self.style.width - 20, cx);
+        self.style.apply(&self.field, self.style.width - 19, cx);
         let width = self.style.width;
         let disabled = self.style.disabled;
         let open = self.open;
@@ -149,6 +168,8 @@ impl Render for Combobox {
             .aria_value(self.field.read(cx).value().to_owned())
             .aria_expanded(open)
             .relative()
+            .w(px(width as f32))
+            .h(px(22.))
             .flex()
             .items_center()
             .flex_shrink_0()
@@ -220,7 +241,13 @@ impl Render for Combobox {
                                 6 + row,
                                 9 + row,
                                 7 - row * 2,
-                                if disabled { GRAY_6 } else { BLACK },
+                                if disabled {
+                                    GRAY_6
+                                } else if crate::window::content_is_inactive() {
+                                    GRAY_8
+                                } else {
+                                    BLACK
+                                },
                             );
                         }
                     })),

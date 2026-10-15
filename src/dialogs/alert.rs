@@ -137,11 +137,11 @@ impl Render for Alert {
         let mut words = div().flex().flex_col().gap(px(6.)).child(paragraph(
             self.message.clone(),
             Font::Bold,
-            260,
+            262,
             language,
         ));
         if !self.detail.is_empty() {
-            words = words.child(paragraph(self.detail.clone(), Font::Small, 260, language));
+            words = words.child(paragraph(self.detail.clone(), Font::Small, 262, language));
         }
         let mut buttons = div().flex().justify_end().items_center().gap(px(10.));
         for (index, label) in self.buttons.iter().enumerate() {
@@ -463,16 +463,93 @@ pub(super) fn icon(kind: AlertKind, small: bool) -> AnyElement {
     .into_any_element()
 }
 
+pub fn alert_icon(kind: AlertKind) -> AnyElement {
+    icon(kind, false)
+}
+
+pub fn draw_alert_icon(pen: &mut Pen, kind: AlertKind) {
+    draw_icon(pen, kind, false);
+}
+
+pub fn draw_small_alert_icon(pen: &mut Pen, kind: AlertKind) {
+    match kind {
+        AlertKind::Caution => {
+            for y in 1..15 {
+                let half = (y - 1) / 2;
+                pen.hline(7 - half, y, half * 2 + 2, 0xffcc00);
+                pen.dot(7 - half, y, BLACK);
+                pen.dot(8 + half, y, BLACK);
+            }
+            pen.hline(1, 15, 14, BLACK);
+            pen.rect(7, 5, 2, 6, BLACK);
+            pen.rect(7, 12, 2, 2, BLACK);
+        }
+        AlertKind::Stop => {
+            fill_rounded(
+                pen,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: 16,
+                    height: 16,
+                },
+                4,
+                BLACK,
+            );
+            fill_rounded(
+                pen,
+                Rect {
+                    x: 1,
+                    y: 1,
+                    width: 14,
+                    height: 14,
+                },
+                3,
+                0xcc2222,
+            );
+            pen.rect(7, 3, 2, 7, WHITE);
+            pen.rect(7, 11, 2, 2, WHITE);
+        }
+        AlertKind::Note => {
+            fill_rounded(
+                pen,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: 16,
+                    height: 13,
+                },
+                3,
+                BLACK,
+            );
+            fill_rounded(
+                pen,
+                Rect {
+                    x: 1,
+                    y: 1,
+                    width: 14,
+                    height: 11,
+                },
+                2,
+                WHITE,
+            );
+            pen.rect(3, 13, 2, 2, BLACK);
+            pen.rect(7, 3, 2, 2, BLACK);
+            pen.rect(7, 6, 2, 4, BLACK);
+        }
+    }
+}
+
+fn fill_rounded(pen: &mut Pen, rect: Rect, radius: usize, color: u32) {
+    for row in 0..rect.height {
+        let inset = crate::paint::corner_inset(row, rect.height, radius);
+        pen.hline(rect.x + inset, rect.y + row, rect.width - 2 * inset, color);
+    }
+}
+
 fn draw_icon(pen: &mut Pen, kind: AlertKind, small: bool) {
     if small {
-        let mut full = Pen::new(32, 32);
-        draw_icon(&mut full, kind, false);
-        for fill in full.fills {
-            let r = fill.rect;
-            if r.y % 2 == 0 {
-                pen.rect(r.x / 2, r.y / 2, (r.width + 1) / 2, 1, fill.color);
-            }
-        }
+        draw_small_alert_icon(pen, kind);
         return;
     }
     match kind {
@@ -483,8 +560,13 @@ fn draw_icon(pen: &mut Pen, kind: AlertKind, small: bool) {
                 pen.hline(x, y, half * 2 + 2, 0xffcc00);
                 pen.dot(x, y, BLACK);
                 pen.dot(x + half * 2 + 1, y, BLACK);
+                if y % 2 == 1 && y > 2 {
+                    pen.dot(x + 1, y, BLACK);
+                    pen.dot(x + half * 2, y, BLACK);
+                }
             }
             pen.hline(2, 30, 28, BLACK);
+            pen.hline(3, 31, 28, GRAY_7);
             pen.rect(15, 10, 2, 12, BLACK);
             pen.rect(14, 11, 4, 8, BLACK);
             pen.rect(15, 25, 2, 2, BLACK);
@@ -511,17 +593,21 @@ fn draw_icon(pen: &mut Pen, kind: AlertKind, small: bool) {
             pen.rect(14, 22, 4, 3, WHITE);
         }
         AlertKind::Note => {
-            pen.round_frame(
-                Rect {
-                    x: 1,
-                    y: 1,
-                    width: 30,
-                    height: 22,
-                },
-                4,
-                BLACK,
-                Some(WHITE),
-            );
+            for (left, top, width, height, radius, color) in
+                [(1, 1, 30, 22, 4, BLACK), (2, 2, 28, 20, 3, WHITE)]
+            {
+                fill_rounded(
+                    pen,
+                    Rect {
+                        x: left,
+                        y: top,
+                        width,
+                        height,
+                    },
+                    radius,
+                    color,
+                );
+            }
             for i in 0..6 {
                 pen.hline(7 + i, 22 + i, 6 - i, BLACK);
                 pen.hline(8 + i, 22 + i, 4 - i, WHITE);

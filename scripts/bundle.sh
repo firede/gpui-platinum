@@ -8,6 +8,10 @@ if [ "${1-}" = "--desktop" ]; then
     example="desktop"
     name="Platinum Desk"
     shift
+elif [ "${1-}" = "--gallery" ]; then
+    example="gallery"
+    name="Platinum Gallery"
+    shift
 fi
 cargo build --example "$example" "$@"
 app="target/debug/$name.app"

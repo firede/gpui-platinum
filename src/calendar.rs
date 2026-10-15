@@ -22,6 +22,10 @@ const GRID_TOP: i32 = 38;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DateChanged(pub Date);
 
+/// A day explicitly chosen by clicking it, including the current selection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DateChosen(pub Date);
+
 pub struct CalendarView {
     focus: FocusHandle,
     model: Calendar,
@@ -32,6 +36,7 @@ pub struct CalendarView {
 }
 
 impl EventEmitter<DateChanged> for CalendarView {}
+impl EventEmitter<DateChosen> for CalendarView {}
 
 impl CalendarView {
     pub fn new(date: Date, cx: &mut Context<Self>) -> Self {
@@ -84,10 +89,22 @@ impl CalendarView {
 
     pub fn select(&mut self, date: Date, cx: &mut Context<Self>) {
         let changed = self.model.selected != date;
-        self.model.select(date);
+        self.set_selection(date, cx);
         if changed {
             cx.emit(DateChanged(date));
         }
+        cx.notify();
+    }
+    pub fn set_selection(&mut self, date: Date, cx: &mut Context<Self>) {
+        self.model.select(date);
+        cx.notify();
+    }
+    pub fn set_today(&mut self, today: Date, cx: &mut Context<Self>) {
+        self.today = today;
+        cx.notify();
+    }
+    pub fn set_first_weekday(&mut self, day: u8, cx: &mut Context<Self>) {
+        self.model.first_weekday = day % 7;
         cx.notify();
     }
 
@@ -151,6 +168,7 @@ impl Render for CalendarView {
                     .on_click(cx.listener(move |this, _, window, cx| {
                         window.focus(&this.focus, cx);
                         this.select(date, cx);
+                        cx.emit(DateChosen(date));
                     }))
             })
             .collect::<Vec<_>>();
@@ -178,6 +196,8 @@ impl Render for CalendarView {
                 CALENDAR_WIDTH as f32,
                 CALENDAR_HEIGHT as f32,
                 move |pen, _, _| {
+                    let focused = focused && !crate::window::content_is_inactive();
+                    pen.set_dimmed(crate::window::content_is_inactive());
                     pen.language = language;
                     pen.rect(0, 0, pen.width, pen.height, WHITE);
                     pen.bevel(0, 0, pen.width, pen.height, GRAY_7, WHITE);

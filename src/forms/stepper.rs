@@ -174,11 +174,13 @@ impl Render for Stepper {
                     pressed,
                     if disabled {
                         StepperState::Disabled
+                    } else if crate::window::content_is_inactive() {
+                        StepperState::Inactive
                     } else {
                         StepperState::Normal
                     },
                 );
-                if focused && !disabled {
+                if focused && !disabled && !crate::window::content_is_inactive() {
                     crate::draw_focus_ring(pen, 1, theme.accent.dark);
                 }
             }));

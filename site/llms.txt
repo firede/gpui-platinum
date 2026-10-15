@@ -1,0 +1,30 @@
+# GPUI Platinum
+
+> Native Rust components for GPUI in the gray, beveled Platinum desktop style, with bitmap type, a control gallery and a classic desktop example. This is a static introduction and screenshot gallery; it does not run the Rust desktop in a browser.
+
+- Crate: gpui-platinum; Rust import: gpui_platinum
+- GPUI: longbridge/gpui-fast, pinned revision 9690cf8; application dependencies must use the same revision
+- Rust edition: 2024
+- Initialization: gpui_platinum::init(cx), before the first window
+- Component patterns: lightweight elements with stable IDs and callbacks; retained GPUI entities with typed events
+- Languages: English, Simplified Chinese, Traditional Chinese, Japanese, Korean
+- License: MIT; bundled bitmap fonts retain their included licenses
+- Upstream design and artwork: mygo-platinum
+
+## Documentation
+
+- [English README](../README.md): overview, setup, examples and verification scope
+- [Chinese README](../README.zh.md): Simplified Chinese overview
+- [API guide](../docs/api.md): state, events, focus, localization and the mapping from the Go API
+- [Design specification](../docs/spec.md): shared visual and interaction contract
+- [Desktop source](../examples/desktop.rs): native desktop entry point
+- [Library source](../src/lib.rs): public modules, reexports and initialization
+- [GPUI fork](https://github.com/longbridge/gpui-fast): renderer and platform setup
+- [Original project](https://github.com/firede/mygo-platinum): Go implementation and original design
+- [Platinum Fonts](https://github.com/firede/platinum-fonts): bitmap face sources
+
+## Running
+
+Use cargo run --example gallery, cargo run --example controls or cargo run --example desktop. The desktop accepts --lang en, zh-Hans, zh-Hant, ja or ko. Generate the Rust reference with cargo doc --no-deps --open. Run scripts/verify.sh for formatting, tests and Clippy.
+
+The appearance fixtures in tests/reference originate in the Go project. Screenshots in docs are generated from the GPUI implementation. Test coverage and screenshots do not establish support for every operating system or a complete screen-reader audit.

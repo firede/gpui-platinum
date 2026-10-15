@@ -47,6 +47,11 @@ pub struct ListBox {
     language: Language,
     prefix: String,
     typed_at: Instant,
+    disabled: bool,
+    focus_ring: bool,
+    always_scrollbar: bool,
+    arrows: Vec<bool>,
+    icons: Vec<Vec<String>>,
 }
 
 impl EventEmitter<ListEvent> for ListBox {}
@@ -69,6 +74,11 @@ impl ListBox {
             language: Language::English,
             prefix: String::new(),
             typed_at: Instant::now(),
+            disabled: false,
+            focus_ring: true,
+            always_scrollbar: false,
+            arrows: Vec::new(),
+            icons: Vec::new(),
         }
     }
     pub fn size(mut self, width: i32, height: i32) -> Self {
@@ -78,6 +88,33 @@ impl ListBox {
     }
     pub fn fill_height(mut self) -> Self {
         self.fill_height = true;
+        self
+    }
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+    pub fn focus_ring(mut self, enabled: bool) -> Self {
+        self.focus_ring = enabled;
+        self
+    }
+    pub fn scroll_bar_always(mut self) -> Self {
+        self.always_scrollbar = true;
+        self
+    }
+    pub fn arrows(mut self, arrows: Vec<bool>) -> Self {
+        self.arrows = arrows;
+        self
+    }
+    pub fn icons<I, S>(mut self, icons: impl IntoIterator<Item = I>) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.icons = icons
+            .into_iter()
+            .map(|icon| icon.into_iter().map(Into::into).collect())
+            .collect();
         self
     }
     pub fn label(mut self, label: impl Into<SharedString>) -> Self {
@@ -118,6 +155,18 @@ impl ListBox {
         self.label = label.into();
         cx.notify();
     }
+    pub fn set_disabled(&mut self, disabled: bool, cx: &mut Context<Self>) {
+        self.disabled = disabled;
+        cx.notify();
+    }
+    pub fn set_arrows(&mut self, arrows: Vec<bool>, cx: &mut Context<Self>) {
+        self.arrows = arrows;
+        cx.notify();
+    }
+    pub fn set_icons(&mut self, icons: Vec<Vec<String>>, cx: &mut Context<Self>) {
+        self.icons = icons;
+        cx.notify();
+    }
     pub fn set_selection(&mut self, selected: Option<usize>, cx: &mut Context<Self>) {
         self.selected =
             selected.filter(|index| self.items.get(*index).is_some_and(|item| !item.disabled));
@@ -149,6 +198,9 @@ impl ListBox {
     }
 
     fn key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+        if self.disabled {
+            return;
+        }
         let count = self.items.len();
         if count == 0 {
             return;
@@ -158,7 +210,10 @@ impl ListBox {
         let key = event.keystroke.key.as_str();
         let target = match key {
             "up" => Some(current.saturating_sub(1)),
-            "down" => Some((current + 1).min(count - 1)),
+            "down" => Some(
+                self.selected
+                    .map_or(0, |current| (current + 1).min(count - 1)),
+            ),
             "home" => Some(0),
             "end" => Some(count - 1),
             "pageup" => Some(current.saturating_sub(page)),
@@ -212,7 +267,7 @@ impl Focusable for ListBox {
 
 impl Render for ListBox {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let focused = self.focus.is_focused(window);
+        let focused = self.focus.is_focused(window) && !self.disabled;
         let accent = self.theme.accent;
         let language = self.language;
         let viewport = if self.fill_height && self.scroll.bounds().size.height > px(0.) {
@@ -220,7 +275,7 @@ impl Render for ListBox {
         } else {
             self.height - 6
         };
-        let scrolls = self.items.len() as i32 * 16 > viewport;
+        let scrolls = self.always_scrollbar || self.items.len() as i32 * 16 > viewport;
         let width = self.width - if scrolls { 16 } else { 0 };
         let handle = self.scroll.clone();
         let entity = cx.entity();
@@ -229,6 +284,7 @@ impl Render for ListBox {
             .role(Role::ListBox)
             .aria_label(self.label.clone())
             .track_focus(&self.focus)
+            .tab_stop(!self.disabled)
             .w(px(self.width as f32))
             .flex()
             .when(self.fill_height, |el| el.h_full())
@@ -236,7 +292,11 @@ impl Render for ListBox {
             .flex_shrink_0()
             .p(px(2.))
             .border_1()
-            .border_color(rgb(if focused { accent.dark } else { GRAY_7 }))
+            .border_color(rgb(if focused && self.focus_ring {
+                accent.dark
+            } else {
+                GRAY_7
+            }))
             .bg(rgb(WHITE))
             .on_key_down(cx.listener(Self::key_down))
             .child(
@@ -251,7 +311,10 @@ impl Render for ListBox {
                     .children(self.items.iter().enumerate().map(|(index, item)| {
                         let selected = self.selected == Some(index);
                         let text = item.label.clone();
-                        let disabled = item.disabled;
+                        let disabled = self.disabled || item.disabled;
+                        let icon = self.icons.get(index).cloned();
+                        let has_icons = !self.icons.is_empty();
+                        let arrow = self.arrows.get(index).copied().unwrap_or(false);
                         let entity = cx.entity();
                         div()
                             .id(index)
@@ -281,6 +344,8 @@ impl Render for ListBox {
                                 }
                             }))
                             .child(drawing((width - 6) as f32, 16., move |pen, _, _| {
+                                let focused = focused && !crate::window::content_is_inactive();
+                                pen.set_dimmed(crate::window::content_is_inactive());
                                 pen.language = language;
                                 pen.rect(
                                     0,
@@ -293,10 +358,28 @@ impl Render for ListBox {
                                         WHITE
                                     },
                                 );
-                                pen.text(
-                                    4,
-                                    12,
+                                if let Some(icon) = &icon {
+                                    let rows = icon.iter().map(String::as_str).collect::<Vec<_>>();
+                                    crate::bitmap_icons::draw_bitmap_icon(
+                                        pen,
+                                        &rows,
+                                        3,
+                                        (16 - rows.len() as i32) / 2,
+                                        accent,
+                                        selected && focused,
+                                        disabled,
+                                    );
+                                }
+                                let left = if has_icons { 23 } else { 4 };
+                                let label = Font::Small.truncate_in(
                                     &text,
+                                    pen.width - left - if arrow { 12 } else { 4 },
+                                    language,
+                                );
+                                pen.text(
+                                    left,
+                                    12,
+                                    &label,
                                     Font::Small,
                                     if disabled {
                                         GRAY_8
@@ -306,6 +389,18 @@ impl Render for ListBox {
                                         BLACK
                                     },
                                 );
+                                if arrow {
+                                    let ink = if disabled {
+                                        GRAY_8
+                                    } else if selected && focused {
+                                        WHITE
+                                    } else {
+                                        BLACK
+                                    };
+                                    for row in 0..7_i32 {
+                                        pen.hline(pen.width - 8, 4 + row, 4 - (3 - row).abs(), ink);
+                                    }
+                                }
                             }))
                     })),
             )
@@ -319,6 +414,7 @@ impl Render for ListBox {
                     )
                     .length(viewport)
                     .theme(self.theme)
+                    .disabled(self.disabled)
                     .on_change(move |value, _, cx| {
                         handle.set_offset(point(px(0.), px(-value as f32)));
                         entity.update(cx, |_, cx| cx.notify());

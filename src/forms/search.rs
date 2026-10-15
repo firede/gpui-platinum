@@ -80,6 +80,21 @@ impl SearchField {
         self.style.dirty = true;
         cx.notify();
     }
+    pub fn set_disabled(&mut self, disabled: bool, cx: &mut Context<Self>) {
+        self.style.disabled = disabled;
+        self.style.dirty = true;
+        cx.notify();
+    }
+    pub fn set_label(&mut self, label: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.style.label = label.into();
+        self.style.dirty = true;
+        cx.notify();
+    }
+    pub fn set_placeholder(&mut self, text: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.placeholder = text.into();
+        self.style.dirty = true;
+        cx.notify();
+    }
     pub fn set_language(&mut self, language: Language, cx: &mut Context<Self>) {
         self.style.language = language;
         self.style.dirty = true;
@@ -129,15 +144,25 @@ impl Render for SearchField {
                 }
             }))
             .child(drawing(width as f32, 22., move |pen, _, _| {
+                let inactive = crate::window::content_is_inactive();
                 pen.sunken();
+                if inactive {
+                    pen.frame(1, 1, width - 2, 20, GRAY_8);
+                }
                 if disabled {
                     pen.frame(1, 1, width - 2, 20, GRAY_6);
                     pen.rect(2, 2, width - 4, 18, GRAY_2);
                 }
-                if focused {
+                if focused && !inactive {
                     crate::draw_focus_ring(pen, 0, accent);
                 }
-                let ink = if disabled { GRAY_6 } else { GRAY_9 };
+                let ink = if disabled {
+                    GRAY_6
+                } else if inactive {
+                    GRAY_8
+                } else {
+                    GRAY_9
+                };
                 for (y, row) in [
                     ".###..", "#...#.", "#...#.", "#...#.", ".####.", "....##", ".....#",
                 ]

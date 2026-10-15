@@ -174,6 +174,7 @@ impl Ruler {
     }
     fn paint(&self, bounds: Bounds<Pixels>, window: &mut Window) {
         let mut pen = Pen::new(self.width, 22);
+        pen.set_dimmed(crate::window::content_is_inactive());
         pen.language = self.language;
         let RulerState { left, right, first } = self.state;
         pen.rect(0, 0, self.width, 22, GRAY_2);

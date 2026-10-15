@@ -62,28 +62,36 @@ pub fn wrap_in(text: &str, font: Font, width: i32, language: Language) -> Vec<St
     lines
 }
 
+#[track_caller]
 pub fn placard(text: impl Into<SharedString>, width: i32) -> impl IntoElement {
     placard_in(text, width, Language::English)
 }
 
+#[track_caller]
 pub fn placard_in(
     text: impl Into<SharedString>,
     width: i32,
     language: Language,
 ) -> impl IntoElement {
     let text = text.into();
-    drawing(width as f32, 16., move |pen, _, _| {
-        pen.language = language;
-        pen.rect(0, 0, width, 16, GRAY_2);
-        pen.bevel(0, 0, width, 16, WHITE, GRAY_7);
-        pen.text(6, 12, &text, Font::Small, BLACK);
-    })
+    div()
+        .id(ElementId::from(std::panic::Location::caller()))
+        .role(Role::Status)
+        .aria_label(text.clone())
+        .child(drawing(width as f32, 16., move |pen, _, _| {
+            pen.language = language;
+            pen.rect(0, 0, width, 16, GRAY_2);
+            pen.bevel(0, 0, width, 16, WHITE, GRAY_7);
+            pen.text(6, 12, &text, Font::Small, BLACK);
+        }))
 }
 
+#[track_caller]
 pub fn window_header(text: impl Into<SharedString>, width: i32) -> impl IntoElement {
     window_header_in(text, width, Language::English)
 }
 
+#[track_caller]
 pub fn window_header_in(
     text: impl Into<SharedString>,
     width: i32,
@@ -92,6 +100,7 @@ pub fn window_header_in(
     window_header_parts(text, "", width, language)
 }
 
+#[track_caller]
 pub fn window_header_parts(
     left: impl Into<SharedString>,
     right: impl Into<SharedString>,
@@ -99,20 +108,24 @@ pub fn window_header_parts(
     language: Language,
 ) -> impl IntoElement {
     let (left, right) = (left.into(), right.into());
-    drawing(width as f32, 20., move |pen, _, _| {
-        pen.language = language;
-        pen.rect(0, 0, width, 20, GRAY_2);
-        pen.hline(0, 18, width, GRAY_7);
-        pen.hline(0, 19, width, BLACK);
-        pen.text(8, 13, &left, Font::Small, BLACK);
-        pen.text(
-            width - Font::Small.measure_in(&right, language) - 8,
-            13,
-            &right,
-            Font::Small,
-            BLACK,
-        );
-    })
+    div()
+        .id(ElementId::from(std::panic::Location::caller()))
+        .role(Role::Status)
+        .aria_label(format!("{left}, {right}"))
+        .child(drawing(width as f32, 18., move |pen, _, _| {
+            pen.language = language;
+            pen.rect(0, 0, width, 18, GRAY_2);
+            pen.hline(0, 16, width, GRAY_7);
+            pen.hline(0, 17, width, BLACK);
+            pen.text(8, 12, &left, Font::Small, BLACK);
+            pen.text(
+                width - Font::Small.measure_in(&right, language) - 8,
+                12,
+                &right,
+                Font::Small,
+                BLACK,
+            );
+        }))
 }
 
 pub fn badge(text: impl Into<SharedString>, theme: Theme) -> impl IntoElement {
@@ -151,8 +164,68 @@ fn label_box(
     })
 }
 
-pub fn image_well(width: i32, height: i32) -> impl IntoElement {
-    drawing(width as f32, height as f32, |pen, _, _| pen.sunken())
+#[track_caller]
+pub fn image_well(width: i32, height: i32) -> ImageWell {
+    ImageWell {
+        id: ElementId::from(std::panic::Location::caller()),
+        width: width.max(6),
+        height: height.max(6),
+        image: None,
+        label: SharedString::default(),
+    }
+}
+
+/// A sunken well with a centered image clipped to its inset, at native size.
+#[derive(IntoElement)]
+pub struct ImageWell {
+    id: ElementId,
+    width: i32,
+    height: i32,
+    image: Option<ImageSource>,
+    label: SharedString,
+}
+
+impl ImageWell {
+    pub fn id(mut self, id: impl Into<ElementId>) -> Self {
+        self.id = id.into();
+        self
+    }
+    pub fn image(mut self, image: impl Into<ImageSource>) -> Self {
+        self.image = Some(image.into());
+        self
+    }
+
+    pub fn label(mut self, label: impl Into<SharedString>) -> Self {
+        self.label = label.into();
+        self
+    }
+}
+
+impl RenderOnce for ImageWell {
+    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+        div()
+            .id(self.id)
+            .role(Role::Image)
+            .aria_label(self.label)
+            .relative()
+            .w(px(self.width as f32))
+            .h(px(self.height as f32))
+            .flex_shrink_0()
+            .child(drawing(
+                self.width as f32,
+                self.height as f32,
+                |pen, _, _| pen.sunken(),
+            ))
+            .when_some(self.image, |element, source| {
+                element.child(
+                    div()
+                        .absolute()
+                        .inset(px(3.))
+                        .overflow_hidden()
+                        .child(img(source).size_full().object_fit(ObjectFit::None)),
+                )
+            })
+    }
 }
 
 pub fn balloon(text: impl Into<SharedString>, width: i32) -> impl IntoElement {
@@ -250,6 +323,7 @@ pub fn empty_state_in(
         .child(paragraph_in(body, Font::Small, width - 32, language))
 }
 
+#[track_caller]
 pub fn status_bar(
     parts: impl IntoIterator<Item = impl Into<SharedString>>,
     width: i32,
@@ -257,27 +331,37 @@ pub fn status_bar(
     status_bar_in(parts, width, Language::English)
 }
 
+#[track_caller]
 pub fn status_bar_in(
     parts: impl IntoIterator<Item = impl Into<SharedString>>,
     width: i32,
     language: Language,
 ) -> impl IntoElement {
     let parts: Vec<SharedString> = parts.into_iter().map(Into::into).collect();
-    drawing(width as f32, 16., move |pen, _, _| {
-        pen.language = language;
-        let mut x = 0;
-        for (index, part) in parts.iter().enumerate() {
-            let section = if index + 1 == parts.len() {
-                width - x
-            } else {
-                Font::Small.measure_in(part, language) + 12
-            };
-            pen.rect(x, 0, section, 16, GRAY_2);
-            pen.bevel(x, 0, section, 16, WHITE, GRAY_7);
-            pen.text(x + 6, 12, part, Font::Small, BLACK);
-            x += section;
-        }
-    })
+    let label = parts
+        .iter()
+        .map(AsRef::<str>::as_ref)
+        .collect::<Vec<_>>()
+        .join(", ");
+    div()
+        .id(ElementId::from(std::panic::Location::caller()))
+        .role(Role::Status)
+        .aria_label(label)
+        .child(drawing(width as f32, 16., move |pen, _, _| {
+            pen.language = language;
+            let mut x = 0;
+            for (index, part) in parts.iter().enumerate() {
+                let section = if index + 1 == parts.len() {
+                    width - x
+                } else {
+                    Font::Small.measure_in(part, language) + 12
+                };
+                pen.rect(x, 0, section, 16, GRAY_2);
+                pen.bevel(x, 0, section, 16, WHITE, GRAY_7);
+                pen.text(x + 6, 12, part, Font::Small, BLACK);
+                x += section;
+            }
+        }))
 }
 
 fn frame_number() -> usize {

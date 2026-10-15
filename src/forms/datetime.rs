@@ -23,7 +23,7 @@ pub struct DatePicker {
     pressed: bool,
     auto_width: bool,
     style: FieldStyle,
-    subscription: Option<Subscription>,
+    subscriptions: Vec<Subscription>,
 }
 
 impl EventEmitter<DateChanged> for DatePicker {}
@@ -43,7 +43,7 @@ impl DatePicker {
             pressed: false,
             auto_width: true,
             style: FieldStyle::new(160),
-            subscription: None,
+            subscriptions: Vec::new(),
         }
     }
     pub fn theme(mut self, theme: Theme) -> Self {
@@ -69,6 +69,27 @@ impl DatePicker {
     }
     pub fn value(&self) -> Date {
         self.value
+    }
+    pub fn is_open(&self) -> bool {
+        self.open
+    }
+    pub fn set_value(&mut self, value: Date, cx: &mut Context<Self>) {
+        self.value = value;
+        self.calendar
+            .update(cx, |calendar, cx| calendar.set_selection(value, cx));
+        cx.notify();
+    }
+    pub fn set_disabled(&mut self, disabled: bool, cx: &mut Context<Self>) {
+        self.style.disabled = disabled;
+        if disabled {
+            self.open = false;
+            self.pressed = false;
+        }
+        cx.notify();
+    }
+    pub fn set_label(&mut self, label: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.style.label = label.into();
+        cx.notify();
     }
     pub fn set_theme(&mut self, theme: Theme, cx: &mut Context<Self>) {
         self.style.theme = theme;
@@ -104,20 +125,22 @@ impl DatePicker {
 
 impl Render for DatePicker {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.subscription.is_none() {
-            self.subscription = Some(cx.subscribe_in(
+        if self.subscriptions.is_empty() {
+            self.subscriptions.push(cx.subscribe_in(
                 &self.calendar,
                 window,
-                |this, _, event: &DateChanged, window, cx| {
+                |this, _, event: &DateChanged, _, cx| {
                     if this.value != event.0 {
                         this.value = event.0;
                         cx.emit(*event);
                     }
-                    if !window.last_input_was_keyboard() {
-                        this.close(window, cx);
-                    }
                     cx.notify();
                 },
+            ));
+            self.subscriptions.push(cx.subscribe_in(
+                &self.calendar,
+                window,
+                |this, _, _: &crate::calendar::DateChosen, window, cx| this.close(window, cx),
             ));
         }
         if self.style.dirty {
@@ -192,7 +215,7 @@ impl Render for DatePicker {
             .child(drawing(width as f32, 20., move |pen, _, _| {
                 pen.language = language;
                 draw_date_button(pen, &text, disabled, pressed);
-                if focused {
+                if focused && !crate::window::content_is_inactive() {
                     crate::draw_focus_ring(pen, 3, accent);
                 }
             }));
@@ -205,14 +228,16 @@ impl Render for DatePicker {
                 .on_click(|_, _, cx| cx.stop_propagation())
                 .child(self.calendar.clone());
             root = root.child(
-                deferred(
-                    anchored()
-                        .anchor(Anchor::TopLeft)
-                        .offset(point(px(0.), px(22.)))
-                        .snap_to_window_with_margin(px(4.))
-                        .child(calendar),
-                )
-                .priority(3),
+                div().absolute().left(px(0.)).top(px(0.)).child(
+                    deferred(
+                        anchored()
+                            .anchor(Anchor::TopLeft)
+                            .offset(point(px(0.), px(22.)))
+                            .snap_to_window_with_margin(px(4.))
+                            .child(calendar),
+                    )
+                    .priority(3),
+                ),
             );
         }
         root
@@ -232,9 +257,11 @@ fn date_picker_width(language: Language) -> i32 {
 }
 
 fn draw_date_button(pen: &mut Pen, text: &str, disabled: bool, pressed: bool) {
+    let inactive = crate::window::content_is_inactive();
+    let pressed = pressed && !inactive;
     crate::draw_button(pen, "", disabled, pressed);
     let arrow = pen.width - 18;
-    let ink = if disabled {
+    let ink = if disabled || inactive {
         GRAY_8
     } else if pressed {
         WHITE
@@ -243,6 +270,8 @@ fn draw_date_button(pen: &mut Pen, text: &str, disabled: bool, pressed: bool) {
     };
     let (line, highlight) = if disabled {
         (GRAY_4, GRAY_1)
+    } else if inactive {
+        (GRAY_2, GRAY_2)
     } else if pressed {
         (GRAY_11, GRAY_8)
     } else {
@@ -401,6 +430,22 @@ impl TimeField {
     }
     pub fn set_value(&mut self, value: Time, cx: &mut Context<Self>) {
         self.value = Time::new(value.hour, value.minute, value.second);
+        cx.notify();
+    }
+    pub fn set_disabled(&mut self, disabled: bool, cx: &mut Context<Self>) {
+        self.style.disabled = disabled;
+        self.style.dirty = true;
+        self.typed.clear();
+        cx.notify();
+    }
+    pub fn set_label(&mut self, label: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.style.label = label.into();
+        self.style.dirty = true;
+        cx.notify();
+    }
+    pub fn set_hour_cycle(&mut self, hours: u8, cx: &mut Context<Self>) {
+        self.twelve_hours = Some(hours == 12);
+        self.typed.clear();
         cx.notify();
     }
 
@@ -721,7 +766,12 @@ impl TimeLayout {
         disabled: bool,
         theme: Theme,
     ) {
+        let inactive = crate::window::content_is_inactive();
+        let focused = focused && !inactive;
         pen.sunken();
+        if inactive {
+            pen.frame(1, 1, pen.width - 2, pen.height - 2, GRAY_8);
+        }
         pen.language = self.language;
         if disabled {
             pen.frame(1, 1, pen.width - 2, pen.height - 2, GRAY_6);
@@ -750,7 +800,7 @@ impl TimeLayout {
                 15,
                 &text,
                 Font::Small,
-                if disabled { GRAY_8 } else { BLACK },
+                if disabled || inactive { GRAY_8 } else { BLACK },
             );
         }
         if focused && !disabled {

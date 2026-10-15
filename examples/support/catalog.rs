@@ -126,12 +126,18 @@ pub struct Controls {
     rich: Entity<RichTextArea>,
 }
 
+impl Focusable for Controls {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
+
 impl Controls {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let sidebar = cx.new(|cx| {
             ListBox::new(PAGES.iter().copied(), cx)
                 .label("Controls")
-                .size(220, 420)
+                .size(190, 420)
                 .fill_height()
                 .selected(0)
         });
@@ -855,13 +861,14 @@ impl Controls {
     }
 
     fn page(&self, cx: &mut Context<Self>) -> AnyElement {
-        let column = div().flex().flex_col().gap(px(12.)).items_start();
+        let column = div().flex().flex_col().gap(px(8.)).items_start();
         match PAGES[self.page] {
             "Button" => column
                 .child(
                     row()
                         .child(
                             button("cancel", self.say("cancel"))
+                                .cancel_button()
                                 .theme(self.theme)
                                 .language(self.language)
                                 .on_click(|_, _, _| {}),
@@ -1512,7 +1519,7 @@ impl Render for Controls {
             .relative()
             .size_full()
             .flex()
-            .flex_col()
+            .overflow_hidden()
             .bg(rgb(GRAY_2))
             .on_action(|_: &NextFocus, window, cx| window.focus_next(cx))
             .on_action(|_: &PreviousFocus, window, cx| window.focus_prev(cx))
@@ -1526,51 +1533,27 @@ impl Render for Controls {
                     cx.stop_propagation();
                 }
             }))
-            .child(
-                div()
-                    .h(px(30.))
-                    .w_full()
-                    .flex_shrink_0()
-                    .flex()
-                    .items_center()
-                    .px(px(12.))
-                    .border_b_1()
-                    .border_color(rgb(BLACK))
-                    .child(label_in(self.say("controls"), self.language)),
-            )
+            .child(self.sidebar.clone())
             .child(
                 div()
                     .flex()
+                    .flex_col()
+                    .gap(px(10.))
                     .flex_1()
-                    .min_h_0()
-                    .p(px(12.))
-                    .gap(px(16.))
-                    .child(self.sidebar.clone())
+                    .min_w_0()
+                    .py(px(12.))
+                    .px(px(14.))
+                    .overflow_hidden()
+                    .child(label(PAGES[self.page]))
                     .child(
                         div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(12.))
-                            .flex_1()
-                            .pt(px(8.))
-                            .child(label(PAGES[self.page]))
-                            .child(separator(480))
-                            .child(self.page(cx)),
-                    ),
-            )
-            .child(
-                div()
-                    .h(px(26.))
-                    .flex_shrink_0()
-                    .border_t_1()
-                    .border_color(rgb(GRAY_7))
-                    .px(px(10.))
-                    .child(text_in_language(
-                        format!("{} / {}", self.page + 1, PAGES.len()),
-                        Font::Small,
-                        BLACK,
-                        self.language,
-                    )),
+                            .w_full()
+                            .h(px(2.))
+                            .bg(rgb(GRAY_7))
+                            .border_b_1()
+                            .border_color(rgb(WHITE)),
+                    )
+                    .child(self.page(cx)),
             );
         root = root
             .child(self.alert.clone())
@@ -1581,7 +1564,7 @@ impl Render for Controls {
             .child(self.open_dialog.clone())
             .child(self.save_dialog.clone())
             .child(self.toasts.clone());
-        root
+        button_scope("controls-buttons", root)
     }
 }
 

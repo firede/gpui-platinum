@@ -1,6 +1,6 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use chrono::{DateTime, Datelike, Local, NaiveDate, TimeZone, Timelike};
+use chrono::{DateTime, Datelike, FixedOffset, Local, NaiveDate, TimeZone, Timelike};
 use gpui::{
     App, ClipboardItem, Context, Div, Entity, EventEmitter, FocusHandle, Focusable, KeyDownEvent,
     MouseButton, Role, Subscription, Task, Window, anchored, deferred, div, point, prelude::*, px,
@@ -32,12 +32,34 @@ pub enum AppKind {
 #[derive(Clone, Copy, Debug)]
 pub struct ThemeChanged(pub Theme);
 #[derive(Clone, Copy, Debug)]
-pub struct LanguageChanged(pub Language);
+pub struct LanguageChanged(pub Language, pub usize);
 #[derive(Clone, Copy, Debug)]
 pub struct PatternChanged(pub usize);
 /// Seconds added to the computer's local clock within this desktop.
 #[derive(Clone, Copy, Debug)]
 pub struct ClockChanged(pub i64);
+
+#[derive(Clone, Debug)]
+pub struct PanelSettings {
+    pub volume: f64,
+    pub muted: bool,
+    pub alert_sound: usize,
+    pub tracking: f64,
+    pub double_click: usize,
+    pub language_choice: usize,
+}
+impl Default for PanelSettings {
+    fn default() -> Self {
+        Self {
+            volume: 4.,
+            muted: false,
+            alert_sound: 2,
+            tracking: 3.,
+            double_click: 1,
+            language_choice: 0,
+        }
+    }
+}
 
 #[derive(Clone, Copy)]
 pub struct Pattern {
@@ -85,12 +107,14 @@ pub struct Accessories {
     focus: FocusHandle,
     theme: Theme,
     language: Language,
+    width: i32,
     calculator: Calculator,
     puzzle: Puzzle,
     appearance_tab: usize,
     pattern: usize,
     patterns: Entity<ListBox>,
     clock_offset: i64,
+    fixed_time: Option<DateTime<FixedOffset>>,
     calendar: Entity<CalendarView>,
     time: Entity<TimeField>,
     alarm_hour: Entity<PopupMenu>,
@@ -121,8 +145,44 @@ impl Focusable for Accessories {
 }
 
 impl Accessories {
+    pub fn calculate(&mut self, keys: &[&str], cx: &mut Context<Self>) {
+        for key in keys {
+            self.calculator.press(key);
+        }
+        cx.notify();
+    }
+    pub fn set_size(&mut self, width: i32, _: i32, cx: &mut Context<Self>) {
+        self.width = width;
+        cx.notify();
+    }
+    pub fn restore_settings(&mut self, settings: &PanelSettings, cx: &mut Context<Self>) {
+        self.volume = settings.volume;
+        self.muted = settings.muted;
+        self.tracking = settings.tracking;
+        self.double_click = settings.double_click;
+        self.language_choice = settings.language_choice;
+        self.sounds.update(cx, |sounds, cx| {
+            sounds.set_selection(Some(settings.alert_sound), cx)
+        });
+        cx.notify();
+    }
+    pub fn store_settings(&self, settings: &mut PanelSettings, cx: &App) {
+        match self.kind {
+            AppKind::Sound => {
+                settings.volume = self.volume;
+                settings.muted = self.muted;
+                settings.alert_sound = self.sounds.read(cx).selection().unwrap_or(2);
+            }
+            AppKind::Mouse => {
+                settings.tracking = self.tracking;
+                settings.double_click = self.double_click;
+            }
+            AppKind::Language => settings.language_choice = self.language_choice,
+            _ => {}
+        }
+    }
     pub fn new(kind: AppKind, cx: &mut Context<Self>) -> Self {
-        let now = Local::now();
+        let now = Local::now().fixed_offset();
         let calendar = cx.new(|cx| CalendarView::new(date_part(now), cx));
         let time = cx
             .new(|cx| TimeField::new(now.hour() as u8, now.minute() as u8, now.second() as u8, cx));
@@ -186,12 +246,14 @@ impl Accessories {
             focus: cx.focus_handle().tab_stop(true),
             theme: Theme::default(),
             language: Language::English,
+            width: 300,
             calculator: Calculator::new(),
             puzzle: Puzzle::shuffled(1),
             appearance_tab: 0,
             pattern: 0,
             patterns,
             clock_offset: 0,
+            fixed_time: None,
             calendar,
             time,
             alarm_hour,
@@ -266,6 +328,18 @@ impl Accessories {
         self.sync_clock_fields(cx);
         cx.notify();
     }
+    pub fn set_fixed_time(&mut self, time: Option<DateTime<FixedOffset>>, cx: &mut Context<Self>) {
+        self.fixed_time = time;
+        self.sync_clock_fields(cx);
+        if let Some(time) = time {
+            self.alarm_hour
+                .update(cx, |menu, cx| menu.set_selection(time.hour() as usize, cx));
+            self.alarm_minute.update(cx, |menu, cx| {
+                menu.set_selection(((time.minute() / 5 + 1) % 12) as usize, cx)
+            });
+        }
+        cx.notify();
+    }
 
     pub fn command(&mut self, command: &str, cx: &mut Context<Self>) {
         match (self.kind, command) {
@@ -292,8 +366,10 @@ impl Accessories {
         cx.notify();
     }
 
-    fn now(&self) -> DateTime<Local> {
-        Local::now() + chrono::Duration::seconds(self.clock_offset)
+    fn now(&self) -> DateTime<FixedOffset> {
+        self.fixed_time
+            .unwrap_or_else(|| Local::now().fixed_offset())
+            + chrono::Duration::seconds(self.clock_offset)
     }
     fn choose_clock(&mut self, date: Date, time: Time, cx: &mut Context<Self>) {
         let Some(naive) = NaiveDate::from_ymd_opt(date.year, date.month as u32, date.day as u32)
@@ -306,7 +382,11 @@ impl Accessories {
         let Some(chosen) = Local.from_local_datetime(&naive).earliest() else {
             return;
         };
-        self.clock_offset = chosen.timestamp() - Local::now().timestamp();
+        self.clock_offset = chosen.timestamp()
+            - self
+                .fixed_time
+                .unwrap_or_else(|| Local::now().fixed_offset())
+                .timestamp();
         cx.emit(ClockChanged(self.clock_offset));
         cx.notify();
     }
@@ -352,7 +432,7 @@ impl Accessories {
         } else {
             self.calculator.display().to_owned()
         };
-        let mut keys = div().flex().flex_col().gap(px(0.));
+        let mut keys = div().flex().flex_col().gap(px(4.));
         for (row, labels) in [
             ["C", "←", "÷", "×"],
             ["7", "8", "9", "−"],
@@ -361,19 +441,25 @@ impl Accessories {
         .into_iter()
         .enumerate()
         {
-            keys =
-                keys.child(div().flex().children(labels.into_iter().enumerate().map(
-                    |(column, key)| self.calc_key((row * 4 + column) as u32, key, 28, 20, cx),
-                )));
+            keys = keys.child(
+                div()
+                    .flex()
+                    .gap(px(4.))
+                    .children(labels.into_iter().enumerate().map(|(column, key)| {
+                        self.calc_key((row * 4 + column) as u32, key, 28, 20, cx)
+                    })),
+            );
         }
         keys = keys.child(
             div()
                 .flex()
+                .gap(px(4.))
                 .child(
                     div()
                         .flex()
                         .flex_col()
-                        .child(div().flex().children(
+                        .gap(px(4.))
+                        .child(div().flex().gap(px(4.)).children(
                             ["1", "2", "3"].into_iter().enumerate().map(|(index, key)| {
                                 self.calc_key(12 + index as u32, key, 28, 20, cx)
                             }),
@@ -381,29 +467,30 @@ impl Accessories {
                         .child(
                             div()
                                 .flex()
-                                .child(self.calc_key(15, "0", 62, 20, cx))
+                                .gap(px(4.))
+                                .child(self.calc_key(15, "0", 60, 20, cx))
                                 .child(self.calc_key(16, ".", 28, 20, cx)),
                         ),
                 )
-                .child(self.calc_key(17, "=", 28, 46, cx)),
+                .child(self.calc_key(17, "=", 28, 44, cx)),
         );
         div()
             .flex()
             .flex_col()
-            .gap(px(5.))
+            .gap(px(8.))
             .child(
                 div()
                     .id("calculator-display")
                     .role(Role::Status)
                     .aria_label(desk(language, "display"))
                     .aria_value(shown.clone())
-                    .child(drawing(136., 24., move |pen, _, _| {
-                        pen.bevel(0, 0, 136, 24, GRAY_7, WHITE);
-                        pen.frame(1, 1, 134, 22, BLACK);
-                        pen.rect(2, 2, 132, 20, 0xdde8cc);
+                    .child(drawing(124., 24., move |pen, _, _| {
+                        pen.bevel(0, 0, 124, 24, GRAY_7, WHITE);
+                        pen.frame(1, 1, 122, 22, BLACK);
+                        pen.rect(2, 2, 120, 20, 0xdde8cc);
                         pen.language = language;
                         pen.text(
-                            130 - Font::Bold.measure_in(&shown, language),
+                            118 - Font::Bold.measure_in(&shown, language),
                             17,
                             &shown,
                             Font::Bold,
@@ -512,20 +599,21 @@ impl Accessories {
         let now = self.now();
         let time = now.format("%H:%M:%S").to_string();
         let language = self.language;
+        let width = (self.width - 20).max(100);
         div()
             .flex()
             .flex_col()
             .gap(px(8.))
-            .w(px(216.))
+            .w(px(width as f32))
             .child(
                 div()
                     .id("clock-display")
                     .role(Role::Status)
                     .aria_label(desk(language, "time"))
                     .aria_value(time.clone())
-                    .child(drawing(216., 40., move |pen, _, _| {
+                    .child(drawing(width as f32, 40., move |pen, _, _| {
                         pen.sunken();
-                        pen.rect(2, 2, 212, 36, GRAY_1);
+                        pen.rect(2, 2, width - 4, 36, GRAY_1);
                         scaled_time(pen, &time);
                     })),
             )
@@ -535,7 +623,7 @@ impl Accessories {
                 BLACK,
                 language,
             )))
-            .child(separator(216))
+            .child(separator(width))
             .child(
                 div()
                     .flex()
@@ -577,7 +665,12 @@ impl Accessories {
             })
             .ok();
         });
-        let mut body = div().flex().flex_col().gap(px(10.)).w(px(280.)).child(tabs);
+        let mut body = div()
+            .flex()
+            .flex_col()
+            .gap(px(10.))
+            .w(px((self.width - 20) as f32))
+            .child(tabs);
         if self.appearance_tab == 0 {
             let weak = cx.weak_entity();
             let selected = ACCENTS
@@ -745,7 +838,10 @@ impl Accessories {
                             })),
                     ),
             )
-            .child(section(desk(language, "alertSound"), 280, language).child(self.sounds.clone()))
+            .child(
+                section(desk(language, "alertSound"), self.width - 20, language)
+                    .child(self.sounds.clone()),
+            )
     }
 
     fn mouse(&self, cx: &mut Context<Self>) -> Div {
@@ -757,7 +853,7 @@ impl Accessories {
             .flex_col()
             .gap(px(16.))
             .child(
-                section(desk(language, "trackingSpeed"), 280, language)
+                section(desk(language, "trackingSpeed"), self.width - 20, language)
                     .child(
                         Slider::new("tracking", self.tracking, 0., 6.)
                             .width(240)
@@ -792,7 +888,12 @@ impl Accessories {
                     ),
             )
             .child(
-                section(desk(language, "doubleClickSpeed"), 280, language).child(
+                section(
+                    desk(language, "doubleClickSpeed"),
+                    self.width - 20,
+                    language,
+                )
+                .child(
                     ChoiceGroup::radio(
                         "double-click",
                         self.double_click,
@@ -827,7 +928,7 @@ impl Accessories {
             .flex_col()
             .gap(px(10.))
             .child(
-                section(desk(language, "languageLabel"), 280, language).child(
+                section(desk(language, "languageLabel"), self.width - 20, language).child(
                     ChoiceGroup::radio("language", self.language_choice, names)
                         .language(language)
                         .theme(self.theme)
@@ -840,7 +941,7 @@ impl Accessories {
                                     LANGUAGES[index - 1]
                                 };
                                 this.set_language(language, cx);
-                                cx.emit(LanguageChanged(language));
+                                cx.emit(LanguageChanged(language, index));
                             })
                             .ok();
                         }),
@@ -848,7 +949,7 @@ impl Accessories {
             )
             .child(localized_paragraph(
                 desk(language, "languageNote"),
-                270,
+                self.width - 20,
                 language,
             ))
     }
@@ -1059,13 +1160,13 @@ fn checked(value: bool) -> CheckState {
         CheckState::Off
     }
 }
-fn date_part(now: DateTime<Local>) -> Date {
+fn date_part(now: DateTime<FixedOffset>) -> Date {
     Date::new(now.year(), now.month() as u8, now.day() as u8).expect("local calendar date")
 }
-fn time_part(now: DateTime<Local>) -> Time {
+fn time_part(now: DateTime<FixedOffset>) -> Time {
     Time::new(now.hour() as u8, now.minute() as u8, now.second() as u8)
 }
-fn date_label(now: DateTime<Local>, language: Language) -> String {
+fn date_label(now: DateTime<FixedOffset>, language: Language) -> String {
     match language {
         Language::English => now.format("%A, %B %-d, %Y").to_string(),
         Language::Korean => format!("{}년 {}월 {}일", now.year(), now.month(), now.day()),
@@ -1141,24 +1242,49 @@ fn scaled_time(pen: &mut Pen, text: &str) {
         x += glyph.advance * 2;
     }
 }
-fn system_language() -> Language {
+pub fn system_language() -> Language {
+    #[cfg(target_os = "macos")]
+    if let Ok(output) = std::process::Command::new("/usr/bin/defaults")
+        .args(["read", "-g", "AppleLanguages"])
+        .output()
+        && output.status.success()
+    {
+        let preferred = String::from_utf8_lossy(&output.stdout);
+        for tag in
+            preferred.split(|ch: char| ch.is_whitespace() || matches!(ch, '(' | ')' | ',' | '"'))
+        {
+            if let Some(language) = language_for_tag(tag) {
+                return language;
+            }
+        }
+    }
     let locale = std::env::var("LC_ALL")
         .or_else(|_| std::env::var("LC_MESSAGES"))
         .or_else(|_| std::env::var("LANG"))
         .unwrap_or_default()
         .to_lowercase();
+    language_for_tag(&locale).unwrap_or(Language::English)
+}
+fn language_for_tag(tag: &str) -> Option<Language> {
+    let locale = tag.to_lowercase();
     if locale.starts_with("ja") {
-        Language::Japanese
+        Some(Language::Japanese)
     } else if locale.starts_with("ko") {
-        Language::Korean
+        Some(Language::Korean)
     } else if locale.starts_with("zh") {
-        if locale.contains("hant") || locale.contains("tw") || locale.contains("hk") {
-            Language::TraditionalChinese
+        if locale.contains("hant")
+            || locale.contains("tw")
+            || locale.contains("hk")
+            || locale.contains("mo")
+        {
+            Some(Language::TraditionalChinese)
         } else {
-            Language::SimplifiedChinese
+            Some(Language::SimplifiedChinese)
         }
+    } else if locale.starts_with("en") {
+        Some(Language::English)
     } else {
-        Language::English
+        None
     }
 }
 

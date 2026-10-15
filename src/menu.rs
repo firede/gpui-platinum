@@ -2,7 +2,7 @@
 
 use crate::{
     Font, Language, Theme,
-    paint::{Rect, drawing},
+    paint::{Pen, Rect, drawing},
     theme::*,
 };
 use gpui::{prelude::*, *};
@@ -155,6 +155,14 @@ impl PopupMenu {
         self.theme = theme;
         cx.notify();
     }
+    pub fn set_disabled(&mut self, disabled: bool, cx: &mut Context<Self>) {
+        self.disabled = disabled;
+        if disabled {
+            self.open = false;
+            self.highlighted = None;
+        }
+        cx.notify();
+    }
     pub fn set_items(&mut self, items: Vec<MenuItem>, cx: &mut Context<Self>) {
         self.items = items;
         self.selected = self.selected.min(self.items.len().saturating_sub(1));
@@ -178,7 +186,7 @@ impl PopupMenu {
     }
 
     fn key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
-        if self.disabled {
+        if self.disabled || self.items.is_empty() {
             return;
         }
         match event.keystroke.key.as_str() {
@@ -197,6 +205,7 @@ impl PopupMenu {
                 }
             }
             "up" | "down" | "home" | "end" => {
+                let was_open = self.open;
                 self.open = true;
                 let enabled: Vec<_> = self
                     .items
@@ -206,6 +215,16 @@ impl PopupMenu {
                     .map(|(i, _)| i)
                     .collect();
                 if enabled.is_empty() {
+                    return;
+                }
+                if !was_open && matches!(event.keystroke.key.as_str(), "up" | "down") {
+                    self.highlighted = enabled
+                        .iter()
+                        .copied()
+                        .find(|index| self.has_selection && *index == self.selected)
+                        .or_else(|| enabled.first().copied());
+                    cx.stop_propagation();
+                    cx.notify();
                     return;
                 }
                 let pos = enabled
@@ -242,6 +261,7 @@ impl Render for PopupMenu {
         let accent = self.theme.accent;
         let open = self.open;
         let language = self.language;
+        let focus = self.focus.clone();
         let mut root = div()
             .id("popup")
             .role(Role::ComboBox)
@@ -250,12 +270,11 @@ impl Render for PopupMenu {
             .aria_expanded(open)
             .relative()
             .flex_shrink_0()
-            .p(px(3.))
             .text_color(rgb(BLACK))
             .when(!disabled, |el| {
                 el.track_focus(&self.focus)
                     .tab_stop(true)
-                    .focus_visible(move |style| style.bg(rgb(accent.dark)))
+                    .active(|style| style.text_color(rgb(WHITE)))
             })
             .on_key_down(cx.listener(Self::key_down))
             .on_mouse_down(
@@ -271,45 +290,34 @@ impl Render for PopupMenu {
                     cx.stop_propagation();
                 }),
             )
-            .child(drawing(width as f32, 20., move |pen, _, _| {
+            .child(drawing(width as f32, 20., move |pen, window, _| {
+                let inactive = crate::window::content_is_inactive();
                 pen.language = language;
-                pen.round_frame(
-                    Rect {
-                        x: 0,
-                        y: 0,
-                        width,
-                        height: 20,
-                    },
-                    2,
-                    if disabled { GRAY_6 } else { BLACK },
-                    Some(GRAY_2),
-                );
-                pen.bevel(1, 1, width - 2, 18, WHITE, GRAY_7);
-                pen.text(
-                    8,
-                    14,
-                    &current,
-                    Font::Bold,
-                    if disabled { GRAY_8 } else { BLACK },
-                );
-                for row in 0..4 {
-                    pen.hline(
-                        width - 15 + row,
-                        8 + row,
-                        7 - row * 2,
-                        if disabled { GRAY_8 } else { BLACK },
-                    );
+                let pressed =
+                    !disabled && !inactive && window.text_style().color == rgb(WHITE).into();
+                draw_popup_button(pen, &current, disabled, pressed);
+                if !disabled
+                    && !inactive
+                    && focus.is_focused(window)
+                    && window.last_input_was_keyboard()
+                {
+                    crate::widgets::draw_focus_ring(pen, 3, accent.dark);
                 }
             }));
         if self.open {
+            let selected_top: i32 = self
+                .items
+                .iter()
+                .take(self.selected)
+                .map(|item| if item.separator { 8 } else { 18 })
+                .sum();
             let menu = div()
                 .id("menu")
                 .role(Role::Menu)
+                .relative()
                 .w(px(width as f32))
-                .p(px(1.))
-                .bg(rgb(GRAY_1))
-                .border_1()
-                .border_color(rgb(BLACK))
+                .p(px(2.))
+                .child(menu_frame())
                 .occlude()
                 .on_mouse_down_out(cx.listener(|this, _, _, cx| {
                     this.open = false;
@@ -323,12 +331,14 @@ impl Render for PopupMenu {
                     let separator = item.separator;
                     let selected = self.has_selection && index == self.selected;
                     let highlighted = self.highlighted == Some(index) && !disabled;
+                    let mut item = item.clone();
+                    item.checked = selected;
                     div()
                         .id(index)
                         .role(Role::MenuItem)
                         .aria_label(title.clone())
                         .aria_selected(selected)
-                        .h(px(if separator { 6. } else { 20. }))
+                        .h(px(if separator { 8. } else { 18. }))
                         .w_full()
                         .on_mouse_move(cx.listener(move |this, _, _, cx| {
                             if !disabled && this.highlighted != Some(index) {
@@ -345,45 +355,131 @@ impl Render for PopupMenu {
                         )
                         .child(drawing(
                             (width - 4) as f32,
-                            if separator { 6. } else { 20. },
+                            if separator { 8. } else { 18. },
                             move |pen, _, _| {
                                 pen.language = language;
-                                if separator {
-                                    pen.hline(2, 2, pen.width - 4, GRAY_7);
-                                    pen.hline(2, 3, pen.width - 4, WHITE);
-                                    return;
-                                }
-                                pen.rect(
-                                    0,
-                                    0,
-                                    pen.width,
-                                    pen.height,
-                                    if highlighted { accent.dark } else { GRAY_1 },
-                                );
-                                let ink = if disabled {
-                                    GRAY_8
-                                } else if highlighted {
-                                    WHITE
-                                } else {
-                                    BLACK
-                                };
-                                if selected {
-                                    pen.text(3, 14, "✓", Font::Small, ink);
-                                }
-                                pen.text(18, 14, &title, Font::Bold, ink);
+                                draw_menu_item(pen, &item, highlighted, accent);
                             },
                         ))
                 }));
             root = root.child(
-                deferred(
-                    anchored()
-                        .anchor(Anchor::TopLeft)
-                        .snap_to_window_with_margin(px(4.))
-                        .child(menu),
-                )
-                .priority(2),
+                div().absolute().left_0().top_0().child(
+                    deferred(
+                        anchored()
+                            .anchor(Anchor::TopLeft)
+                            .offset(point(px(0.), px((-selected_top - 1) as f32)))
+                            .snap_to_window_with_margin(px(0.))
+                            .child(menu),
+                    )
+                    .priority(2),
+                ),
             );
         }
         root
     }
+}
+
+pub(crate) fn menu_frame() -> impl IntoElement {
+    canvas(
+        |_, _, _| (),
+        |bounds, _, window, _| {
+            let mut pen = Pen::new(
+                f32::from(bounds.size.width).round() as i32,
+                f32::from(bounds.size.height).round() as i32,
+            );
+            draw_menu_frame(&mut pen);
+            pen.paint(bounds.origin, window);
+        },
+    )
+    .absolute()
+    .inset_0()
+    .size_full()
+}
+
+/// Draws the frame shared by pop-up, context and menu bar panels.
+pub fn draw_menu_frame(pen: &mut Pen) {
+    pen.rect(0, 0, pen.width, pen.height, GRAY_2);
+    pen.frame(0, 0, pen.width, pen.height, BLACK);
+    pen.bevel(1, 1, pen.width - 2, pen.height - 2, WHITE, GRAY_7);
+}
+
+/// Draws one eighteen-pixel menu row, or an eight-pixel separator.
+pub fn draw_menu_item(pen: &mut Pen, item: &MenuItem, highlighted: bool, accent: Accent) {
+    if item.separator {
+        pen.hline(0, 3, pen.width, GRAY_7);
+        pen.hline(0, 4, pen.width, WHITE);
+        return;
+    }
+    let ink = if item.disabled {
+        GRAY_8
+    } else if highlighted {
+        pen.rect(0, 0, pen.width, pen.height, accent.dark);
+        WHITE
+    } else {
+        BLACK
+    };
+    let baseline = (pen.height - Font::Bold.cap_height()) / 2 + Font::Bold.cap_height();
+    if item.checked {
+        pen.text(4, baseline, "✓", Font::Bold, ink);
+    }
+    pen.text(16, baseline, &item.title, Font::Bold, ink);
+    if let Some(key) = &item.key {
+        let shortcut = format!("⌘{}", key.to_uppercase());
+        pen.text(
+            pen.width - 10 - Font::Bold.measure_in(&shortcut, pen.language),
+            baseline,
+            &shortcut,
+            Font::Bold,
+            ink,
+        );
+    } else if !item.submenu.is_empty() {
+        for row in 0..7 {
+            pen.hline(
+                pen.width - 12,
+                (pen.height - 7) / 2 + row,
+                4 - (3 - row).abs(),
+                ink,
+            );
+        }
+    }
+}
+
+/// Draws the beveled pop-up button and its separate arrow box.
+pub fn draw_popup_button(pen: &mut Pen, text: &str, disabled: bool, pressed: bool) {
+    crate::widgets::draw_button(pen, "", disabled, pressed);
+    let inactive = crate::window::content_is_inactive();
+    let (ink, line, highlight) = if disabled || inactive {
+        (GRAY_8, GRAY_4, GRAY_1)
+    } else if pressed {
+        (WHITE, GRAY_11, GRAY_8)
+    } else {
+        (BLACK, GRAY_7, WHITE)
+    };
+    let arrow_left = pen.width - 18;
+    pen.vline(arrow_left, 3, pen.height - 6, line);
+    pen.vline(arrow_left + 1, 3, pen.height - 6, highlight);
+    for row in 0..4 {
+        pen.hline(
+            arrow_left + 6 + row,
+            (pen.height - 4) / 2 + row,
+            7 - row * 2,
+            ink,
+        );
+    }
+    let mut label = Pen::new(pen.width, pen.height);
+    label.language = pen.language;
+    label.text(
+        9,
+        (pen.height - Font::Bold.cap_height()) / 2 + Font::Bold.cap_height(),
+        &Font::Bold.truncate_in(text, arrow_left - 13, pen.language),
+        Font::Bold,
+        ink,
+    );
+    label.clip(Rect {
+        x: 2,
+        y: 0,
+        width: arrow_left - 4,
+        height: pen.height,
+    });
+    pen.append(label, 0, 0);
 }

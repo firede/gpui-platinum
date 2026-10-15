@@ -267,10 +267,12 @@ impl RenderOnce for ScrollView {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PopupWindowEvent {
+    Activated,
     Opened,
     Closed,
     Moved,
     TornOff,
+    Dropped { source: usize, copying: bool },
 }
 
 pub struct PopupWindow {
@@ -281,6 +283,7 @@ pub struct PopupWindow {
     width: i32,
     height: i32,
     open: bool,
+    active: bool,
     theme: Theme,
     language: Language,
     drag: Option<(Point<Pixels>, i32)>,
@@ -303,6 +306,7 @@ impl PopupWindow {
             width: 180,
             height: 100,
             open: true,
+            active: true,
             theme: Theme::default(),
             language: Language::English,
             drag: None,
@@ -322,6 +326,11 @@ impl PopupWindow {
         self.width = width.max(104);
         self.height = height.max(32);
         self
+    }
+    pub fn set_size(&mut self, width: i32, height: i32, cx: &mut Context<Self>) {
+        self.width = width.max(104);
+        self.height = height.max(32);
+        cx.notify();
     }
     pub fn language(mut self, language: Language) -> Self {
         self.language = language;
@@ -344,6 +353,10 @@ impl PopupWindow {
     }
     pub fn set_title(&mut self, title: impl Into<SharedString>, cx: &mut Context<Self>) {
         self.title = title.into();
+        cx.notify();
+    }
+    pub fn set_active(&mut self, active: bool, cx: &mut Context<Self>) {
+        self.active = active;
         cx.notify();
     }
     pub fn set_open(&mut self, open: bool, cx: &mut Context<Self>) {
@@ -390,6 +403,7 @@ impl Render for PopupWindow {
         let height = if self.open { self.height + 19 } else { 20 };
         let tab_width = (Font::Bold.measure_in(&title, self.language) + 32).clamp(80, width - 16);
         let open = self.open;
+        let inactive = !self.active;
         let language = self.language;
         let focused = self.focus.is_focused(window) && window.last_input_was_keyboard();
         let accent = self.theme.accent.dark;
@@ -489,10 +503,24 @@ impl Render for PopupWindow {
                     .top_0()
                     .w(px(tab_width as f32))
                     .h(px(20.))
+                    .on_drag_move::<crate::IconDrag>(cx.listener(
+                        |this, event: &DragMoveEvent<crate::IconDrag>, _, cx| {
+                            this.spring_open(event.bounds.contains(&event.event.position), cx);
+                        },
+                    ))
+                    .on_drop(cx.listener(|this, drag: &crate::IconDrag, window, cx| {
+                        this.spring_at = None;
+                        cx.emit(PopupWindowEvent::Dropped {
+                            source: drag.data,
+                            copying: window.modifiers().alt,
+                        });
+                        cx.stop_propagation();
+                    }))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, event: &MouseDownEvent, window, cx| {
                             window.focus(&this.focus, cx);
+                            cx.emit(PopupWindowEvent::Activated);
                             this.drag = Some((event.position, this.x));
                             this.moved = false;
                             cx.notify();
@@ -523,7 +551,21 @@ impl Render for PopupWindow {
                         .top(px(25.))
                         .bottom_0()
                         .overflow_hidden()
-                        .when_some(self.content.clone(), |root, content| root.child(content)),
+                        .when_some(self.content.clone(), |root, content| {
+                            root.child(crate::inactive::Inactive::new(
+                                inactive,
+                                crate::button_scope("popup-buttons", content),
+                            ))
+                        })
+                        .when(inactive && !cx.has_active_drag(), |body| {
+                            body.child(div().absolute().inset_0().occlude().on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|_, _, _, cx| {
+                                    cx.emit(PopupWindowEvent::Activated);
+                                    cx.stop_propagation();
+                                }),
+                            ))
+                        }),
                 )
             })
     }
@@ -573,17 +615,13 @@ pub fn draw_popup_window(pen: &mut Pen, title: &str, tab_width: i32, open: bool,
         Font::Bold,
         BLACK,
     );
-    for fill in label.fills {
-        let left = fill.rect.x.max(0);
-        let right = (fill.rect.x + fill.rect.width).min(tab_width - 4);
-        pen.rect(
-            14 + left,
-            fill.rect.y,
-            right - left,
-            fill.rect.height,
-            fill.color,
-        );
-    }
+    label.clip(Rect {
+        x: 0,
+        y: 0,
+        width: tab_width - 4,
+        height: 20,
+    });
+    pen.append(label, 14, 0);
 }
 
 pub fn zoom_rects(

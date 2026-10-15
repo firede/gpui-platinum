@@ -7,6 +7,8 @@ use gpui::{prelude::*, *};
 pub struct Menu {
     pub title: SharedString,
     pub items: Vec<MenuItem>,
+    pub icon: Option<&'static [&'static str]>,
+    pub icon_title: bool,
 }
 
 impl Menu {
@@ -14,7 +16,25 @@ impl Menu {
         Self {
             title: title.into(),
             items,
+            icon: None,
+            icon_title: false,
         }
+    }
+    pub fn icon(mut self, icon: &'static [&'static str]) -> Self {
+        self.icon = Some(icon);
+        self
+    }
+    pub fn icon_title(mut self, show_title: bool) -> Self {
+        self.icon_title = show_title;
+        self
+    }
+    fn title_width(&self, language: Language) -> i32 {
+        let text = Font::Bold.measure_in(&self.title, language);
+        let width = self.icon.map_or(text, |icon| {
+            let width = icon.iter().map(|row| row.len()).max().unwrap_or(0) as i32;
+            width + if self.icon_title { text + 4 } else { 0 }
+        });
+        width + 18
     }
 }
 
@@ -60,6 +80,21 @@ impl MenuBar {
             bounds: None,
             closed_submenu: None,
         }
+    }
+    pub fn context_menu(items: Vec<MenuItem>, cx: &mut Context<Self>) -> Self {
+        let mut menu = Self::new(vec![Menu::new("", items)], cx);
+        menu.context = true;
+        menu
+    }
+    pub fn show_at(
+        &mut self,
+        index: usize,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.position = Some(position);
+        self.show(index, window, cx);
     }
     pub fn language(mut self, language: Language) -> Self {
         self.language = language;
@@ -236,9 +271,7 @@ impl MenuBar {
             .relative()
             .w(px(width as f32))
             .p(px(2.))
-            .bg(rgb(GRAY_2))
-            .border_1()
-            .border_color(rgb(BLACK))
+            .child(crate::menu::menu_frame())
             .occlude();
         for (index, item) in items.iter().enumerate() {
             let mut path = prefix.clone();
@@ -277,43 +310,11 @@ impl MenuBar {
                         }),
                     )
                     .child(drawing(
-                        (width - 6) as f32,
+                        (width - 4) as f32,
                         height as f32,
                         move |pen, _, _| {
                             pen.language = language;
-                            if item.separator {
-                                pen.hline(0, 3, pen.width, GRAY_7);
-                                pen.hline(0, 4, pen.width, WHITE);
-                                return;
-                            }
-                            if highlighted {
-                                pen.rect(0, 0, pen.width, pen.height, accent.dark);
-                            }
-                            let ink = if item.disabled {
-                                GRAY_8
-                            } else if highlighted {
-                                WHITE
-                            } else {
-                                BLACK
-                            };
-                            if item.checked {
-                                pen.text(3, 13, "✓", Font::Bold, ink);
-                            }
-                            pen.text(16, 13, &item.title, Font::Bold, ink);
-                            if let Some(key) = &item.key {
-                                let shortcut = format!("⌘{}", key.to_uppercase());
-                                pen.text(
-                                    pen.width - 10 - Font::Bold.measure_in(&shortcut, language),
-                                    13,
-                                    &shortcut,
-                                    Font::Bold,
-                                    ink,
-                                );
-                            } else if !item.submenu.is_empty() {
-                                for row in 0..7 {
-                                    pen.hline(pen.width - 10, 5 + row, 4 - (3 - row).abs(), ink);
-                                }
-                            }
+                            crate::menu::draw_menu_item(pen, &item, highlighted, accent);
                         },
                     )),
             );
@@ -358,27 +359,33 @@ impl Render for MenuBar {
             .relative()
             .flex()
             .flex_shrink_0()
-            .on_key_down(cx.listener(Self::key_down))
-            .child(
+            .on_key_down(cx.listener(Self::key_down));
+        if !self.context {
+            root = root.child(
                 canvas(
                     move |bounds, _, cx| {
                         layout.update(cx, |this, _| this.bounds = Some(bounds));
                     },
-                    |_, _, _, _| {},
+                    |bounds, _, window, _| {
+                        let mut pen = crate::paint::Pen::new(
+                            f32::from(bounds.size.width).round() as i32,
+                            f32::from(bounds.size.height).round() as i32,
+                        );
+                        pen.rect(0, 0, pen.width, pen.height, GRAY_2);
+                        pen.hline(0, 0, pen.width, WHITE);
+                        pen.hline(0, pen.height - 1, pen.width, BLACK);
+                        pen.paint(bounds.origin, window);
+                    },
                 )
                 .absolute()
                 .size_full(),
             );
-        if !self.context {
-            root = root
-                .h(px(20.))
-                .bg(rgb(WHITE))
-                .border_b_1()
-                .border_color(rgb(BLACK))
-                .tab_stop(true);
+            root = root.h(px(20.)).pl(px(10.)).bg(rgb(GRAY_2)).tab_stop(true);
             for (index, menu) in self.menus.iter().enumerate() {
                 let title = menu.title.clone();
-                let width = Font::Bold.measure_in(&title, self.language) + 18;
+                let width = menu.title_width(self.language);
+                let icon = menu.icon;
+                let icon_title = menu.icon_title;
                 let selected = self.open == Some(index);
                 let theme = self.theme;
                 let language = self.language;
@@ -419,15 +426,40 @@ impl Render for MenuBar {
                         })
                         .child(drawing(width as f32, 19., move |pen, _, _| {
                             pen.language = language;
-                            pen.rect(
-                                0,
-                                0,
-                                width,
-                                19,
-                                if selected { theme.accent.dark } else { WHITE },
-                            );
+                            if selected {
+                                pen.rect(0, 0, width, 19, theme.accent.dark);
+                            }
+                            let mut text_left = 9;
+                            if let Some(rows) = icon {
+                                let top = rows
+                                    .iter()
+                                    .position(|row| {
+                                        row.bytes().any(|pixel| b"#wo+:".contains(&pixel))
+                                    })
+                                    .unwrap_or(0);
+                                let bottom = rows
+                                    .iter()
+                                    .rposition(|row| {
+                                        row.bytes().any(|pixel| b"#wo+:".contains(&pixel))
+                                    })
+                                    .map_or(rows.len(), |row| row + 1);
+                                crate::bitmap_icons::draw_bitmap_icon(
+                                    pen,
+                                    rows,
+                                    9,
+                                    (19 - (bottom - top) as i32) / 2 - top as i32,
+                                    theme.accent,
+                                    selected,
+                                    false,
+                                );
+                                if !icon_title {
+                                    return;
+                                }
+                                text_left +=
+                                    rows.iter().map(|row| row.len()).max().unwrap_or(0) as i32 + 4;
+                            }
                             pen.text(
-                                9,
+                                text_left,
                                 14,
                                 &title,
                                 Font::Bold,
@@ -461,11 +493,17 @@ impl Render for MenuBar {
             } else {
                 let x: i32 = self.menus[..index]
                     .iter()
-                    .map(|menu| Font::Bold.measure_in(&menu.title, self.language) + 18)
+                    .map(|menu| menu.title_width(self.language))
                     .sum();
-                anchor = anchor.offset(point(px(x as f32), px(20.)));
+                anchor = anchor.offset(point(px((10 + x) as f32), px(19.)));
             }
-            root = root.child(deferred(anchor.child(panel)).priority(20));
+            root = root.child(
+                div()
+                    .absolute()
+                    .left(px(0.))
+                    .top(px(0.))
+                    .child(deferred(anchor.child(panel)).priority(20)),
+            );
         }
         root
     }
@@ -506,11 +544,7 @@ impl ContextMenu {
         });
     }
     pub fn new(items: Vec<MenuItem>, cx: &mut Context<Self>) -> Self {
-        let menu = cx.new(|cx| {
-            let mut menu = MenuBar::new(vec![Menu::new("", items)], cx);
-            menu.context = true;
-            menu
-        });
+        let menu = cx.new(|cx| MenuBar::context_menu(items, cx));
         cx.subscribe(&menu, |_, _, choice: &MenuChoice, cx| {
             cx.emit(choice.clone())
         })

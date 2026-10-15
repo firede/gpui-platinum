@@ -1,6 +1,6 @@
 use gpui::{
-    App, Context, EventEmitter, FocusHandle, Focusable, KeyDownEvent, MouseButton, Role,
-    SharedString, Window, div, prelude::*, px,
+    App, Context, EventEmitter, FocusHandle, Focusable, ImageSource, KeyDownEvent, MouseButton,
+    Role, SharedString, Window, div, img, prelude::*, px,
 };
 
 use crate::{
@@ -8,6 +8,10 @@ use crate::{
     paint::{Pen, drawing},
     theme::*,
 };
+
+const CELL_WIDTH: i32 = 84;
+const CELL_HEIGHT: i32 = 64;
+const GRID_TOP: i32 = 4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IconKind {
@@ -30,17 +34,80 @@ pub enum IconKind {
     Language,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct IconItem {
     pub title: SharedString,
     pub kind: IconKind,
+    image: Option<ImageSource>,
+    selected_image: Option<ImageSource>,
+    data: Option<usize>,
+    draggable: bool,
 }
 impl IconItem {
     pub fn new(title: impl Into<SharedString>, kind: IconKind) -> Self {
         Self {
             title: title.into(),
             kind,
+            image: None,
+            selected_image: None,
+            data: None,
+            draggable: false,
         }
+    }
+    /// Replaces the built-in icon with a custom image, fitted into 32 pixels.
+    pub fn image(mut self, image: impl Into<ImageSource>) -> Self {
+        self.image = Some(image.into());
+        self
+    }
+    pub fn from_image(title: impl Into<SharedString>, image: impl Into<ImageSource>) -> Self {
+        Self::new(title, IconKind::Document).image(image)
+    }
+    /// Supplies a selected variant while preserving the image's transparency.
+    pub fn selected_image(mut self, image: impl Into<ImageSource>) -> Self {
+        self.selected_image = Some(image.into());
+        self
+    }
+    pub fn data(mut self, data: usize) -> Self {
+        self.data = Some(data);
+        self
+    }
+    pub fn draggable(mut self, draggable: bool) -> Self {
+        self.draggable = draggable;
+        self
+    }
+}
+
+#[derive(Clone)]
+pub struct IconDrag {
+    pub data: usize,
+    title: SharedString,
+    kind: IconKind,
+    language: Language,
+}
+impl Render for IconDrag {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let title = self.title.clone();
+        let kind = self.kind;
+        let language = self.language;
+        drawing(84., 64., move |pen, _, _| {
+            pen.language = language;
+            draw_icon(pen, 26, 4, kind, true);
+            let name = fit_title(&title, 80, language);
+            let width = Font::Small.measure_in(&name, language);
+            pen.rect((84 - width) / 2 - 2, 38, width + 4, 13, BLACK);
+            pen.text((84 - width) / 2, 48, &name, Font::Small, WHITE);
+        })
+    }
+}
+
+impl std::fmt::Debug for IconItem {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("IconItem")
+            .field("title", &self.title)
+            .field("kind", &self.kind)
+            .field("custom_image", &self.image.is_some())
+            .finish()
     }
 }
 
@@ -48,6 +115,12 @@ impl IconItem {
 pub enum IconEvent {
     Selected(usize),
     Activated(usize),
+    Dropped {
+        source: usize,
+        target: Option<usize>,
+        copying: bool,
+    },
+    DragHovered(Option<usize>),
 }
 
 pub struct IconView {
@@ -56,7 +129,10 @@ pub struct IconView {
     selected: Option<usize>,
     width: i32,
     height: i32,
+    frame: bool,
+    always_scrollbar: bool,
     offset: i32,
+    drag_hover: Option<usize>,
     label: SharedString,
     theme: Theme,
     language: Language,
@@ -77,7 +153,10 @@ impl IconView {
             selected: None,
             width: 280,
             height: 180,
+            frame: true,
+            always_scrollbar: false,
             offset: 0,
+            drag_hover: None,
             label: "Files".into(),
             theme: Theme::default(),
             language: Language::English,
@@ -90,6 +169,16 @@ impl IconView {
     }
     pub fn label(mut self, label: impl Into<SharedString>) -> Self {
         self.label = label.into();
+        self
+    }
+    /// Draws the sunken outline used by a standalone icon view.
+    pub fn frame(mut self, frame: bool) -> Self {
+        self.frame = frame;
+        self
+    }
+    /// Reserves a permanent scrollbar, as a folder window does.
+    pub fn always_scrollbar(mut self, always: bool) -> Self {
+        self.always_scrollbar = always;
         self
     }
     pub fn theme(mut self, theme: Theme) -> Self {
@@ -106,6 +195,12 @@ impl IconView {
     }
     pub fn selection(&self) -> Option<usize> {
         self.selected
+    }
+    /// Updates the selection without emitting a user selection event.
+    pub fn set_selection(&mut self, selected: Option<usize>, cx: &mut Context<Self>) {
+        self.selected = selected.filter(|index| *index < self.items.len());
+        self.reveal_selection();
+        cx.notify();
     }
     pub fn set_size(&mut self, width: i32, height: i32, cx: &mut Context<Self>) {
         self.width = width.max(100);
@@ -131,13 +226,26 @@ impl IconView {
         cx.notify();
     }
     fn columns(&self) -> usize {
-        ((self.width - 16) / 84).max(1) as usize
+        (self.content_width() / CELL_WIDTH).max(1) as usize
+    }
+    fn inset(&self) -> i32 {
+        if self.frame { 2 } else { 0 }
+    }
+    fn content_width(&self) -> i32 {
+        self.width - 2 * self.inset() - if self.always_scrollbar { 16 } else { 0 }
+    }
+    fn content_viewport_height(&self) -> i32 {
+        self.height - 2 * self.inset()
     }
     fn content_height(&self) -> i32 {
-        self.items.len().div_ceil(self.columns()) as i32 * 64
+        if self.items.is_empty() {
+            0
+        } else {
+            GRID_TOP * 2 + self.items.len().div_ceil(self.columns()) as i32 * CELL_HEIGHT
+        }
     }
     fn max_offset(&self) -> i32 {
-        (self.content_height() - self.height).max(0)
+        (self.content_height() - self.content_viewport_height()).max(0)
     }
     pub fn select(&mut self, index: usize, cx: &mut Context<Self>) {
         if index >= self.items.len() {
@@ -147,28 +255,27 @@ impl IconView {
             self.selected = Some(index);
             cx.emit(IconEvent::Selected(index));
         }
-        let top = (index / self.columns()) as i32 * 64;
+        self.reveal_selection();
+        cx.notify();
+    }
+    fn reveal_selection(&mut self) {
+        let Some(index) = self.selected else {
+            return;
+        };
+        let top = GRID_TOP + (index / self.columns()) as i32 * CELL_HEIGHT;
         if top < self.offset {
             self.offset = top;
         }
-        if top + 64 > self.offset + self.height {
-            self.offset = top + 64 - self.height;
+        if top + CELL_HEIGHT > self.offset + self.content_viewport_height() {
+            self.offset = top + CELL_HEIGHT - self.content_viewport_height();
         }
         self.offset = self.offset.clamp(0, self.max_offset());
-        cx.notify();
     }
     fn key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
         if self.items.is_empty() {
             return;
         }
-        let at = self.selected.unwrap_or(0);
         let next = match event.keystroke.key.as_str() {
-            "left" => at.saturating_sub(1),
-            "right" => (at + 1).min(self.items.len() - 1),
-            "up" => at.saturating_sub(self.columns()),
-            "down" => (at + self.columns()).min(self.items.len() - 1),
-            "home" => 0,
-            "end" => self.items.len() - 1,
             "enter" => {
                 if let Some(index) = self.selected {
                     cx.emit(IconEvent::Activated(index));
@@ -176,11 +283,49 @@ impl IconView {
                 cx.stop_propagation();
                 return;
             }
-            _ => return,
+            key => {
+                let Some(index) =
+                    icon_key_target(self.selected, key, self.items.len(), self.columns())
+                else {
+                    return;
+                };
+                index
+            }
         };
         self.select(next, cx);
         cx.stop_propagation();
     }
+}
+
+fn icon_key_target(
+    selected: Option<usize>,
+    key: &str,
+    count: usize,
+    columns: usize,
+) -> Option<usize> {
+    if count == 0 {
+        return None;
+    }
+    let at = selected.unwrap_or(0);
+    let target = match key {
+        "left" | "right" | "up" | "down" if selected.is_none() => 0,
+        "left" => at.saturating_sub(1),
+        "right" => at.saturating_add(1).min(count - 1),
+        "up" => at.saturating_sub(columns),
+        "down" => at.saturating_add(columns).min(count - 1),
+        "home" => 0,
+        "end" => count - 1,
+        _ => return None,
+    };
+    Some(target)
+}
+
+fn icon_index_at(x: i32, y: i32, columns: usize, count: usize) -> Option<usize> {
+    if x < 0 || y < GRID_TOP || x >= columns as i32 * CELL_WIDTH {
+        return None;
+    }
+    let index = ((y - GRID_TOP) / CELL_HEIGHT) as usize * columns + (x / CELL_WIDTH) as usize;
+    (index < count).then_some(index)
 }
 
 impl Render for IconView {
@@ -190,6 +335,10 @@ impl Render for IconView {
         let theme = self.theme;
         let language = self.language;
         let focused = self.focus.is_focused(window);
+        let width = self.width;
+        let height = self.height;
+        let inset = self.inset();
+        let viewport_height = self.content_viewport_height();
         let scroll_entity = cx.entity();
         div()
             .id("icons")
@@ -201,8 +350,39 @@ impl Render for IconView {
             .h(px(self.height as f32))
             .flex_shrink_0()
             .flex()
+            .relative()
+            .p(px(inset as f32))
             .bg(gpui::rgb(WHITE))
             .on_key_down(cx.listener(Self::key_down))
+            .on_drag_move::<IconDrag>(cx.listener(
+                |this, event: &gpui::DragMoveEvent<IconDrag>, _, cx| {
+                    let local = event.event.position - event.bounds.origin;
+                    let x = f32::from(local.x) as i32 - this.inset();
+                    let y = f32::from(local.y) as i32 - this.inset();
+                    let hovered = (x >= 0
+                        && x < this.content_width()
+                        && y >= 0
+                        && y < this.content_viewport_height())
+                    .then(|| icon_index_at(x, y + this.offset, this.columns(), this.items.len()))
+                    .flatten();
+                    if this.drag_hover != hovered {
+                        this.drag_hover = hovered;
+                        cx.emit(IconEvent::DragHovered(hovered));
+                        cx.notify();
+                    }
+                },
+            ))
+            .on_drop(cx.listener(|this, drag: &IconDrag, window, cx| {
+                cx.emit(IconEvent::Dropped {
+                    source: drag.data,
+                    target: None,
+                    copying: window.modifiers().alt,
+                });
+                this.drag_hover = None;
+                cx.emit(IconEvent::DragHovered(None));
+                cx.notify();
+                cx.stop_propagation();
+            }))
             .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| {
                 this.offset = (this.offset
                     - f32::from(event.delta.pixel_delta(px(16.)).y).round() as i32)
@@ -210,10 +390,23 @@ impl Render for IconView {
                 cx.notify();
                 cx.stop_propagation();
             }))
+            .when(self.frame, |view| {
+                view.child(div().absolute().inset_0().child(drawing(
+                    width as f32,
+                    height as f32,
+                    move |pen, _, _| {
+                        pen.bevel(0, 0, width, height, GRAY_7, WHITE);
+                        pen.frame(1, 1, width - 2, height - 2, BLACK);
+                        if focused && !crate::window::content_is_inactive() {
+                            crate::widgets::draw_focus_ring(pen, 0, theme.accent.dark);
+                        }
+                    },
+                )))
+            })
             .child(
                 div()
                     .relative()
-                    .w(px((self.width - 16) as f32))
+                    .w(px(self.content_width() as f32))
                     .h_full()
                     .overflow_hidden()
                     .on_mouse_down(
@@ -227,23 +420,34 @@ impl Render for IconView {
                             .iter()
                             .enumerate()
                             .filter(|(index, _)| {
-                                let top = (*index / columns) as i32 * 64 - offset;
-                                top + 64 > 0 && top < self.height
+                                let top =
+                                    GRID_TOP + (*index / columns) as i32 * CELL_HEIGHT - offset;
+                                top + CELL_HEIGHT > 0 && top < viewport_height
                             })
                             .map(|(index, item)| {
                                 let title = item.title.clone();
                                 let kind = item.kind;
-                                let selected = self.selected == Some(index);
+                                let selected =
+                                    self.selected == Some(index) || self.drag_hover == Some(index);
+                                let image = if selected {
+                                    item.selected_image.as_ref().or(item.image.as_ref())
+                                } else {
+                                    item.image.as_ref()
+                                }
+                                .cloned();
+                                let custom_image = image.is_some();
                                 div()
                                     .id(index)
                                     .role(Role::ListBoxOption)
                                     .aria_label(title.clone())
                                     .aria_selected(selected)
                                     .absolute()
-                                    .left(px((index % columns * 84) as f32))
-                                    .top(px((index / columns) as f32 * 64. - offset as f32))
-                                    .w(px(84.))
-                                    .h(px(64.))
+                                    .left(px((index % columns) as f32 * CELL_WIDTH as f32))
+                                    .top(px((GRID_TOP + (index / columns) as i32 * CELL_HEIGHT
+                                        - offset)
+                                        as f32))
+                                    .w(px(CELL_WIDTH as f32))
+                                    .h(px(CELL_HEIGHT as f32))
                                     .on_mouse_down(
                                         MouseButton::Left,
                                         cx.listener(
@@ -256,13 +460,45 @@ impl Render for IconView {
                                                 if event.click_count == 2 {
                                                     cx.emit(IconEvent::Activated(index));
                                                 }
-                                                cx.stop_propagation();
                                             },
                                         ),
                                     )
+                                    .on_mouse_down(
+                                        MouseButton::Right,
+                                        cx.listener(move |this, _, window, cx| {
+                                            window.focus(&this.focus, cx);
+                                            this.select(index, cx);
+                                        }),
+                                    )
+                                    .on_drop(cx.listener(
+                                        move |this, drag: &IconDrag, window, cx| {
+                                            cx.emit(IconEvent::Dropped {
+                                                source: drag.data,
+                                                target: Some(index),
+                                                copying: window.modifiers().alt,
+                                            });
+                                            this.drag_hover = None;
+                                            cx.emit(IconEvent::DragHovered(None));
+                                            cx.notify();
+                                            cx.stop_propagation();
+                                        },
+                                    ))
+                                    .when(item.draggable && item.data.is_some(), |cell| {
+                                        let drag = IconDrag {
+                                            data: item.data.unwrap(),
+                                            title: item.title.clone(),
+                                            kind: item.kind,
+                                            language,
+                                        };
+                                        cell.on_drag(drag, |drag, _, _, cx| {
+                                            cx.new(|_| drag.clone())
+                                        })
+                                    })
                                     .child(drawing(84., 64., move |pen, _, _| {
                                         pen.language = language;
-                                        draw_icon(pen, 26, 4, kind, selected);
+                                        if !custom_image {
+                                            draw_icon(pen, 26, 4, kind, selected);
+                                        }
                                         let name = fit_title(&title, 80, language);
                                         let width = Font::Small.measure_in(&name, language);
                                         pen.rect(
@@ -271,7 +507,12 @@ impl Render for IconView {
                                             width + 4,
                                             13,
                                             if selected {
-                                                if focused { theme.accent.dark } else { BLACK }
+                                                if focused && !crate::window::content_is_inactive()
+                                                {
+                                                    theme.accent.dark
+                                                } else {
+                                                    BLACK
+                                                }
                                             } else {
                                                 WHITE
                                             },
@@ -284,42 +525,44 @@ impl Render for IconView {
                                             if selected { WHITE } else { BLACK },
                                         );
                                     }))
+                                    .when_some(image, |cell, image| {
+                                        cell.child(
+                                            div()
+                                                .absolute()
+                                                .left(px(26.))
+                                                .top(px(4.))
+                                                .size(px(32.))
+                                                .child(img(image).size_full()),
+                                        )
+                                    })
                             }),
                     ),
             )
-            .child(
-                ScrollBar::new(
-                    "icon-scroll",
-                    self.offset as f64,
-                    self.height as f64,
-                    self.content_height() as f64,
+            .when(self.always_scrollbar, |view| {
+                view.child(
+                    ScrollBar::new(
+                        "icon-scroll",
+                        self.offset as f64,
+                        viewport_height as f64,
+                        self.content_height() as f64,
+                    )
+                    .length(viewport_height)
+                    .step(64.)
+                    .tab_stop(false)
+                    .theme(theme)
+                    .on_change(move |value, _, cx| {
+                        scroll_entity.update(cx, |this, cx| {
+                            this.offset = value.round() as i32;
+                            cx.notify();
+                        });
+                    }),
                 )
-                .length(self.height)
-                .step(64.)
-                .theme(theme)
-                .on_change(move |value, _, cx| {
-                    scroll_entity.update(cx, |this, cx| {
-                        this.offset = value.round() as i32;
-                        cx.notify();
-                    });
-                }),
-            )
+            })
     }
 }
 
 pub(super) fn fit_title(title: &str, width: i32, language: Language) -> String {
-    if Font::Small.measure_in(title, language) <= width {
-        return title.to_owned();
-    }
-    let mut result = String::new();
-    for ch in title.chars() {
-        if Font::Small.measure_in(&format!("{result}{ch}…"), language) > width {
-            break;
-        }
-        result.push(ch);
-    }
-    result.push('…');
-    result
+    Font::Small.truncate_in(title, width, language)
 }
 
 /// Draws the original desk's 32-pixel icons without bitmap scaling.
@@ -578,5 +821,31 @@ fn line(pen: &mut Pen, mut x: i32, mut y: i32, end_x: i32, end_y: i32, color: u3
             error += dx;
             y += step_y;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{icon_index_at, icon_key_target};
+
+    #[test]
+    fn grid_hit_testing_keeps_the_top_gutter_and_row_boundaries() {
+        assert_eq!(icon_index_at(20, 3, 2, 5), None);
+        assert_eq!(icon_index_at(20, 4, 2, 5), Some(0));
+        assert_eq!(icon_index_at(20, 67, 2, 5), Some(0));
+        assert_eq!(icon_index_at(20, 68, 2, 5), Some(2));
+        assert_eq!(icon_index_at(84, 132, 2, 5), None);
+        assert_eq!(icon_index_at(168, 4, 2, 5), None);
+    }
+
+    #[test]
+    fn first_arrow_selects_the_first_icon_and_subsequent_arrows_follow_the_grid() {
+        for key in ["left", "right", "up", "down"] {
+            assert_eq!(icon_key_target(None, key, 8, 3), Some(0));
+        }
+        assert_eq!(icon_key_target(Some(0), "down", 8, 3), Some(3));
+        assert_eq!(icon_key_target(Some(6), "right", 8, 3), Some(7));
+        assert_eq!(icon_key_target(Some(7), "down", 8, 3), Some(7));
+        assert_eq!(icon_key_target(None, "right", 0, 3), None);
     }
 }

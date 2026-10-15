@@ -8,15 +8,15 @@ use std::{
 };
 
 use gpui::{
-    App, Bounds, ContentMask, Context, EventEmitter, FocusHandle, Focusable, KeyDownEvent,
-    MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, Point, Role, ScrollWheelEvent,
-    SharedString, Window, canvas, div, point, prelude::*, px,
+    App, Bounds, ContentMask, Context, EventEmitter, FocusHandle, Focusable, ImageSource,
+    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, Point, Role,
+    ScrollWheelEvent, SharedString, Window, canvas, div, img, point, prelude::*, px,
 };
 
 use crate::{
-    Font, Language, Theme,
-    models::{FileTree, NodeKind},
-    paint::Pen,
+    Font, Language, ScrollBar, Theme,
+    models::{FileTree, NodeKind, TreeNode},
+    paint::{Pen, Rect},
     theme::*,
 };
 
@@ -39,21 +39,28 @@ pub struct TreeView {
     language: Language,
     prefix: String,
     typed_at: Instant,
+    default_icons: bool,
 }
 
 impl EventEmitter<TreeEvent> for TreeView {}
 
 impl TreeView {
+    pub fn from_nodes(roots: Vec<TreeNode>, cx: &mut Context<Self>) -> Self {
+        Self::new(FileTree::new(roots), cx)
+    }
     pub fn new(model: FileTree, cx: &mut Context<Self>) -> Self {
+        let mut viewport = Viewport::new(240, 120, 0);
+        viewport.clamp(model.visible_rows().len());
         Self {
             focus: cx.focus_handle().tab_stop(true),
             model,
-            viewport: Viewport::new(240, 120, 0),
+            viewport,
             label: "Tree".into(),
             theme: Theme::default(),
             language: Language::English,
             prefix: String::new(),
             typed_at: Instant::now(),
+            default_icons: true,
         }
     }
 
@@ -62,8 +69,17 @@ impl TreeView {
         self.viewport.height = height.max(40);
         self
     }
+    pub fn always_scrollbar(mut self, always: bool) -> Self {
+        self.viewport.always_scrollbar = always;
+        self
+    }
     pub fn label(mut self, label: impl Into<SharedString>) -> Self {
         self.label = label.into();
+        self
+    }
+    /// Shows built-in file and folder pictures for nodes without an explicit icon.
+    pub fn default_icons(mut self, show: bool) -> Self {
+        self.default_icons = show;
         self
     }
     pub fn theme(mut self, theme: Theme) -> Self {
@@ -76,6 +92,23 @@ impl TreeView {
     }
     pub fn selection(&self) -> Option<usize> {
         self.model.selected
+    }
+    /// Updates the selection without emitting a user selection event.
+    pub fn set_selection(&mut self, selected: Option<usize>, cx: &mut Context<Self>) {
+        self.model.selected = selected.filter(|id| self.model.find(*id).is_some());
+        if let Some(id) = self.model.selected {
+            let ancestors = self.model.path(id);
+            for ancestor in ancestors.into_iter().take_while(|ancestor| *ancestor != id) {
+                if let Some(node) = self.model.find_mut(ancestor) {
+                    node.open = true;
+                }
+            }
+            let rows = self.model.visible_rows();
+            if let Some(index) = rows.iter().position(|row| row.node.id == id) {
+                self.viewport.reveal(index, rows.len());
+            }
+        }
+        cx.notify();
     }
     pub fn model(&self) -> &FileTree {
         &self.model
@@ -167,14 +200,13 @@ impl TreeView {
 
     fn mouse_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus, cx);
-        let count = self.model.visible_rows().len();
-        if self.viewport.press_scroll(event.position, count) {
-            cx.notify();
+        if self.viewport.is_scrollbar(event.position) {
             return;
         }
         let Some((x, y)) = self.viewport.local(event.position) else {
             return;
         };
+        let count = self.model.visible_rows().len();
         let Some(index) = self.viewport.row_at(y, count) else {
             return;
         };
@@ -194,15 +226,16 @@ impl TreeView {
     }
 
     fn paint(&self, bounds: Bounds<Pixels>, window: &mut Window) {
-        let focused = self.focus.is_focused(window);
+        let focused = self.focus.is_focused(window) && !crate::window::content_is_inactive();
+        let mut frame = Pen::new(self.viewport.width, self.viewport.height);
+        self.viewport.draw_frame(&mut frame, focused, self.theme);
         let mut pen = Pen::new(self.viewport.width, self.viewport.height);
         pen.language = self.language;
-        self.viewport.draw_frame(&mut pen, focused, self.theme);
         let rows = self.model.visible_rows();
         for (visible, row) in rows
             .iter()
             .skip(self.viewport.offset)
-            .take(self.viewport.visible())
+            .take(self.viewport.painted_rows())
             .enumerate()
         {
             let y = 2 + visible as i32 * ROW_HEIGHT;
@@ -225,17 +258,30 @@ impl TreeView {
             if !row.node.children.is_empty() {
                 draw_disclosure(&mut pen, x + 3, y + 3, row.node.open);
             }
-            draw_file_icon(&mut pen, x + 18, y + 2, row.node.kind, ink);
+            let icon_width = row
+                .node
+                .icon
+                .as_ref()
+                .map_or_else(|| if self.default_icons { 12 } else { 0 }, tree_icon_width);
+            if row.node.icon.is_none() && self.default_icons {
+                draw_file_icon(&mut pen, x + 18, y + 2, row.node.kind, ink);
+            }
+            let title_x = x + 18 + if icon_width > 0 { icon_width + 4 } else { 0 };
             let title = elide(
                 &row.node.title,
-                self.viewport.content_width() - x - 38,
+                self.viewport.content_width() - title_x - 3,
                 self.language,
             );
-            pen.text(x + 35, y + 12, &title, Font::Small, ink);
+            pen.text(title_x, y + 12, &title, Font::Small, ink);
         }
-        self.viewport
-            .draw_scrollbar(&mut pen, rows.len(), self.theme);
-        paint_inside(&pen, bounds, window);
+        pen.clip(Rect {
+            x: 2,
+            y: 2,
+            width: self.viewport.content_width() - 2,
+            height: self.viewport.height - 4,
+        });
+        frame.append(pen, 0, 0);
+        paint_inside(&frame, bounds, window);
     }
 }
 
@@ -249,12 +295,13 @@ impl Render for TreeView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let layout = cx.entity();
         let paint = cx.entity();
+        let scroll_entity = cx.entity();
         let rows = self.model.visible_rows();
         self.viewport.clamp(rows.len());
         let accessible = rows
             .iter()
             .skip(self.viewport.offset)
-            .take(self.viewport.visible())
+            .take(self.viewport.painted_rows())
             .enumerate()
             .map(|(index, row)| {
                 div()
@@ -269,6 +316,20 @@ impl Render for TreeView {
                     .top(px((2 + index as i32 * ROW_HEIGHT) as f32))
                     .w(px(self.viewport.content_width() as f32))
                     .h(px(ROW_HEIGHT as f32))
+                    .when_some(row.node.icon.clone(), |row_element, icon| {
+                        row_element.child(
+                            div()
+                                .absolute()
+                                .left(px((row.depth as i32 * 16 + 18) as f32))
+                                .top(px(2.))
+                                .child(
+                                    img(icon.clone())
+                                        .w(px(tree_icon_width(&icon) as f32))
+                                        .h(px(12.))
+                                        .object_fit(gpui::ObjectFit::None),
+                                ),
+                        )
+                    })
             })
             .collect::<Vec<_>>();
         div()
@@ -281,25 +342,9 @@ impl Render for TreeView {
             .w(px(self.viewport.width as f32))
             .h(px(self.viewport.height as f32))
             .flex_shrink_0()
+            .overflow_hidden()
             .on_key_down(cx.listener(Self::key_down))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::mouse_down))
-            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
-                if event.dragging()
-                    && this
-                        .viewport
-                        .drag_scroll(event.position, this.model.visible_rows().len())
-                {
-                    cx.notify();
-                }
-            }))
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|this, _, _, _| this.viewport.drag = None),
-            )
-            .on_mouse_up_out(
-                MouseButton::Left,
-                cx.listener(|this, _, _, _| this.viewport.drag = None),
-            )
             .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _, cx| {
                 this.viewport.scroll(event, this.model.visible_rows().len());
                 cx.stop_propagation();
@@ -315,18 +360,81 @@ impl Render for TreeView {
                 .size_full(),
             )
             .children(accessible)
+            .when(self.viewport.shows_scrollbar(), |root| {
+                root.child(self.viewport.scrollbar(
+                    "tree-scroll",
+                    rows.len(),
+                    self.theme,
+                    move |value, _, cx| {
+                        scroll_entity.update(cx, |this, cx| {
+                            this.viewport.offset = value.round() as usize;
+                            cx.notify();
+                        });
+                    },
+                ))
+            })
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+fn tree_icon_width(icon: &ImageSource) -> i32 {
+    match icon {
+        ImageSource::Render(image) => u32::from(image.size(0).width).min(12) as i32,
+        _ => 12,
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TableEvent {
     Selected(usize),
+    SelectionChanged(BTreeSet<usize>),
     Activated(usize),
+}
+
+/// The title, initial geometry and behavior of one table column.
+#[derive(Clone)]
+pub struct TableColumn {
+    pub title: String,
+    pub width: i32,
+    pub right: bool,
+    pub fixed: bool,
+    icon: Option<Rc<dyn Fn(usize) -> Option<ImageSource>>>,
+}
+
+impl TableColumn {
+    pub fn new(title: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            width: 120,
+            right: false,
+            fixed: false,
+            icon: None,
+        }
+    }
+    pub fn width(mut self, width: i32) -> Self {
+        self.width = width.max(30);
+        self
+    }
+    pub fn right(mut self, right: bool) -> Self {
+        self.right = right;
+        self
+    }
+    /// Keeps the user from sorting this column; resizing remains available.
+    pub fn fixed(mut self, fixed: bool) -> Self {
+        self.fixed = fixed;
+        self
+    }
+    /// Supplies an optional 16-pixel image by the row's model index.
+    pub fn icon(mut self, icon: impl Fn(usize) -> Option<ImageSource> + 'static) -> Self {
+        self.icon = Some(Rc::new(icon));
+        self
+    }
 }
 
 struct TableColumns {
     headers: Vec<String>,
     widths: Vec<i32>,
+    options: Vec<TableColumn>,
+    automatic_alignment: bool,
     sort: Option<(usize, bool)>,
     resizing: Option<(usize, i32, i32)>,
 }
@@ -335,7 +443,20 @@ impl TableColumns {
     fn new(headers: Vec<String>) -> Self {
         Self {
             widths: vec![120; headers.len()],
+            options: headers.iter().cloned().map(TableColumn::new).collect(),
+            automatic_alignment: true,
             headers,
+            sort: None,
+            resizing: None,
+        }
+    }
+
+    fn configured(columns: Vec<TableColumn>) -> Self {
+        Self {
+            headers: columns.iter().map(|column| column.title.clone()).collect(),
+            widths: columns.iter().map(|column| column.width.max(30)).collect(),
+            options: columns,
+            automatic_alignment: false,
             sort: None,
             resizing: None,
         }
@@ -346,8 +467,10 @@ impl TableColumns {
     fn set_headers(&mut self, headers: Vec<String>, content_width: i32) -> bool {
         let mut reset_order = false;
         if headers.len() != self.headers.len() {
+            self.options
+                .resize_with(headers.len(), || TableColumn::new(""));
             self.widths.resize(headers.len(), 120);
-            if !self.widths.is_empty() {
+            if self.automatic_alignment && !self.widths.is_empty() {
                 let width = (content_width / self.widths.len() as i32).max(30);
                 self.widths.fill(width);
             }
@@ -356,6 +479,9 @@ impl TableColumns {
                 self.sort = None;
                 reset_order = true;
             }
+        }
+        for (option, title) in self.options.iter_mut().zip(&headers) {
+            option.title.clone_from(title);
         }
         self.headers = headers;
         reset_order
@@ -384,6 +510,8 @@ type RowComparator = Rc<dyn Fn(usize, usize) -> Ordering>;
 impl Table {
     pub fn new(headers: Vec<String>, rows: Vec<Vec<String>>, cx: &mut Context<Self>) -> Self {
         let width = (headers.len().max(1) as i32 * 120 + 20).max(200);
+        let mut viewport = Viewport::new(width, 120, HEADER_HEIGHT);
+        viewport.clamp(rows.len());
         Self {
             focus: cx.focus_handle().tab_stop(true),
             columns: TableColumns::new(headers),
@@ -393,21 +521,51 @@ impl Table {
             selected: None,
             selection: BTreeSet::new(),
             anchor: None,
-            viewport: Viewport::new(width, 120, HEADER_HEIGHT),
+            viewport,
             theme: Theme::default(),
             language: Language::English,
             label: "Table".into(),
         }
     }
 
+    pub fn with_columns(
+        columns: Vec<TableColumn>,
+        rows: Vec<Vec<String>>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let headers = columns.iter().map(|column| column.title.clone()).collect();
+        let mut table = Self::new(headers, rows, cx);
+        table.columns = TableColumns::configured(columns);
+        table.viewport.width =
+            (table.columns.widths.iter().sum::<i32>() + SCROLL_WIDTH + 4).max(80);
+        table
+    }
+
+    pub fn set_columns(&mut self, columns: Vec<TableColumn>, cx: &mut Context<Self>) {
+        self.columns = TableColumns::configured(columns);
+        self.comparators
+            .retain(|column, _| *column < self.columns.headers.len());
+        self.order = (0..self.rows.len()).collect();
+        cx.notify();
+    }
+
     pub fn size(mut self, width: i32, height: i32) -> Self {
         self.viewport.width = width.max(80);
         self.viewport.height = height.max(58);
-        if !self.columns.widths.is_empty() {
+        if self.columns.automatic_alignment && !self.columns.widths.is_empty() {
             let columns = self.columns.widths.len() as i32;
             self.columns
                 .widths
                 .fill(((self.viewport.content_width() - 2) / columns).max(30));
+        }
+        self
+    }
+    pub fn always_scrollbar(mut self, always: bool) -> Self {
+        self.viewport.always_scrollbar = always;
+        if self.columns.automatic_alignment && !self.columns.widths.is_empty() {
+            let width =
+                ((self.viewport.content_width() - 2) / self.columns.widths.len() as i32).max(30);
+            self.columns.widths.fill(width);
         }
         self
     }
@@ -428,6 +586,37 @@ impl Table {
     }
     pub fn selected_rows(&self) -> &BTreeSet<usize> {
         &self.selection
+    }
+    /// Updates one selected row without emitting a user selection event.
+    pub fn set_selection(&mut self, selected: Option<usize>, cx: &mut Context<Self>) {
+        self.selected = selected.filter(|index| *index < self.rows.len());
+        self.selection = self.selected.into_iter().collect();
+        self.anchor = self.selected;
+        if let Some(index) = self.selected
+            && let Some(row) = self.order.iter().position(|row| *row == index)
+        {
+            self.viewport.reveal(row, self.rows.len());
+        }
+        cx.notify();
+    }
+    /// Updates a multi-selection without emitting user selection events.
+    pub fn set_selected_rows(
+        &mut self,
+        rows: impl IntoIterator<Item = usize>,
+        cx: &mut Context<Self>,
+    ) {
+        self.selection = rows
+            .into_iter()
+            .filter(|index| *index < self.rows.len())
+            .collect();
+        self.selected = activation_row(self.selected, &self.selection);
+        self.anchor = self.selected;
+        if let Some(index) = self.selected
+            && let Some(row) = self.order.iter().position(|row| *row == index)
+        {
+            self.viewport.reveal(row, self.rows.len());
+        }
+        cx.notify();
     }
     pub fn set_size(&mut self, width: i32, height: i32, cx: &mut Context<Self>) {
         self.viewport.width = width.max(80);
@@ -480,30 +669,22 @@ impl Table {
         if index >= self.rows.len() {
             return;
         }
-        if extend && let Some(anchor) = self.anchor {
-            let from = self
-                .order
-                .iter()
-                .position(|row| *row == anchor)
-                .unwrap_or(0);
-            let to = self.order.iter().position(|row| *row == index).unwrap_or(0);
-            self.selection = self.order[from.min(to)..=from.max(to)]
-                .iter()
-                .copied()
-                .collect();
-        } else if toggle {
-            if !self.selection.remove(&index) {
-                self.selection.insert(index);
-            }
-            self.anchor = Some(index);
-        } else {
-            self.selection.clear();
-            self.selection.insert(index);
+        let selection = row_selection(
+            &self.order,
+            &self.selection,
+            self.anchor,
+            index,
+            extend,
+            toggle,
+        );
+        let events = selection_events(self.selected, &self.selection, Some(index), &selection);
+        self.selection = selection;
+        if !extend || self.anchor.is_none() {
             self.anchor = Some(index);
         }
-        if self.selected != Some(index) {
-            self.selected = Some(index);
-            cx.emit(TableEvent::Selected(index));
+        self.selected = Some(index);
+        for event in events {
+            cx.emit(event);
         }
         if let Some(row) = self.order.iter().position(|row| *row == index) {
             self.viewport.reveal(row, self.rows.len());
@@ -512,7 +693,12 @@ impl Table {
     }
 
     pub fn sort_by(&mut self, column: usize, descending: bool, cx: &mut Context<Self>) {
-        if column >= self.columns.headers.len() {
+        if self
+            .columns
+            .options
+            .get(column)
+            .is_none_or(|column| column.fixed)
+        {
             return;
         }
         self.columns.sort = Some((column, descending));
@@ -555,7 +741,16 @@ impl Table {
         }
         let modifiers = event.keystroke.modifiers;
         if (modifiers.platform || modifiers.control) && event.keystroke.key == "a" {
-            self.selection = (0..self.rows.len()).collect();
+            let selection = (0..self.rows.len()).collect();
+            let selected = self.selected.or_else(|| self.order.first().copied());
+            for event in selection_events(self.selected, &self.selection, selected, &selection) {
+                cx.emit(event);
+            }
+            self.selection = selection;
+            if self.selected.is_none() {
+                self.selected = selected;
+                self.anchor = self.selected;
+            }
             cx.notify();
             cx.stop_propagation();
             return;
@@ -575,7 +770,7 @@ impl Table {
             "home" => 0,
             "end" => self.rows.len() - 1,
             "enter" => {
-                if let Some(index) = self.selected {
+                if let Some(index) = activation_row(self.selected, &self.selection) {
                     cx.emit(TableEvent::Activated(index));
                 }
                 cx.stop_propagation();
@@ -589,8 +784,7 @@ impl Table {
 
     fn mouse_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus, cx);
-        if self.viewport.press_scroll(event.position, self.rows.len()) {
-            cx.notify();
+        if self.viewport.is_scrollbar(event.position) {
             return;
         }
         let Some((x, y)) = self.viewport.local(event.position) else {
@@ -603,7 +797,7 @@ impl Table {
                     self.columns.resizing = Some((column, x, *width));
                     return;
                 }
-                if x >= left && x < left + width {
+                if x >= left && x < left + width && !self.columns.options[column].fixed {
                     let descending = self
                         .columns
                         .sort
@@ -621,22 +815,26 @@ impl Table {
                 event.modifiers.platform || event.modifiers.control,
                 cx,
             );
-            if event.click_count == 2 {
+            if event.click_count == 2
+                && let Some(index) = activation_row(self.selected, &self.selection)
+            {
                 cx.emit(TableEvent::Activated(index));
             }
         }
     }
 
     fn paint(&self, bounds: Bounds<Pixels>, window: &mut Window) {
-        let focused = self.focus.is_focused(window);
+        let inactive = crate::window::content_is_inactive();
+        let focused = self.focus.is_focused(window) && !inactive;
+        let mut frame = Pen::new(self.viewport.width, self.viewport.height);
+        self.viewport.draw_frame(&mut frame, focused, self.theme);
         let mut pen = Pen::new(self.viewport.width, self.viewport.height);
         pen.language = self.language;
-        self.viewport.draw_frame(&mut pen, focused, self.theme);
         for (visible, row) in self
             .order
             .iter()
             .skip(self.viewport.offset)
-            .take(self.viewport.visible())
+            .take(self.viewport.painted_rows())
             .enumerate()
         {
             let y = 2 + HEADER_HEIGHT + visible as i32 * ROW_HEIGHT;
@@ -668,12 +866,16 @@ impl Table {
                     .get(column)
                     .map(String::as_str)
                     .unwrap_or("");
-                let text = elide(raw, width - 10, self.language);
-                let numeric = raw.trim().parse::<f64>().is_ok();
-                let text_x = if numeric {
+                let option = &self.columns.options[column];
+                let has_icon = option.icon.as_ref().and_then(|icon| icon(*row)).is_some();
+                let icon_width = if has_icon { 20 } else { 0 };
+                let text = elide(raw, width - 10 - icon_width, self.language);
+                let right = option.right
+                    || (self.columns.automatic_alignment && raw.trim().parse::<f64>().is_ok());
+                let text_x = if right {
                     x + width - 5 - Font::Small.measure_in(&text, self.language)
                 } else {
-                    x + 5
+                    x + 5 + icon_width
                 };
                 pen.text(
                     text_x,
@@ -685,6 +887,7 @@ impl Table {
                 x += width;
             }
         }
+        pen.set_dimmed(inactive);
         let mut x = 2;
         for (column, width) in self.columns.widths.iter().enumerate() {
             let width = (*width).min(self.viewport.content_width() - x).max(0);
@@ -719,9 +922,21 @@ impl Table {
             }
             x += width;
         }
-        self.viewport
-            .draw_scrollbar(&mut pen, self.rows.len(), self.theme);
-        paint_inside(&pen, bounds, window);
+        pen.clip(Rect {
+            x: 2,
+            y: 2,
+            width: self.viewport.content_width() - 2,
+            height: self.viewport.height - 4,
+        });
+        frame.append(pen, 0, 0);
+        if self.viewport.shows_scrollbar() {
+            let x = self.viewport.content_width();
+            frame.set_dimmed(inactive);
+            frame.rect(x, 2, SCROLL_WIDTH, HEADER_HEIGHT, GRAY_2);
+            frame.bevel(x, 2, SCROLL_WIDTH, HEADER_HEIGHT - 1, WHITE, GRAY_7);
+            frame.hline(x, HEADER_HEIGHT + 1, SCROLL_WIDTH, BLACK);
+        }
+        paint_inside(&frame, bounds, window);
     }
 }
 
@@ -735,6 +950,7 @@ impl Render for Table {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let layout = cx.entity();
         let paint = cx.entity();
+        let scroll_entity = cx.entity();
         let mut x = 2;
         let headers = self
             .columns
@@ -747,7 +963,18 @@ impl Render for Table {
                 div()
                     .id(("header", column))
                     .role(Role::ColumnHeader)
+                    .aria_column_index(column + 1)
                     .aria_label(title.clone())
+                    .when_some(
+                        self.columns.sort.filter(|(sorted, _)| *sorted == column),
+                        |header, (_, descending)| {
+                            header.aria_value(if descending {
+                                "descending"
+                            } else {
+                                "ascending"
+                            })
+                        },
+                    )
                     .absolute()
                     .left(px(left as f32))
                     .top(px(2.))
@@ -759,19 +986,44 @@ impl Render for Table {
             .order
             .iter()
             .skip(self.viewport.offset)
-            .take(self.viewport.visible())
+            .take(self.viewport.painted_rows())
             .enumerate()
             .map(|(visible, index)| {
                 div()
                     .id(*index)
                     .role(Role::Row)
-                    .aria_label(self.rows[*index].join(", "))
                     .aria_selected(self.selection.contains(index))
+                    .aria_row_index(visible + self.viewport.offset + 1)
                     .absolute()
                     .left(px(2.))
                     .top(px((2 + HEADER_HEIGHT + visible as i32 * ROW_HEIGHT) as f32))
                     .w(px(self.viewport.content_width() as f32))
                     .h(px(ROW_HEIGHT as f32))
+                    .flex()
+                    .children(self.columns.headers.iter().enumerate().map(|(column, _)| {
+                        let image = self.columns.options[column]
+                            .icon
+                            .as_ref()
+                            .and_then(|icon| icon(*index));
+                        div()
+                            .id(column)
+                            .role(Role::Cell)
+                            .aria_column_index(column + 1)
+                            .aria_label(self.rows[*index].get(column).cloned().unwrap_or_default())
+                            .w(px(self.columns.widths[column] as f32))
+                            .h(px(ROW_HEIGHT as f32))
+                            .flex_shrink_0()
+                            .relative()
+                            .when_some(image, |cell, image| {
+                                cell.child(
+                                    div()
+                                        .absolute()
+                                        .left(px(3.))
+                                        .top_0()
+                                        .child(img(image).size(px(16.))),
+                                )
+                            })
+                    }))
             })
             .collect::<Vec<_>>();
         div()
@@ -779,6 +1031,8 @@ impl Render for Table {
             .relative()
             .role(Role::Table)
             .aria_label(self.label.clone())
+            .aria_row_count(self.rows.len())
+            .aria_column_count(self.columns.headers.len())
             .track_focus(&self.focus)
             .tab_stop(true)
             .overflow_hidden()
@@ -791,12 +1045,10 @@ impl Render for Table {
                 if !event.dragging() {
                     return;
                 }
-                if let Some((column, start, width)) = this.columns.resizing {
-                    if let Some((x, _)) = this.viewport.local(event.position) {
-                        this.columns.widths[column] = (width + x - start).max(30);
-                        cx.notify();
-                    }
-                } else if this.viewport.drag_scroll(event.position, this.rows.len()) {
+                if let Some((column, start, width)) = this.columns.resizing
+                    && let Some((x, _)) = this.viewport.local(event.position)
+                {
+                    this.columns.widths[column] = (width + x - start).max(30);
                     cx.notify();
                 }
             }))
@@ -804,14 +1056,12 @@ impl Render for Table {
                 MouseButton::Left,
                 cx.listener(|this, _, _, _| {
                     this.columns.resizing = None;
-                    this.viewport.drag = None;
                 }),
             )
             .on_mouse_up_out(
                 MouseButton::Left,
                 cx.listener(|this, _, _, _| {
                     this.columns.resizing = None;
-                    this.viewport.drag = None;
                 }),
             )
             .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _, cx| {
@@ -830,6 +1080,19 @@ impl Render for Table {
             )
             .children(headers)
             .children(rows)
+            .when(self.viewport.shows_scrollbar(), |root| {
+                root.child(self.viewport.scrollbar(
+                    "table-scroll",
+                    self.rows.len(),
+                    self.theme,
+                    move |value, _, cx| {
+                        scroll_entity.update(cx, |this, cx| {
+                            this.viewport.offset = value.round() as usize;
+                            cx.notify();
+                        });
+                    },
+                ))
+            })
     }
 }
 
@@ -839,8 +1102,9 @@ struct Viewport {
     header: i32,
     offset: usize,
     bounds: Option<Bounds<Pixels>>,
-    drag: Option<i32>,
     wheel: f32,
+    row_count: usize,
+    always_scrollbar: bool,
 }
 
 impl Viewport {
@@ -851,12 +1115,26 @@ impl Viewport {
             header,
             offset: 0,
             bounds: None,
-            drag: None,
             wheel: 0.,
+            row_count: 0,
+            always_scrollbar: false,
         }
     }
     fn content_width(&self) -> i32 {
-        self.width - SCROLL_WIDTH - 2
+        self.width
+            - 2
+            - if self.shows_scrollbar() {
+                SCROLL_WIDTH
+            } else {
+                0
+            }
+    }
+    fn shows_scrollbar(&self) -> bool {
+        self.always_scrollbar || self.row_count > self.visible()
+    }
+    fn painted_rows(&self) -> usize {
+        let height = (self.height - self.header - 4).max(1);
+        ((height + ROW_HEIGHT - 1) / ROW_HEIGHT) as usize
     }
     fn visible(&self) -> usize {
         ((self.height - self.header - 4) / ROW_HEIGHT).max(1) as usize
@@ -865,6 +1143,7 @@ impl Viewport {
         count.saturating_sub(self.visible())
     }
     fn clamp(&mut self, count: usize) {
+        self.row_count = count;
         self.offset = self.offset.min(self.max_offset(count));
     }
     fn reveal(&mut self, row: usize, count: usize) {
@@ -885,57 +1164,38 @@ impl Viewport {
         })
     }
     fn row_at(&self, y: i32, count: usize) -> Option<usize> {
-        if y < self.header + 2 || y >= self.header + 2 + self.visible() as i32 * ROW_HEIGHT {
+        if y < self.header + 2 || y >= self.height - 2 {
             return None;
         }
         let row = ((y - self.header - 2) / ROW_HEIGHT) as usize + self.offset;
         (row < count).then_some(row)
     }
-    fn thumb(&self, count: usize) -> (i32, i32, i32) {
-        let track = (self.height - self.header - 36).max(1);
-        let height = ((track as f32 * self.visible() as f32 / count.max(1) as f32).round() as i32)
-            .clamp(16.min(track), track);
-        let top = if self.max_offset(count) == 0 {
-            0
-        } else {
-            ((track - height) as f32 * self.offset as f32 / self.max_offset(count) as f32).round()
-                as i32
-        };
-        (self.header + 18 + top, height, track)
+    fn is_scrollbar(&self, point: Point<Pixels>) -> bool {
+        self.shows_scrollbar()
+            && self
+                .local(point)
+                .is_some_and(|(x, _)| x >= self.content_width())
     }
-    fn press_scroll(&mut self, point: Point<Pixels>, count: usize) -> bool {
-        let Some((x, y)) = self.local(point) else {
-            return false;
-        };
-        if x < self.content_width() || y < self.header + 2 {
-            return false;
-        }
-        let (top, height, _) = self.thumb(count);
-        if y < self.header + 18 {
-            self.offset = self.offset.saturating_sub(1);
-        } else if y >= self.height - 18 {
-            self.offset = (self.offset + 1).min(self.max_offset(count));
-        } else if y >= top && y < top + height {
-            self.drag = Some(y - top);
-        } else if y < top {
-            self.offset = self.offset.saturating_sub(self.visible());
-        } else {
-            self.offset = (self.offset + self.visible()).min(self.max_offset(count));
-        }
-        true
-    }
-    fn drag_scroll(&mut self, point: Point<Pixels>, count: usize) -> bool {
-        let (Some(grab), Some((_, y))) = (self.drag, self.local(point)) else {
-            return false;
-        };
-        let (_, height, track) = self.thumb(count);
-        let travel = track - height;
-        if travel > 0 {
-            self.offset = (((y - self.header - 18 - grab) as f32 / travel as f32).clamp(0., 1.)
-                * self.max_offset(count) as f32)
-                .round() as usize;
-        }
-        true
+    fn scrollbar(
+        &self,
+        id: &'static str,
+        count: usize,
+        theme: Theme,
+        on_change: impl Fn(f64, &mut Window, &mut App) + 'static,
+    ) -> impl IntoElement {
+        let height = self.height - self.header - 4;
+        div()
+            .absolute()
+            .left(px(self.content_width() as f32))
+            .top(px((self.header + 2) as f32))
+            .child(
+                ScrollBar::new(id, self.offset as f64, self.visible() as f64, count as f64)
+                    .tab_stop(false)
+                    .length(height)
+                    .step(1.)
+                    .theme(theme)
+                    .on_change(on_change),
+            )
     }
     fn scroll(&mut self, event: &ScrollWheelEvent, count: usize) {
         self.wheel += f32::from(event.delta.pixel_delta(px(ROW_HEIGHT as f32)).y);
@@ -954,44 +1214,6 @@ impl Viewport {
             pen.frame(0, 0, self.width, self.height, theme.accent.dark);
         }
     }
-    fn draw_scrollbar(&self, pen: &mut Pen, count: usize, theme: Theme) {
-        let x = self.content_width();
-        let y = self.header + 2;
-        let height = self.height - y - 2;
-        let scrollable = self.max_offset(count) > 0;
-        pen.rect(
-            x,
-            y,
-            SCROLL_WIDTH,
-            height,
-            if scrollable { GRAY_4 } else { GRAY_2 },
-        );
-        pen.vline(x, y, height, BLACK);
-        for (top, down) in [(y, false), (self.height - 18, true)] {
-            pen.rect(x + 1, top, 14, 16, GRAY_2);
-            pen.frame(x, top, 16, 16, BLACK);
-            pen.bevel(x + 1, top + 1, 14, 14, WHITE, GRAY_7);
-            for row in 0..4 {
-                pen.hline(
-                    x + 4 + row,
-                    top + if down { 6 + row } else { 9 - row },
-                    7 - row * 2,
-                    if scrollable { BLACK } else { GRAY_6 },
-                );
-            }
-        }
-        if scrollable {
-            let (top, height, _) = self.thumb(count);
-            let face = blend(theme.accent.light, theme.accent.mid);
-            pen.rect(x, top, 16, height, face);
-            pen.frame(x, top, 16, height, BLACK);
-            pen.bevel(x + 1, top + 1, 14, height - 2, WHITE, theme.accent.dark);
-            for dy in [-3, -1, 1, 3] {
-                pen.hline(x + 4, top + height / 2 + dy, 8, theme.accent.dark);
-                pen.hline(x + 4, top + height / 2 + dy + 1, 8, WHITE);
-            }
-        }
-    }
 }
 
 fn paint_inside(pen: &Pen, bounds: Bounds<Pixels>, window: &mut Window) {
@@ -1001,11 +1223,6 @@ fn paint_inside(pen: &Pen, bounds: Bounds<Pixels>, window: &mut Window) {
             window,
         )
     });
-}
-
-fn blend(a: u32, b: u32) -> u32 {
-    let channel = |shift: u32| (((a >> shift) & 255u32) + ((b >> shift) & 255u32)) / 2u32;
-    (channel(16) << 16) | (channel(8) << 8) | channel(0)
 }
 
 fn draw_disclosure(pen: &mut Pen, x: i32, y: i32, open: bool) {
@@ -1050,6 +1267,53 @@ fn elide(text: &str, width: i32, language: Language) -> String {
     text
 }
 
+fn selection_events(
+    previous_cursor: Option<usize>,
+    previous: &BTreeSet<usize>,
+    cursor: Option<usize>,
+    selection: &BTreeSet<usize>,
+) -> Vec<TableEvent> {
+    let mut events = Vec::new();
+    if previous_cursor != cursor
+        && let Some(cursor) = cursor
+    {
+        events.push(TableEvent::Selected(cursor));
+    }
+    if previous != selection {
+        events.push(TableEvent::SelectionChanged(selection.clone()));
+    }
+    events
+}
+
+fn activation_row(cursor: Option<usize>, selection: &BTreeSet<usize>) -> Option<usize> {
+    cursor
+        .filter(|index| selection.contains(index))
+        .or_else(|| selection.first().copied())
+}
+
+fn row_selection(
+    order: &[usize],
+    previous: &BTreeSet<usize>,
+    anchor: Option<usize>,
+    index: usize,
+    extend: bool,
+    toggle: bool,
+) -> BTreeSet<usize> {
+    if extend && let Some(anchor) = anchor {
+        let from = order.iter().position(|row| *row == anchor).unwrap_or(0);
+        let to = order.iter().position(|row| *row == index).unwrap_or(0);
+        order[from.min(to)..=from.max(to)].iter().copied().collect()
+    } else if toggle {
+        let mut selection = previous.clone();
+        if !selection.remove(&index) {
+            selection.insert(index);
+        }
+        selection
+    } else {
+        BTreeSet::from([index])
+    }
+}
+
 fn sort_rows(
     order: &mut [usize],
     rows: &[Vec<String>],
@@ -1079,6 +1343,83 @@ fn compare_cells(left: &str, right: &str) -> Ordering {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn scrollbars_only_reserve_space_when_rows_overflow_or_the_owner_requests_them() {
+        let mut viewport = Viewport::new(200, 116, HEADER_HEIGHT);
+        viewport.clamp(5);
+        assert!(!viewport.shows_scrollbar());
+        assert_eq!(viewport.content_width(), 198);
+        viewport.clamp(6);
+        assert!(viewport.shows_scrollbar());
+        assert_eq!(viewport.content_width(), 182);
+        viewport.clamp(0);
+        viewport.always_scrollbar = true;
+        assert!(viewport.shows_scrollbar());
+        assert_eq!(viewport.content_width(), 182);
+    }
+
+    #[test]
+    fn the_last_partial_row_is_painted_and_hit_tested_without_changing_page_navigation() {
+        let mut viewport = Viewport::new(200, 116, HEADER_HEIGHT);
+        viewport.clamp(10);
+        assert_eq!(viewport.visible(), 5);
+        assert_eq!(viewport.painted_rows(), 6);
+        assert_eq!(viewport.row_at(113, 10), Some(5));
+        assert_eq!(viewport.row_at(114, 10), None);
+        viewport.reveal(5, 10);
+        assert_eq!(viewport.offset, 1);
+    }
+    #[test]
+    fn toggling_the_cursor_row_reports_the_changed_selection_and_prevents_activation() {
+        let previous = BTreeSet::from([2]);
+        let selection = row_selection(&[0, 1, 2], &previous, Some(2), 2, false, true);
+        assert!(selection.is_empty());
+        assert_eq!(
+            selection_events(Some(2), &previous, Some(2), &selection),
+            vec![TableEvent::SelectionChanged(BTreeSet::new())]
+        );
+        assert_eq!(activation_row(Some(2), &selection), None);
+    }
+
+    #[test]
+    fn selecting_every_row_reports_the_collection_and_allows_return_without_a_previous_cursor() {
+        let selection = BTreeSet::from([0, 1, 2]);
+        assert_eq!(
+            selection_events(None, &BTreeSet::new(), Some(0), &selection),
+            vec![
+                TableEvent::Selected(0),
+                TableEvent::SelectionChanged(selection.clone())
+            ]
+        );
+        assert_eq!(activation_row(None, &selection), Some(0));
+        assert_eq!(activation_row(Some(2), &selection), Some(2));
+        assert!(selection_events(Some(0), &selection, Some(0), &selection).is_empty());
+    }
+
+    #[test]
+    fn shift_selection_uses_the_display_order_after_sorting() {
+        let selected = row_selection(&[2, 0, 3, 1], &BTreeSet::from([0]), Some(0), 1, true, false);
+        assert_eq!(selected, BTreeSet::from([0, 1, 3]));
+    }
+
+    #[test]
+    fn explicit_column_configuration_preserves_width_alignment_and_sort_restrictions() {
+        let mut columns = TableColumns::configured(vec![
+            TableColumn::new("Code").width(80).fixed(true),
+            TableColumn::new("Size").width(72).right(true),
+        ]);
+        assert_eq!(columns.widths, [80, 72]);
+        assert!(columns.options[0].fixed);
+        assert!(!columns.options[0].right);
+        assert!(columns.options[1].right);
+        assert!(!columns.automatic_alignment);
+        columns.set_headers(vec!["编号".into(), "大小".into()], 400);
+        assert_eq!(columns.widths, [80, 72]);
+        assert!(columns.options[0].fixed);
+        assert!(columns.options[1].right);
+        columns.set_headers(vec!["编号".into(), "大小".into(), "类型".into()], 400);
+        assert_eq!(columns.widths, [80, 72, 120]);
+    }
     #[test]
     fn display_size_columns_sort_by_bytes_with_folders_after_documents() {
         let rows = vec![

@@ -2,7 +2,12 @@
 
 use crate::theme::*;
 use crate::{Font, Language};
-use gpui::{App, Bounds, IntoElement, Pixels, Styled, Window, canvas, fill, point, px, rgb, size};
+use gpui::{
+    App, Bounds, ContentMask, IntoElement, Pixels, Styled, Window, canvas, fill, point, px, rgb,
+    size,
+};
+use std::sync::Arc;
+use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Rect {
@@ -18,21 +23,68 @@ pub struct Fill {
     pub color: u32,
 }
 
+struct SystemText {
+    after_fill: usize,
+    x: i32,
+    baseline: i32,
+    color: u32,
+    line: Arc<gpui::LineLayout>,
+    clip: Option<Rect>,
+}
+
 /// A recording pen. Its fills can be painted by GPUI or inspected in tests.
 pub struct Pen {
     pub width: i32,
     pub height: i32,
     pub language: Language,
     pub fills: Vec<Fill>,
+    system_text: Vec<SystemText>,
+    dimmed: bool,
 }
 
 impl Pen {
     pub fn append(&mut self, other: Pen, x: i32, y: i32) {
+        let fill_offset = self.fills.len();
+        self.system_text
+            .extend(other.system_text.into_iter().map(|mut text| {
+                text.after_fill += fill_offset;
+                text.x += x;
+                text.baseline += y;
+                if let Some(clip) = &mut text.clip {
+                    clip.x += x;
+                    clip.y += y;
+                }
+                if self.dimmed {
+                    text.color = dim_color(text.color);
+                }
+                text
+            }));
         self.fills.extend(other.fills.into_iter().map(|mut fill| {
             fill.rect.x += x;
             fill.rect.y += y;
+            if self.dimmed {
+                fill.color = dim_color(fill.color);
+            }
             fill
         }));
+    }
+
+    /// Clips recorded drawing, including native fallback glyphs, to a rectangle.
+    pub fn clip(&mut self, bounds: Rect) {
+        let mut kept_before = Vec::with_capacity(self.fills.len() + 1);
+        let mut kept = 0;
+        self.fills.retain_mut(|fill| {
+            kept_before.push(kept);
+            fill.rect = intersect(fill.rect, bounds);
+            let visible = fill.rect.width > 0 && fill.rect.height > 0;
+            kept += usize::from(visible);
+            visible
+        });
+        kept_before.push(kept);
+        for text in &mut self.system_text {
+            text.after_fill = kept_before[text.after_fill];
+            text.clip = Some(text.clip.map_or(bounds, |clip| intersect(clip, bounds)));
+        }
     }
     pub fn new(width: i32, height: i32) -> Self {
         Self {
@@ -40,7 +92,14 @@ impl Pen {
             height,
             language: Language::English,
             fills: Vec::new(),
+            system_text: Vec::new(),
+            dimmed: false,
         }
+    }
+
+    /// Dims control ink while preserving the geometry and light gray surfaces.
+    pub fn set_dimmed(&mut self, dimmed: bool) {
+        self.dimmed = dimmed;
     }
 
     pub fn rect(&mut self, x: i32, y: i32, width: i32, height: i32, color: u32) {
@@ -52,7 +111,7 @@ impl Pen {
                     width,
                     height,
                 },
-                color,
+                color: if self.dimmed { dim_color(color) } else { color },
             });
         }
     }
@@ -129,11 +188,45 @@ impl Pen {
     }
 
     pub fn text(&mut self, mut x: i32, baseline: i32, text: &str, font: Font, color: u32) {
-        for ch in text.chars() {
-            let glyph = font.glyph_or_replacement(ch, self.language);
-            glyph.for_each_run(|dx, dy, width| self.hline(x + dx, baseline + dy, width, color));
-            x += glyph.advance;
+        for grapheme in text.graphemes(true) {
+            if !font.has_bitmap_grapheme(grapheme, self.language)
+                && let Some(advance) =
+                    self.system_text((x, baseline), grapheme, font, color, 1, false)
+            {
+                x += advance;
+                continue;
+            }
+            for ch in grapheme.chars() {
+                let glyph = font.glyph_or_replacement(ch, self.language);
+                glyph.for_each_run(|dx, dy, width| self.hline(x + dx, baseline + dy, width, color));
+                x += glyph.advance;
+            }
         }
+    }
+
+    /// Records a shaped platform fallback at the same baseline as bitmap text.
+    pub(crate) fn system_text(
+        &mut self,
+        origin: (i32, i32),
+        text: &str,
+        font: Font,
+        color: u32,
+        scale: u8,
+        italic: bool,
+    ) -> Option<i32> {
+        let (x, baseline) = origin;
+        let line = font.system_line(text, scale, italic)?;
+        let advance = f32::from(line.width).ceil() as i32 + scale as i32;
+        let color = if self.dimmed { dim_color(color) } else { color };
+        self.system_text.push(SystemText {
+            after_fill: self.fills.len(),
+            x,
+            baseline,
+            color,
+            line,
+            clip: None,
+        });
+        Some(advance)
     }
 
     pub fn text_centered(&mut self, text: &str, font: Font, color: u32) {
@@ -153,7 +246,48 @@ impl Pen {
     }
 
     pub fn paint(&self, origin: gpui::Point<Pixels>, window: &mut Window) {
-        for Fill { rect, color } in &self.fills {
+        let mut text = self.system_text.iter().peekable();
+        for index in 0..=self.fills.len() {
+            while text.peek().is_some_and(|text| text.after_fill == index) {
+                let text = text.next().expect("pending system text");
+                let mask = text.clip.map(|clip| ContentMask {
+                    bounds: Bounds::new(
+                        origin + point(px(clip.x as f32), px(clip.y as f32)),
+                        size(px(clip.width as f32), px(clip.height as f32)),
+                    ),
+                });
+                window.with_content_mask(mask, |window| {
+                    for run in &text.line.runs {
+                        for glyph in &run.glyphs {
+                            let position = origin
+                                + point(px(text.x as f32), px(text.baseline as f32))
+                                + glyph.position;
+                            let result = if glyph.is_emoji {
+                                window.paint_emoji(
+                                    position,
+                                    run.font_id,
+                                    glyph.id,
+                                    text.line.font_size,
+                                )
+                            } else {
+                                window.paint_glyph(
+                                    position,
+                                    run.font_id,
+                                    glyph.id,
+                                    text.line.font_size,
+                                    rgb(text.color).into(),
+                                )
+                            };
+                            if let Err(error) = result {
+                                eprintln!("Unable to paint fallback glyph: {error}");
+                            }
+                        }
+                    }
+                });
+            }
+            let Some(Fill { rect, color }) = self.fills.get(index) else {
+                break;
+            };
             window.paint_quad(fill(
                 Bounds::new(
                     origin + point(px(rect.x as f32), px(rect.y as f32)),
@@ -162,6 +296,17 @@ impl Pen {
                 rgb(*color),
             ));
         }
+    }
+}
+
+fn intersect(left: Rect, right: Rect) -> Rect {
+    let x = left.x.max(right.x);
+    let y = left.y.max(right.y);
+    Rect {
+        x,
+        y,
+        width: ((left.x + left.width).min(right.x + right.width) - x).max(0),
+        height: ((left.y + left.height).min(right.y + right.height) - y).max(0),
     }
 }
 
@@ -222,5 +367,64 @@ mod tests {
         pen.rect(0, 0, -2, 1, BLACK);
         pen.rect(0, 0, 1, 0, BLACK);
         assert!(pen.fills.is_empty());
+    }
+
+    #[gpui::test]
+    fn fallback_text_preserves_graphemes_and_paint_order(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| crate::font::init(cx));
+        let grapheme = "👩‍💻";
+        let mut fragment = Pen::new(40, 20);
+        fragment.rect(0, 0, 40, 20, WHITE);
+        fragment.text(3, 12, grapheme, Font::Small, BLACK);
+        fragment.vline(24, 1, 16, BLACK);
+        assert_eq!(fragment.system_text.len(), 1);
+        assert_eq!(fragment.system_text[0].line.len, grapheme.len());
+        assert_eq!(fragment.system_text[0].after_fill, 1);
+        assert_eq!(
+            Font::Small.measure(grapheme),
+            f32::from(fragment.system_text[0].line.width).ceil() as i32
+        );
+
+        let mut parent = Pen::new(80, 40);
+        parent.rect(0, 0, 80, 40, GRAY_2);
+        parent.append(fragment, 10, 8);
+        assert_eq!(parent.system_text[0].after_fill, 2);
+        assert_eq!(
+            (parent.system_text[0].x, parent.system_text[0].baseline),
+            (13, 20)
+        );
+
+        parent.clip(Rect {
+            x: 12,
+            y: 10,
+            width: 20,
+            height: 15,
+        });
+        assert_eq!(
+            parent.system_text[0].clip,
+            Some(Rect {
+                x: 12,
+                y: 10,
+                width: 20,
+                height: 15,
+            })
+        );
+        assert!(parent.system_text[0].after_fill <= parent.fills.len());
+        assert!(parent.fills.iter().all(|fill| {
+            fill.rect.x >= 12
+                && fill.rect.y >= 10
+                && fill.rect.x + fill.rect.width <= 32
+                && fill.rect.y + fill.rect.height <= 25
+        }));
+
+        parent.clip(Rect {
+            x: 200,
+            y: 200,
+            width: 10,
+            height: 10,
+        });
+        assert!(parent.fills.is_empty());
+        assert_eq!(parent.system_text[0].after_fill, 0);
+        assert_eq!(parent.system_text[0].clip.unwrap().width, 0);
     }
 }

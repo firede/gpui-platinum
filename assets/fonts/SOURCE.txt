@@ -1,0 +1,17 @@
+Platinum Fonts
+https://github.com/firede/platinum-fonts
+Commit: 33ef9cb37bc856dcf0a423717c7c1795dbbd066d
+
+The PXF1 files are copied without modification:
+  sans/regular.bin       -> sans.bin
+  sans/bold.bin          -> sans-bold.bin
+  sanssmall/regular.bin  -> small.bin
+  sanssmall/bold.bin     -> small-bold.bin
+  cjk12/zhhans/regular.bin -> cjk12/sc.bin
+  cjk12/zhhant/regular.bin -> cjk12/tc.bin
+  cjk12/ja/regular.bin     -> cjk12/jp.bin
+  cjk12/ko/regular.bin     -> cjk12/kr.bin
+
+NOTICE.txt is the upstream NOTICE.md, copied without modification.
+The glyph data is licensed under the SIL Open Font License 1.1.
+The Rust reader follows the upstream bitmap package, licensed under MIT.

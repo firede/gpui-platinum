@@ -1,0 +1,14 @@
+name: verify
+on:
+  push:
+  pull_request:
+
+jobs:
+  controls:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: ./scripts/verify.sh

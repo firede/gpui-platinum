@@ -1,0 +1,18 @@
+[package]
+name = "gpui-platinum"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Pixel-drawn Platinum controls for GPUI"
+
+[dependencies]
+gpui = { git = "https://github.com/longbridge/gpui-fast", rev = "9690cf8" }
+gpui_platform = { git = "https://github.com/longbridge/gpui-fast", rev = "9690cf8", features = ["runtime_shaders"] }
+unicode-segmentation = "1.12"
+
+[profile.dev]
+debug = 1
+
+[[example]]
+name = "controls"
+path = "examples/controls.rs"

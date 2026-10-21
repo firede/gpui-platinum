@@ -1021,7 +1021,7 @@ impl TextField {
             );
             pen.rect(2, 2, width - 4, height - 4, face);
             if self.focused && !self.disabled && !inactive {
-                pen.frame(0, 0, width, height, self.theme.accent.dark);
+                crate::draw_focus_ring(&mut pen, 0, self.theme.accent.dark);
             }
         }
         let content_right = width
@@ -1115,10 +1115,12 @@ impl TextField {
         }
         if self.focused && !self.disabled && !inactive && self.blink_on && selection.is_empty() {
             let (row, x) = self.cursor_position();
+            // As tall as the line but a pixel at either end, just before
+            // the character after it, as the original draws it.
             text.vline(
-                (self.document_left + x - self.scroll_x).round() as i32,
-                (top + self.lines[row].y - self.scroll_y - 1.).round() as i32,
-                self.lines[row].height as i32,
+                (self.document_left + x - self.scroll_x).round() as i32 - 1,
+                (top + self.lines[row].y - self.scroll_y).round() as i32,
+                self.lines[row].height as i32 - 2,
                 BLACK,
             );
         }

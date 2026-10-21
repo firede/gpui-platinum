@@ -1333,7 +1333,7 @@ fn paint_at_origin(pen: &Pen, bounds: Bounds<Pixels>, window: &mut Window) {
 }
 
 /// Draws a picture of '#' rows in one color, as the original's bitmaps.
-fn draw_bitmap(pen: &mut Pen, x: i32, y: i32, rows: &[&str], color: u32) {
+pub(crate) fn draw_bitmap(pen: &mut Pen, x: i32, y: i32, rows: &[&str], color: u32) {
     for (dy, row) in rows.iter().enumerate() {
         for (dx, pixel) in row.bytes().enumerate() {
             if pixel == b'#' {

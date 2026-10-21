@@ -8,10 +8,11 @@ use gpui::{
     div, point, prelude::*, px, rgb,
 };
 use gpui_platinum::{
-    ListBox, SheetView, Table, TableColumn, Theme, TreeView, draw_list_box,
+    Breadcrumbs, Font, ListBox, Pagination, PathPopup, RichTextArea, Ruler, RulerState, ScrollView,
+    SheetView, Split, Table, TableColumn, TextField, Theme, TreeView, draw_list_box,
     models::{Cell, FileTree, NodeKind, Sheet, TreeNode},
     paint::{Pen, drawing},
-    theme::GRAY_2,
+    theme::{BLACK, GRAY_2},
 };
 use std::{cell::RefCell, rc::Rc};
 
@@ -65,7 +66,7 @@ fn keys(app: &mut HeadlessAppContext, window: AnyWindowHandle, keys: &str) {
     for key in keys.split_whitespace() {
         let keystroke = Keystroke::parse(key).unwrap();
         app.update_window(window, |_, window, cx| {
-            if keystroke.key.chars().count() == 1 {
+            if keystroke.key.chars().count() == 1 || keystroke.key == "space" {
                 window.dispatch_keystroke(keystroke, cx);
             } else {
                 // A key that types nothing, as Return, which the platform
@@ -170,6 +171,26 @@ impl Render for Host {
         } else {
             padded(self.1, self.0.clone()).into_any_element()
         }
+    }
+}
+
+/// Views in a padded row on Gray2, as the original's rows lay them.
+struct Row {
+    views: Vec<gpui::AnyView>,
+    padding: f32,
+    gap: f32,
+}
+
+impl Render for Row {
+    fn render(&mut self, _: &mut gpui::Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+        div()
+            .size_full()
+            .bg(rgb(GRAY_2))
+            .flex()
+            .items_start()
+            .p(px(self.padding))
+            .gap(px(self.gap))
+            .children(self.views.clone())
     }
 }
 
@@ -323,7 +344,336 @@ pub fn scenes() -> Vec<Scene> {
             );
         }),
     );
+
+    // Typed into, cut, undone, all replaced by "Ada", submitted, and the
+    // last letter taken back.
+    let field = slot::<TextField>();
+    scenes.push(
+        hosted("textfield-focused", 200., 60., 10., &field, |cx| {
+            TextField::new(cx)
+                .with_text("Hello")
+                .size(160., 22.)
+                .label("Name")
+        })
+        .prepare({
+            let field = field.clone();
+            move |app, window| {
+                focus(app, window, &field);
+                keys(app, window, "end , space w o r l d");
+                keys(
+                    app,
+                    window,
+                    "alt-shift-left cmd-x cmd-z cmd-a A d a enter backspace",
+                );
+            }
+        }),
+    );
+
+    scenes.push(Scene::new("textfield-states", 360., 40., |_, cx| {
+        let field = |cx: &mut gpui::App, text: &str| {
+            let text = text.to_owned();
+            cx.new(|cx| TextField::new(cx).with_text(text).size(100., 22.))
+        };
+        Row {
+            views: vec![
+                field(cx, "Untitled Disk").into(),
+                cx.new(|cx| TextField::new(cx).placeholder("Search").size(100., 22.))
+                    .into(),
+                cx.new(|cx| {
+                    TextField::new(cx)
+                        .with_text("Read only")
+                        .size(100., 22.)
+                        .disabled(true)
+                })
+                .into(),
+            ],
+            padding: 8.,
+            gap: 10.,
+        }
+    }));
+
+    // To the end, a new line typed, then Up and Shift-Down.
+    let area = slot::<TextField>();
+    scenes.push(
+        hosted("textarea-focused", 180., 100., 10., &area, |cx| {
+            TextField::new(cx)
+                .multiline(true)
+                .with_text("The quick brown fox jumps over the lazy dog, again and again.")
+                .size(150., 76.)
+                .label("Note")
+        })
+        .prepare({
+            let area = area.clone();
+            move |app, window| {
+                focus(app, window, &area);
+                keys(
+                    app,
+                    window,
+                    "cmd-down enter L i n e space t w o up shift-down",
+                );
+            }
+        }),
+    );
+    // Bold and underlined text typed at the end, then "Plain" made italic
+    // and its line centered from the format bar.
+    let rich = slot::<RichTextArea>();
+    scenes.push(
+        stretched("richtext", 280., 150., 8., &rich, |cx| {
+            RichTextArea::new(cx)
+                .with_text("Plain ")
+                .size(260., 122.)
+                .show_size_menu(false)
+        })
+        .prepare({
+            move |app, window| {
+                click(app, window, 242., 48.);
+                keys(
+                    app,
+                    window,
+                    "cmd-down cmd-b b o l d cmd-b space a n d space cmd-u u n d e r l i n e d",
+                );
+                keys(
+                    app,
+                    window,
+                    "cmd-up shift-right shift-right shift-right shift-right shift-right",
+                );
+                click(app, window, 50., 23.); // Italic
+                click(app, window, 138., 23.); // Align Center
+            }
+        }),
+    );
+
+    // The title centered, and the last paragraph aligned right.
+    let rich = slot::<RichTextArea>();
+    scenes.push(
+        stretched("richtext-paragraphs", 220., 150., 8., &rich, |cx| {
+            RichTextArea::new(cx)
+                .with_text("Title\nThe first paragraph runs on, wrapping.\nThe end")
+                .size(200., 122.)
+                .show_size_menu(false)
+        })
+        .prepare(|app, window| {
+            click(app, window, 28., 48.); // in the title
+            click(app, window, 138., 23.); // Align Center
+            click(app, window, 28., 48.);
+            keys(app, window, "cmd-down");
+            click(app, window, 164., 23.); // Align Right
+        }),
+    );
+
+    // A bold heading twice the size, and a line under it with italic.
+    let rich = slot::<RichTextArea>();
+    scenes.push(
+        stretched("richtext-sizes", 240., 130., 8., &rich, |cx| {
+            RichTextArea::new(cx)
+                .size(220., 110.)
+                .show_format_bar(false)
+                .show_size_menu(false)
+        })
+        .prepare(|app, window| {
+            click(app, window, 28., 16.);
+            keys(
+                app,
+                window,
+                "cmd-shift-. cmd-b M e n u cmd-shift-, cmd-b space f o r space t o d a y",
+            );
+            keys(app, window, "enter S o u p , space cmd-i b r e a d");
+            // On the second line, under the taller first.
+            click(app, window, 12., 54.);
+        }),
+    );
+
+    // The first line of each paragraph further in, wrapping sooner.
+    let area = slot::<TextField>();
+    scenes.push(hosted("first-line-indent", 180., 90., 8., &area, |cx| {
+        TextField::new(cx)
+            .multiline(true)
+            .with_text("A first paragraph long enough to wrap.\nA second one.")
+            .indent(24.)
+            .size(160., 70.)
+            .label("Text")
+    }));
+
+    // The left margin dragged to 36, and the first-line indent to 18.
+    let ruler = slot::<Ruler>();
+    scenes.push(
+        hosted("ruler", 300., 50., 8., &ruler, |cx| {
+            let state = RulerState {
+                left: 16,
+                right: 240,
+                first: 0,
+            };
+            Ruler::new(state, cx).width(284)
+        })
+        .prepare(|app, window| {
+            let none = Modifiers::default();
+            drag(app, window, (24., 25.), (48., 25.), none);
+            drag(app, window, (45., 11.), (68., 11.), none);
+        }),
+    );
+
+    // The path as a pop-up and as breadcrumbs, the third of five pages, a
+    // card, an empty state and a status bar.
+    scenes.push(
+        Scene::new("paths-pages", 340., 300., |_, cx| {
+            let path: Vec<String> = ["Platinum Disk", "Documents", "Letters"]
+                .map(String::from)
+                .into();
+            let popup = cx.new(|cx| PathPopup::new(path.clone(), cx));
+            let crumbs = cx.new(|cx| Breadcrumbs::new(path, cx));
+            let pages = cx.new(|cx| Pagination::new(3, 5, cx));
+            Column {
+                views: vec![popup.into(), crumbs.into(), pages.into()],
+            }
+        })
+        // The path pop-up, the breadcrumbs and the pages match. The rest is
+        // display.rs's: the original's Card is a gray box of what it holds in a
+        // black frame with a raised bevel, where `card` is a white one with a
+        // bold title; its EmptyState is one line of gray small text centered in
+        // the room, where `empty_state` has a bold title over a paragraph; the
+        // status bar below them falls where they leave it.
+        .pending(),
+    );
+
+    // Panes stacked, the first 40 tall.
+    scenes.push(Scene::new("split-vertical", 180., 140., |_, _| {
+        Elements(Box::new(|| {
+            padded(
+                10.,
+                Split::new("split", 40., text_in("Top pane"), text_in("Bottom pane"))
+                    .size(160, 120)
+                    .vertical(),
+            )
+            .into_any_element()
+        }))
+    }));
+
+    // Panes stacked, the first taking 30% of the room, at least 40.
+    scenes.push(Scene::new("split-percent", 180., 147., |_, _| {
+        Elements(Box::new(|| {
+            padded(
+                10.,
+                Split::new("split", 30., text_in("30%"), text_in("70%"))
+                    .size(160, 127)
+                    .vertical()
+                    .percent(),
+            )
+            .into_any_element()
+        }))
+    }));
+
+    // The divider dragged 30 right and moved back 8 with Left, and the
+    // lines at the right scrolled down by 40.
+    scenes.push(
+        Scene::new("split-scrollview", 290., 130., |_, _| SplitScroll {
+            position: Rc::new(std::cell::Cell::new(80.)),
+            handle: gpui::ScrollHandle::new(),
+        })
+        .prepare(|app, window| {
+            drag(app, window, (93., 30.), (123., 30.), Modifiers::default());
+            keys(app, window, "left");
+            input(
+                app,
+                window,
+                PlatformInput::ScrollWheel(gpui::ScrollWheelEvent {
+                    position: point(px(200.), px(60.)),
+                    delta: gpui::ScrollDelta::Pixels(point(px(0.), px(-40.))),
+                    modifiers: Modifiers::default(),
+                    touch_phase: gpui::TouchPhase::Moved,
+                }),
+            );
+        }),
+    );
+
     scenes
+}
+
+/// A pane of text beside one of lines that scroll, the divider between
+/// them where it was last put.
+struct SplitScroll {
+    position: Rc<std::cell::Cell<f32>>,
+    handle: gpui::ScrollHandle,
+}
+
+impl Render for SplitScroll {
+    fn render(&mut self, _: &mut gpui::Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+        let position = self.position.get();
+        let lines = div()
+            .flex()
+            .flex_col()
+            .gap(px(2.))
+            .children((1..=20).map(|n| {
+                let text = format!("Line {n}");
+                let font = Font::Small;
+                drawing(
+                    font.measure(&text) as f32,
+                    font.line_height() as f32,
+                    move |pen, _, _| pen.text(0, font.ascent(), &text, font, BLACK),
+                )
+            }));
+        let setter = self.position.clone();
+        padded(
+            10.,
+            Split::new(
+                "split",
+                position,
+                text_in("Left pane"),
+                ScrollView::new("scroll", &self.handle, lines).size(260 - position as i32 - 7, 100),
+            )
+            .size(260, 100)
+            .on_change(move |position, _, _| setter.set(position)),
+        )
+    }
+}
+
+/// A line of text in the small face, sized to it, as the original's TextIn.
+fn text_in(text: &'static str) -> impl IntoElement {
+    let font = Font::Small;
+    drawing(
+        font.measure(text) as f32,
+        font.line_height() as f32,
+        move |pen, _, _| pen.text(0, font.ascent(), text, font, BLACK),
+    )
+}
+
+/// Elements made anew each frame, as a stateless scene draws them.
+struct Elements(Box<dyn Fn() -> gpui::AnyElement>);
+
+impl Render for Elements {
+    fn render(&mut self, _: &mut gpui::Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+        (self.0)()
+    }
+}
+
+/// Views in a column, padded and 10 apart, then a card, an empty state and
+/// a status bar, as the original's paths-and-pages scene lays them.
+struct Column {
+    views: Vec<gpui::AnyView>,
+}
+
+impl Render for Column {
+    fn render(&mut self, _: &mut gpui::Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+        div()
+            .size_full()
+            .bg(rgb(GRAY_2))
+            .flex()
+            .flex_col()
+            .items_start()
+            .p(px(10.))
+            .gap(px(10.))
+            .children(self.views.clone())
+            .child(gpui_platinum::card("A card of controls", 120))
+            .child(
+                div()
+                    .w(px(300.))
+                    .h(px(70.))
+                    .child(gpui_platinum::empty_state("No documents", "", 300)),
+            )
+            .child(gpui_platinum::status_bar(
+                ["3 items", "1.2 MB available"],
+                300,
+            ))
+    }
 }
 
 const PRODUCE: [(&str, &str, f64); 9] = [

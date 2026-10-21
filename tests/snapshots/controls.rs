@@ -446,12 +446,7 @@ fn text() -> Vec<Scene> {
                 .child(name.clone())
                 .child(notes.clone())
         })
-    })
-    // The original drew this without East Asian faces, its text area's
-    // lines centering the Latin ink alone; this library always has them,
-    // whose taller ink puts each line a pixel lower, as the original's
-    // does once it is given them.
-    .pending()]
+    })]
 }
 
 fn status() -> Vec<Scene> {
@@ -866,11 +861,6 @@ fn inactive_window() -> Scene {
                 .child(front.clone())
         })
     })
-    // Everything but the list box and the table matches. In the background
-    // the original's list box keeps black items on a gray4 selection with an
-    // empty gray track, and its table draws its rows a pixel higher with a
-    // divider after the last column; both live in the list and table code.
-    .pending()
 }
 
 fn windows() -> Vec<Scene> {
@@ -1090,11 +1080,8 @@ pub fn scenes() -> Vec<Scene> {
     scenes.extend(groups());
     scenes.push(east_asian("eastasian", Language::SimplifiedChinese));
     scenes.push(east_asian("eastasian-ja", Language::Japanese));
-    // Pending on Pagination alone: it draws raised black-outlined arrows
-    // where the original has 22×22 bevel buttons with the month arrows'
-    // icons, 8 from its title.
-    scenes.push(languages("languages-zh-hans", Language::SimplifiedChinese).pending());
-    scenes.push(languages("languages-ja", Language::Japanese).pending());
+    scenes.push(languages("languages-zh-hans", Language::SimplifiedChinese));
+    scenes.push(languages("languages-ja", Language::Japanese));
     scenes.extend(windows());
     scenes.push(inactive_window());
     scenes.push(focus_states());

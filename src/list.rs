@@ -567,7 +567,6 @@ impl Render for ListBox {
                 move |pen, _, _| {
                     let inactive = crate::window::content_is_inactive();
                     let focused = focused && !inactive;
-                    pen.set_dimmed(inactive);
                     pen.language = language;
                     pen.bevel(0, 0, pen.width, pen.height, GRAY_7, WHITE);
                     let inner_height = pen.height - 2;

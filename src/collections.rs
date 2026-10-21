@@ -527,6 +527,7 @@ pub struct Table {
     theme: Theme,
     language: Language,
     label: SharedString,
+    focus_ring: bool,
 }
 
 impl EventEmitter<TableEvent> for Table {}
@@ -551,6 +552,7 @@ impl Table {
             theme: Theme::default(),
             language: Language::English,
             label: "Table".into(),
+            focus_ring: true,
         }
     }
 
@@ -605,6 +607,13 @@ impl Table {
     }
     pub fn label(mut self, label: impl Into<SharedString>) -> Self {
         self.label = label.into();
+        self
+    }
+    /// Rings the table while it has the keyboard, as it does unless turned
+    /// off: classic list views showed none, their window telling where
+    /// typing goes.
+    pub fn focus_ring(mut self, ring: bool) -> Self {
+        self.focus_ring = ring;
         self
     }
     pub fn selection(&self) -> Option<usize> {
@@ -890,7 +899,7 @@ impl Table {
             corner.bevel(1, 1, SCROLL_WIDTH - 2, HEADER_HEIGHT - 2, WHITE, GRAY_7);
             frame.append(corner, list_width, 1);
         }
-        if focused {
+        if focused && self.focus_ring {
             crate::widgets::draw_focus_ring(&mut frame, 0, self.theme.accent.dark);
         }
         paint_at_origin(&frame, bounds, window);

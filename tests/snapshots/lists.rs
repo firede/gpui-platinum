@@ -8,8 +8,8 @@ use gpui::{
     div, point, prelude::*, px, rgb,
 };
 use gpui_platinum::{
-    Breadcrumbs, Font, ListBox, Pagination, PathPopup, RichTextArea, Ruler, RulerState, ScrollView,
-    SheetView, Split, Table, TableColumn, TextField, Theme, TreeView, draw_list_box,
+    Breadcrumbs, ColumnView, Font, ListBox, Pagination, PathPopup, RichTextArea, Ruler, RulerState,
+    ScrollView, SheetView, Split, Table, TableColumn, TextField, Theme, TreeView, draw_list_box,
     models::{Cell, FileTree, NodeKind, Sheet, TreeNode},
     paint::{Pen, drawing},
     theme::{BLACK, GRAY_2},
@@ -525,6 +525,19 @@ pub fn scenes() -> Vec<Scene> {
             views: vec![popup.into(), crumbs.into(), pages.into()],
         }
     }));
+
+    // A click on Documents, then Right into Letters and Right into To Ada.
+    let columns = slot::<ColumnView>();
+    scenes.push(
+        hosted("columnview", 450., 130., 10., &columns, |cx| {
+            ColumnView::new(sample_tree(), cx).size(420, 100)
+        })
+        .prepare(|app, window| {
+            // Documents, the first row: 10 + 2 + 8.
+            click(app, window, 80., 20.);
+            keys(app, window, "right right");
+        }),
+    );
 
     // Panes stacked, the first 40 tall.
     scenes.push(Scene::new("split-vertical", 180., 140., |_, _| {

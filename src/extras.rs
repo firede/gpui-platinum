@@ -418,7 +418,8 @@ impl Render for PopupWindow {
         let height = if self.open { self.height + 19 } else { 20 };
         let tab_width = (Font::Bold.measure_in(&title, self.language) + 32).clamp(80, width - 16);
         let open = self.open;
-        let inactive = !self.active;
+        let active = self.active;
+        let inactive = !active;
         let language = self.language;
         let focused = self.focus.is_focused(window) && window.last_input_was_keyboard();
         let accent = self.theme.accent.dark;
@@ -429,7 +430,7 @@ impl Render for PopupWindow {
             move |bounds, _, window, _| {
                 let mut pen = Pen::new(width, height);
                 pen.language = language;
-                draw_popup_window(&mut pen, &title, tab_width, open, pressed);
+                draw_popup_window(&mut pen, &title, tab_width, open, active, pressed);
                 if focused {
                     pen.rect(24, 15, tab_width - 24, 2, accent);
                 }
@@ -586,57 +587,84 @@ impl Render for PopupWindow {
     }
 }
 
-pub fn draw_popup_window(pen: &mut Pen, title: &str, tab_width: i32, open: bool, pressed: bool) {
+/// Draws a pop-up window filling `pen`: its tab, `tab_width` wide, on the
+/// window's top edge, or on the bottom edge alone when it is closed; in the
+/// background with light and dark lines nearer the face, and gray ink.
+pub fn draw_popup_window(
+    pen: &mut Pen,
+    title: &str,
+    tab_width: i32,
+    open: bool,
+    active: bool,
+    pressed: bool,
+) {
+    const TAB_X: i32 = 12;
+    const TAB_HEIGHT: i32 = 20;
+    const SIDE: i32 = crate::window::FRAME_WIDTH;
     let (face, light, dark) = if pressed {
         (GRAY_5, GRAY_7, GRAY_3)
-    } else {
+    } else if active {
         (GRAY_2, WHITE, GRAY_7)
+    } else {
+        (GRAY_2, GRAY_1, GRAY_5)
     };
     let width = pen.width;
     if open {
-        let height = pen.height - 19;
-        pen.rect(0, 19, width, height, GRAY_2);
-        pen.hline(0, 19, width, BLACK);
-        pen.vline(0, 19, height, BLACK);
-        pen.vline(width - 1, 19, height, BLACK);
-        pen.hline(1, 20, width - 2, light);
-        pen.vline(1, 20, height - 1, light);
-        pen.vline(width - 2, 21, height - 2, dark);
-        pen.hline(4, 23, width - 9, dark);
-        pen.vline(4, 23, height, dark);
-        pen.vline(width - 5, 24, height, light);
-        pen.hline(5, 24, width - 10, BLACK);
-        pen.vline(5, 24, height, BLACK);
-        pen.vline(width - 6, 24, height, BLACK);
+        let top = TAB_HEIGHT - 1;
+        let height = pen.height - top;
+        pen.rect(0, top, width, height, GRAY_2);
+        pen.hline(0, top, width, BLACK);
+        pen.vline(0, top, height, BLACK);
+        pen.vline(width - 1, top, height, BLACK);
+        pen.hline(1, top + 1, width - 2, light);
+        pen.vline(1, top + 1, height - 1, light);
+        pen.vline(width - 2, top + 2, height - 2, dark);
+        // The sunken edge around the content, open at the bottom.
+        let (x, y, edge) = (SIDE - 2, top + SIDE - 2, width - 2 * SIDE + 4);
+        pen.hline(x, y, edge - 1, dark);
+        pen.vline(x, y, height, dark);
+        pen.vline(x + edge - 1, y + 1, height, light);
+        pen.hline(x + 1, y + 1, edge - 2, BLACK);
+        pen.vline(x + 1, y + 1, height, BLACK);
+        pen.vline(x + edge - 2, y + 1, height, BLACK);
     }
-    pen.rect(13, 1, tab_width - 2, 19, face);
-    pen.hline(14, 0, tab_width - 4, BLACK);
-    pen.dot(13, 1, BLACK);
-    pen.dot(12 + tab_width - 2, 1, BLACK);
-    pen.vline(12, 2, 18, BLACK);
-    pen.vline(12 + tab_width - 1, 2, 18, BLACK);
-    pen.hline(14, 1, tab_width - 4, light);
-    pen.vline(13, 2, 18, light);
-    pen.vline(12 + tab_width - 2, 2, 18, dark);
+    // The tab: its corners cut, its bottom open into the window, or on the
+    // parent's edge.
+    let (x, height) = (TAB_X, TAB_HEIGHT);
+    pen.rect(x + 1, 1, tab_width - 2, height - 1, face);
+    pen.hline(x + 2, 0, tab_width - 4, BLACK);
+    pen.dot(x + 1, 1, BLACK);
+    pen.dot(x + tab_width - 2, 1, BLACK);
+    pen.vline(x, 2, height - 2, BLACK);
+    pen.vline(x + tab_width - 1, 2, height - 2, BLACK);
+    pen.hline(x + 2, 1, tab_width - 4, light);
+    pen.vline(x + 1, 2, height - 2, light);
+    pen.vline(x + tab_width - 2, 2, height - 2, dark);
     if open {
-        pen.hline(13, 19, tab_width - 2, face);
+        // The tab's face runs into the window's.
+        pen.hline(x + 1, height - 1, tab_width - 2, face);
+        pen.dot(x + 1, height - 1, light);
+        pen.dot(x + tab_width - 2, height - 1, dark);
+        if !pressed {
+            pen.hline(x + 1, height, tab_width - 2, GRAY_2);
+        }
     }
-    let mut label = Pen::new(tab_width - 4, 20);
+    let mut label = Pen::new(tab_width - 4, height);
     label.language = pen.language;
     label.text(
         (tab_width - 4 - Font::Bold.measure_in(title, pen.language)) / 2,
-        14,
+        1 + (height - 2 - Font::Bold.cap_height()) / 2 + Font::Bold.ascent(),
         title,
         Font::Bold,
-        BLACK,
+        if active { BLACK } else { GRAY_8 },
     );
     label.clip(Rect {
         x: 0,
         y: 0,
         width: tab_width - 4,
-        height: 20,
+        height,
     });
-    pen.append(label, 14, 0);
+    pen.append(label, x + 2, 0);
 }
 
 pub fn zoom_rects(
@@ -654,33 +682,39 @@ pub fn zoom_rects(
                 return;
             }
             let mut pen = Pen::new(width, height);
-            for step in 0..4 {
-                let amount = progress - step as f32 * 0.12;
-                if amount < 0. {
-                    continue;
-                }
-                let lerp = |a: i32, b: i32| (a as f32 + (b - a) as f32 * amount).round() as i32;
-                let rect = Rect {
-                    x: lerp(from.x, to.x),
-                    y: lerp(from.y, to.y),
-                    width: lerp(from.width, to.width),
-                    height: lerp(from.height, to.height),
-                };
-                for x in (0..rect.width).step_by(2) {
-                    pen.dot(rect.x + x, rect.y, GRAY_10);
-                    pen.dot(rect.x + x, rect.y + rect.height - 1, GRAY_10);
-                }
-                for y in (0..rect.height).step_by(2) {
-                    pen.dot(rect.x, rect.y + y, GRAY_10);
-                    pen.dot(rect.x + rect.width - 1, rect.y + y, GRAY_10);
-                }
-            }
+            draw_zoom_rects(&mut pen, from, to, progress);
             pen.paint(bounds.origin, window);
             window.request_animation_frame();
         },
     )
     .w(px(width as f32))
     .h(px(height as f32))
+}
+
+/// Draws the dotted outlines of zoom rectangles `progress` (0 to 1) of the
+/// way from `from` to `to`: four of them, the others trailing the newest.
+pub fn draw_zoom_rects(pen: &mut Pen, from: Rect, to: Rect, progress: f32) {
+    for step in 0..4 {
+        let amount = progress - step as f32 * 0.12;
+        if amount < 0. {
+            continue;
+        }
+        let lerp = |a: i32, b: i32| (a as f32 + (b - a) as f32 * amount).round() as i32;
+        let rect = Rect {
+            x: lerp(from.x, to.x),
+            y: lerp(from.y, to.y),
+            width: lerp(from.width, to.width),
+            height: lerp(from.height, to.height),
+        };
+        for x in (0..rect.width).step_by(2) {
+            pen.dot(rect.x + x, rect.y, GRAY_10);
+            pen.dot(rect.x + x, rect.y + rect.height - 1, GRAY_10);
+        }
+        for y in (0..rect.height).step_by(2) {
+            pen.dot(rect.x, rect.y + y, GRAY_10);
+            pen.dot(rect.x + rect.width - 1, rect.y + y, GRAY_10);
+        }
+    }
 }
 
 pub fn icon_button(

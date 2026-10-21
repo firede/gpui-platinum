@@ -2,13 +2,14 @@
 
 use crate::Scene;
 use gpui::{
-    AnyElement, AnyView, AnyWindowHandle, App, AppContext as _, Context, Focusable,
-    HeadlessAppContext, IntoElement, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, ParentElement, PlatformInput, Render, Styled, Window, div, point, px, rgb,
+    AnyElement, AnyView, AnyWindowHandle, App, AppContext as _, Context, Entity, FocusHandle,
+    Focusable, HeadlessAppContext, IntoElement, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, PlatformInput,
+    Render, Styled, Window, div, point, px, rgb,
 };
 use gpui_platinum::{
     CheckState, Slider, Theme,
-    paint::{Pen, drawing},
+    paint::{Pen, Rect, drawing},
     slider::{ScrollPart, SliderState, draw_slider_thumb},
     theme::*,
     *,
@@ -139,6 +140,29 @@ fn release(
             click_count: 1,
         }),
     );
+}
+
+/// Presses a key, as "tab" or "shift-tab", in the scene's window.
+fn key(app: &mut HeadlessAppContext, window: AnyWindowHandle, keystroke: &str) {
+    let keystroke = Keystroke::parse(keystroke).unwrap();
+    send(
+        app,
+        window,
+        PlatformInput::KeyDown(KeyDownEvent {
+            keystroke: keystroke.clone(),
+            is_held: false,
+            prefer_character_input: false,
+        }),
+    );
+    send(app, window, PlatformInput::KeyUp(KeyUpEvent { keystroke }));
+}
+
+/// Focuses `handle` from the keyboard, so that it shows its focus ring.
+fn focus(app: &mut HeadlessAppContext, window: AnyWindowHandle, handle: FocusHandle) {
+    app.update_window(window, |_, window, cx| window.focus(&handle, cx))
+        .unwrap();
+    // A key nothing handles, to make the last input the keyboard's.
+    key(app, window, "f19");
 }
 
 fn hover(app: &mut HeadlessAppContext, window: AnyWindowHandle, x: f32, y: f32) {
@@ -425,8 +449,89 @@ fn status() -> Vec<Scene> {
     })]
 }
 
+/// The original's two pop-up windows, Files open and Tools closed: in front
+/// as `files_front` says, Tools moved to `tools_x`.
+fn popup_windows(name: &'static str, files_front: bool, tools_x: i32) -> Scene {
+    Scene::new(name, 400., 140., move |_, cx| {
+        let make = |title: &'static str, x: i32, (width, height): (i32, i32), cx: &mut App| {
+            let content = piece(cx, |_, _| {
+                div()
+                    .size_full()
+                    .flex()
+                    .flex_col()
+                    .bg(rgb(WHITE))
+                    .p(px(6.))
+                    .child(label("Read Me"))
+                    .child(label("Recipes"))
+            });
+            cx.new(|cx| {
+                PopupWindow::new(title, cx)
+                    .content(content)
+                    .position(x)
+                    .size(width, height)
+            })
+        };
+        let files: Entity<PopupWindow> = make("Files", 10, (200, 90), cx);
+        let tools: Entity<PopupWindow> = make("Tools", tools_x, (150, 80), cx);
+        files.update(cx, |files, cx| files.set_active(files_front, cx));
+        tools.update(cx, |tools, cx| {
+            tools.set_open(false, cx);
+            tools.set_active(!files_front, cx);
+        });
+        Held::new((files, tools), |(files, tools), _, _| {
+            div()
+                .relative()
+                .size_full()
+                .bg(rgb(GRAY_5))
+                .child(files.clone())
+                .child(tools.clone())
+        })
+    })
+}
+
 fn windows() -> Vec<Scene> {
     vec![
+        popup_windows("popup-window", true, 230),
+        popup_windows("popup-window-focus", false, 200).prepare(|app, window| {
+            // The Tools tab, the second stop, from the keyboard.
+            app.update_window(window, |_, window, cx| {
+                window.focus_next(cx);
+                window.focus_next(cx);
+            })
+            .unwrap();
+            key(app, window, "f19");
+        }),
+        popup_windows("popup-window-pressed", true, 200).prepare(|app, window| {
+            press(app, window, 42., 41., Modifiers::default());
+        }),
+        Scene::elements("zoomrects", 300., 140., |_, _| {
+            drawing(300., 140., |pen, _, _| {
+                let from = Rect {
+                    x: 10,
+                    y: 100,
+                    width: 32,
+                    height: 32,
+                };
+                let to = |x, y, width, height| Rect {
+                    x,
+                    y,
+                    width,
+                    height,
+                };
+                draw_zoom_rects(pen, from, to(60, 10, 90, 70), 0.35);
+                draw_zoom_rects(pen, from, to(170, 10, 120, 100), 0.7);
+            })
+        }),
+        Scene::elements("toolbar-overflow", 150., 140., |_, _| {
+            div().flex().flex_col().w(px(150.)).child(
+                Toolbar::new()
+                    .item(bevel_button("one", "One"))
+                    .item(bevel_button("two", "Two"))
+                    .separator()
+                    .item(bevel_button("three", "Three"))
+                    .item(bevel_button("bold", "Bold").selected(false)),
+            )
+        }),
         Scene::new("window-frames", 300., 220., |_, cx| {
             let back = cx.new(|cx| {
                 PlatinumWindow::new("Background", cx)

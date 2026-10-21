@@ -84,9 +84,11 @@ pub fn set_east_asian_line_room(room: bool) {
     EAST_ASIAN_ROOM.store(room, AtomicOrdering::Relaxed);
 }
 
-/// The rows of a line's ink above and below its baseline.
+/// The rows of a line's ink above and below its baseline: an East Asian
+/// language's lines always make room for its glyphs, as the original's do
+/// once it is given that language's faces.
 pub(crate) fn line_ink(language: Language) -> (i32, i32) {
-    if EAST_ASIAN_ROOM.load(AtomicOrdering::Relaxed) {
+    if EAST_ASIAN_ROOM.load(AtomicOrdering::Relaxed) || language != Language::English {
         Font::Small.line_ink(language)
     } else {
         let ascent = Font::Small.ascent();

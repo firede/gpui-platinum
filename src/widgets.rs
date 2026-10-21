@@ -653,9 +653,9 @@ pub fn draw_bevel_content(
 }
 
 /// The room a bevel button's pop-down arrow takes after its content.
-const BEVEL_ARROW_WIDTH: i32 = 9;
+pub(crate) const BEVEL_ARROW_WIDTH: i32 = 9;
 
-fn draw_bevel_parts(
+pub(crate) fn draw_bevel_parts(
     pen: &mut Pen,
     label: &str,
     icon: Option<&[&str]>,

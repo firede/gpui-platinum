@@ -962,8 +962,7 @@ fn windows() -> Vec<Scene> {
             press(app, window, 130., 19., command);
             release(app, window, 130., 19., command);
             hover(app, window, 130., 76.);
-        })
-        .pending(),
+        }),
         Scene::elements("well-balloon", 260., 80., |_, _| {
             div()
                 .flex()
@@ -1081,11 +1080,8 @@ pub fn scenes() -> Vec<Scene> {
     scenes.extend(groups());
     scenes.push(east_asian("eastasian", Language::SimplifiedChinese));
     scenes.push(east_asian("eastasian-ja", Language::Japanese));
-    // Pending on the calendar alone: its weekday names stand a pixel higher
-    // than the original's and its sunken edge fills two corners the
-    // original leaves.
-    scenes.push(languages("languages-zh-hans", Language::SimplifiedChinese).pending());
-    scenes.push(languages("languages-ja", Language::Japanese).pending());
+    scenes.push(languages("languages-zh-hans", Language::SimplifiedChinese));
+    scenes.push(languages("languages-ja", Language::Japanese));
     scenes.extend(windows());
     scenes.push(inactive_window());
     scenes.push(focus_states());

@@ -1,14 +1,26 @@
 use super::modal::{ModalState, ModalView, modal, text};
 use crate::{
-    Font, Language, MenuEvent, NumberChanged, NumberField, PopupMenu, Theme, button,
+    Font, Language, MenuEvent, NumberChanged, NumberField, PopupMenu, Theme, bevel_button, button,
     paint::{Pen, drawing},
     theme::*,
     tr,
 };
 use gpui::{
-    Context, Entity, EventEmitter, FocusHandle, Focusable, MouseButton, Render, Subscription,
-    Window, div, prelude::*, px, rgb,
+    Context, Entity, EventEmitter, FocusHandle, Focusable, Render, Subscription, Window, div,
+    prelude::*, px,
 };
+
+const PORTRAIT_ICON: &[&str] = &[
+    "######..", "#....##.", "#.....#.", "#.###.#.", "#.....#.", "#.###.#.", "#.....#.", "#######.",
+];
+const LANDSCAPE_ICON: &[&str] = &[
+    "##########",
+    "#........#",
+    "#.######.#",
+    "#........#",
+    "#.######.#",
+    "##########",
+];
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Paper {
@@ -99,11 +111,8 @@ impl EventEmitter<PageSetupEvent> for PageSetup {}
 impl PageSetup {
     pub fn new(value: PageSetupState, cx: &mut Context<Self>) -> Self {
         let value = value.normalized();
-        let paper = cx.new(|cx| {
-            PopupMenu::new(PAPERS.iter().map(|paper| paper.name), cx)
-                .width(140)
-                .label("Paper")
-        });
+        let paper =
+            cx.new(|cx| PopupMenu::new(PAPERS.iter().map(|paper| paper.name), cx).label("Paper"));
         let scale = cx.new(|cx| NumberField::new(value.scale, 25., 400., 5., cx).label("Scale"));
         let margin = cx.new(|cx| NumberField::new(value.margin, 0., 144., 6., cx).label("Margins"));
         let subscriptions = vec![
@@ -121,7 +130,7 @@ impl PageSetup {
             }),
         ];
         Self {
-            modal: ModalState::new(400., cx),
+            modal: ModalState::new(360., cx),
             value,
             draft: value,
             paper,
@@ -222,6 +231,7 @@ impl Render for PageSetup {
                 paper.set_theme(theme, cx);
                 paper.set_language(lang, cx);
                 paper.set_label(tr(lang, "paperLabel"), cx);
+                paper.set_caption(tr(lang, "paperLabel"), cx);
             });
             for (field, key) in [(&self.scale, "scale"), (&self.margin, "margins")] {
                 field.update(cx, |field, cx| {
@@ -240,72 +250,29 @@ impl Render for PageSetup {
         };
         let draft = self.draft;
         let mut orientations = row("orientationLabel");
+        // Two icon bevel buttons, the one chosen pressed in.
         for (index, key, landscape) in [(0, "portrait", false), (1, "landscape", true)] {
-            let handle = self.focus[index].clone();
-            let selected = draft.landscape == landscape;
             orientations = orientations.child(
-                div()
-                    .id(key)
-                    .role(gpui::Role::Button)
-                    .aria_label(tr(lang, key))
-                    .track_focus(&self.focus[index])
-                    .tab_stop(true)
-                    .size(px(24.))
-                    .text_color(rgb(BLACK))
-                    .active(|style| style.text_color(rgb(WHITE)))
-                    .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                        window.focus(&handle, cx)
+                bevel_button(key, tr(lang, key))
+                    .icon_only(if landscape {
+                        LANDSCAPE_ICON
+                    } else {
+                        PORTRAIT_ICON
                     })
+                    .selected(draft.landscape == landscape)
+                    .focus_handle(&self.focus[index])
+                    .theme(theme)
+                    .language(lang)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.draft.landscape = landscape;
                         cx.notify();
-                    }))
-                    .on_key_down(cx.listener(move |this, event: &gpui::KeyDownEvent, _, cx| {
-                        if event.keystroke.key == "space" {
-                            this.draft.landscape = landscape;
-                            cx.notify();
-                            cx.stop_propagation();
-                        }
-                    }))
-                    .child(drawing(24., 24., move |pen, window, _| {
-                        let pressed = window.text_style().color == rgb(WHITE).into();
-                        if selected || pressed {
-                            pen.sunken();
-                            pen.rect(2, 2, 20, 20, theme.accent.light);
-                        } else {
-                            pen.raised(theme.background);
-                        }
-                        let rows: &[&str] = if landscape {
-                            &[
-                                "##########",
-                                "#........#",
-                                "#.######.#",
-                                "#........#",
-                                "#.######.#",
-                                "##########",
-                            ]
-                        } else {
-                            &[
-                                "######..", "#....##.", "#.....#.", "#.###.#.", "#.....#.",
-                                "#.###.#.", "#.....#.", "#######.",
-                            ]
-                        };
-                        let left = (24 - rows[0].len() as i32) / 2;
-                        let top = (24 - rows.len() as i32) / 2;
-                        for (y, row) in rows.iter().enumerate() {
-                            for (x, ch) in row.chars().enumerate() {
-                                if ch == '#' {
-                                    pen.dot(left + x as i32, top + y as i32, BLACK);
-                                }
-                            }
-                        }
                     })),
             );
         }
         let content = div()
             .flex()
             .flex_col()
-            .gap(px(12.))
+            .gap(px(8.))
             .child(
                 div()
                     .flex()
@@ -315,8 +282,9 @@ impl Render for PageSetup {
                         div()
                             .flex()
                             .flex_col()
+                            .items_start()
                             .gap(px(8.))
-                            .child(row("paperLabel").child(self.paper.clone()))
+                            .child(self.paper.clone())
                             .child(orientations)
                             .child(row("scaleLabel").child(self.scale.clone()).child(text(
                                 "%",
@@ -343,6 +311,7 @@ impl Render for PageSetup {
                 div()
                     .flex()
                     .justify_end()
+                    .items_center()
                     .gap(px(10.))
                     .child(
                         button("cancel", tr(lang, "cancel"))

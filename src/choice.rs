@@ -601,7 +601,8 @@ fn key_target(items: &[ChoiceItem], current: usize, key: &str) -> Option<usize> 
     }
 }
 
-pub(crate) fn draw_tab(pen: &mut Pen, label: &str, selected: bool, disabled: bool, pressed: bool) {
+/// Draws a tab filling `pen`; one not selected has a line along its foot.
+pub fn draw_tab(pen: &mut Pen, label: &str, selected: bool, disabled: bool, pressed: bool) {
     let inactive = crate::window::content_is_inactive();
     let (width, height) = (pen.width, pen.height);
     let face = if pressed {

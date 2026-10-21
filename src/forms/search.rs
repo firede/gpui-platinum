@@ -35,7 +35,7 @@ impl SearchField {
         });
         Self {
             field,
-            style: FieldStyle::new(180),
+            style: FieldStyle::new(160),
             placeholder: "".into(),
             _subscription: subscription,
         }

@@ -88,7 +88,7 @@ impl Render for Field {
     }
 }
 
-/// The caret shows for 500 ms and hides for as long, and shows at once
+/// The caret shows for 530 ms and hides for as long, and shows at once
 /// again when the user types.
 #[gpui::test]
 fn caret_blinks(cx: &mut TestAppContext) {
@@ -102,15 +102,19 @@ fn caret_blinks(cx: &mut TestAppContext) {
     });
     cx.simulate_input("a");
     let shown = frame(cx);
-    advance(cx, 500);
+    advance(cx, 530);
     let hidden = frame(cx);
     assert_ne!(shown, hidden, "the caret did not hide");
-    advance(cx, 500);
+    advance(cx, 530);
     assert_eq!(frame(cx), shown, "the caret did not show again");
-    advance(cx, 750);
+    advance(cx, 795);
     assert_eq!(frame(cx), hidden, "the caret did not hide again");
     cx.simulate_keystrokes("left right");
     assert_eq!(frame(cx), shown, "a key did not show the caret at once");
+    advance(cx, 529);
+    assert_eq!(frame(cx), shown, "a key did not start the blink anew");
+    advance(cx, 1);
+    assert_eq!(frame(cx), hidden, "the caret did not hide after a key");
 }
 
 struct List {

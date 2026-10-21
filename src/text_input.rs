@@ -23,6 +23,8 @@ use text_buffer::TextBuffer;
 
 const LINE_HEIGHT: f32 = 14.;
 const INSET: f32 = 5.;
+/// How long the caret shows, and then hides.
+const CARET_BLINK: Duration = Duration::from_millis(530);
 const SCROLLBAR_WIDTH: f32 = 16.;
 
 actions!(
@@ -221,23 +223,23 @@ pub struct TextField {
 
 impl TextField {
     pub fn new(cx: &mut Context<Self>) -> Self {
+        // The caret shows for CARET_BLINK after it last moved, then hides
+        // for as long, and so on: the task draws it again as each turns.
         let blink_task = cx.spawn(async |field, cx| {
+            let mut delay = CARET_BLINK;
             loop {
-                cx.background_executor()
-                    .timer(Duration::from_millis(500))
-                    .await;
+                cx.background_executor().timer(delay).await;
                 let result = field.update(cx, |field, cx| {
-                    let idle = cx
-                        .background_executor()
-                        .now()
-                        .duration_since(field.activity);
-                    if field.focused && idle >= Duration::from_millis(500) {
-                        field.blink_on = !field.blink_on;
+                    let idle = field.idle(cx);
+                    if field.focused {
                         cx.notify();
                     }
+                    CARET_BLINK
+                        - Duration::from_nanos((idle.as_nanos() % CARET_BLINK.as_nanos()) as u64)
                 });
-                if result.is_err() {
-                    break;
+                match result {
+                    Ok(next) => delay = next,
+                    Err(_) => break,
                 }
             }
         });
@@ -519,6 +521,13 @@ impl TextField {
         } else {
             text.replace('\n', " ")
         }
+    }
+
+    /// How long since the caret last moved.
+    fn idle(&self, cx: &App) -> Duration {
+        cx.background_executor()
+            .now()
+            .saturating_duration_since(self.activity)
     }
 
     fn activity(&mut self, cx: &mut Context<Self>) {
@@ -1300,6 +1309,7 @@ fn layout_document_lines(
 impl Render for TextField {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.focused = self.focus_handle.is_focused(window);
+        self.blink_on = (self.idle(cx).as_nanos() / CARET_BLINK.as_nanos()).is_multiple_of(2);
         let bounds = self.bounds.unwrap_or_else(|| {
             Bounds::new(point(px(0.), px(0.)), size(px(self.width), px(self.height)))
         });

@@ -22,6 +22,8 @@ pub struct Rect {
 pub struct Fill {
     pub rect: Rect,
     pub color: u32,
+    /// How much of the color covers what is under it, out of 255.
+    pub alpha: u8,
 }
 
 struct SystemText {
@@ -104,6 +106,12 @@ impl Pen {
     }
 
     pub fn rect(&mut self, x: i32, y: i32, width: i32, height: i32, color: u32) {
+        self.translucent(x, y, width, height, color, 255);
+    }
+
+    /// Fills a rectangle with `color` covering `alpha` out of 255 of what
+    /// is under it, as a shadow does.
+    pub fn translucent(&mut self, x: i32, y: i32, width: i32, height: i32, color: u32, alpha: u8) {
         if width > 0 && height > 0 {
             self.fills.push(Fill {
                 rect: Rect {
@@ -113,8 +121,17 @@ impl Pen {
                     height,
                 },
                 color: if self.dimmed { dim_color(color) } else { color },
+                alpha,
             });
         }
+    }
+
+    /// Darkens a pixel along the right and bottom outside the pen's box, as
+    /// the shadow of a menu or an alert, over whatever is under it.
+    pub fn drop_shadow(&mut self) {
+        let (width, height) = (self.width, self.height);
+        self.translucent(2, height, width - 1, 1, GRAY_9, 153);
+        self.translucent(width, 2, 1, height - 1, GRAY_9, 153);
     }
 
     pub fn dot(&mut self, x: i32, y: i32, color: u32) {
@@ -366,7 +383,7 @@ impl Pen {
                     }
                 });
             }
-            let Some(Fill { rect, color }) = self.fills.get(index) else {
+            let Some(Fill { rect, color, alpha }) = self.fills.get(index) else {
                 break;
             };
             window.paint_quad(fill(
@@ -374,9 +391,34 @@ impl Pen {
                     origin + point(px(rect.x as f32), px(rect.y as f32)),
                     size(px(rect.width as f32), px(rect.height as f32)),
                 ),
-                rgb(*color),
+                translucent_color(*color, *alpha),
             ));
         }
+    }
+}
+
+/// The color GPUI blends to what the original draws: its 8-bit
+/// premultiplied color, rounded, over the pixel's channels times the rest
+/// of the alpha. Blended in floats, the rounded premultiplied channel keeps
+/// the sum on the same whole number.
+fn translucent_color(color: u32, alpha: u8) -> gpui::Rgba {
+    if alpha == 255 {
+        return rgb(color);
+    }
+    let alpha = f32::from(alpha) / 255.;
+    let channel = |shift: u32| {
+        let premultiplied = (((color >> shift) & 255) as f32 * alpha).round() / 255.;
+        if alpha > 0. {
+            premultiplied / alpha
+        } else {
+            0.
+        }
+    };
+    gpui::Rgba {
+        r: channel(16),
+        g: channel(8),
+        b: channel(0),
+        a: alpha,
     }
 }
 

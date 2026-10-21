@@ -1273,6 +1273,40 @@ fn layout_styled_lines(
     layout_document_lines(text, language, password, wrap, rich, 0.)
 }
 
+/// Punctuation that may not start a line, and that may not end one, as
+/// East Asian text sets it (kinsoku): a line does not break before a
+/// period, a comma or a closing bracket, nor after an opening one.
+const NO_LINE_START: &str = "、。，．：；？！）」』】〕〉》〗〙〛｝］”’ー々ぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮヵヶ…‥・,.:;?!)]}";
+const NO_LINE_END: &str = "（「『【〔〈《〖〘〚｛［“‘([{";
+
+/// Whether a line may break between two graphemes: after a space, or
+/// between characters of scripts written without spaces — ideographs, kana
+/// and their punctuation — unless the punctuation keeps them together.
+fn breakable(before: &str, after: &str) -> bool {
+    let (Some(a), Some(b)) = (before.chars().last(), after.chars().next()) else {
+        return false;
+    };
+    if NO_LINE_START.contains(b) || NO_LINE_END.contains(a) {
+        return false;
+    }
+    a.is_whitespace() || unspaced(a) || unspaced(b)
+}
+
+/// Whether a character is of a script written without spaces between
+/// words, where a line may break between any two characters.
+fn unspaced(character: char) -> bool {
+    matches!(character,
+        '\u{2E80}'..='\u{2FDF}'
+        | '\u{3000}'..='\u{30FF}'
+        | '\u{31F0}'..='\u{31FF}'
+        | '\u{3400}'..='\u{4DBF}'
+        | '\u{4E00}'..='\u{9FFF}'
+        | '\u{F900}'..='\u{FAFF}'
+        | '\u{FF00}'..='\u{FF60}'
+        | '\u{FF66}'..='\u{FF9D}'
+        | '\u{20000}'..='\u{3FFFF}')
+}
+
 fn layout_document_lines(
     text: &str,
     language: Language,
@@ -1320,10 +1354,15 @@ fn layout_document_lines(
             && !line.cells.is_empty()
             && !trailing_space
         {
-            let word_break = line
-                .cells
-                .iter()
-                .rposition(|cell| text[cell.range.clone()].chars().all(char::is_whitespace));
+            // The last place the line may break: after a space, or
+            // between characters of scripts written without spaces.
+            let cells = &line.cells;
+            let word_break = (0..cells.len()).rev().find(|index| {
+                let after = cells
+                    .get(index + 1)
+                    .map_or(grapheme, |cell| &text[cell.range.clone()]);
+                breakable(&text[cells[*index].range.clone()], after)
+            });
             if let Some(index) = word_break.filter(|index| *index + 1 < line.cells.len()) {
                 let mut tail = line.cells.split_off(index + 1);
                 let next_start = tail[0].range.start;
@@ -1640,6 +1679,21 @@ mod tests {
         assert_eq!(&text[lines[1].start..lines[1].end], "three");
         assert_eq!(lines[1].cells[0].x, 0.);
         assert_eq!(lines[1].index_at(0.), 8);
+    }
+
+    #[test]
+    fn east_asian_text_wraps_between_its_characters_but_not_before_a_period() {
+        let text = "めくります。Shift キーを押";
+        let width = Font::Small.measure_in("めくります。Shift キー", Language::Japanese) as f32;
+        let lines = layout_lines(text, Language::Japanese, false, Some(width + 1.));
+        assert_eq!(
+            &text[lines[0].start..lines[0].end],
+            "めくります。Shift キー"
+        );
+        assert_eq!(&text[lines[1].start..lines[1].end], "を押");
+        let width = Font::Small.measure_in("めくります", Language::Japanese) as f32;
+        let lines = layout_lines(text, Language::Japanese, false, Some(width + 1.));
+        assert_eq!(&text[lines[0].start..lines[0].end], "めくりま");
     }
 
     #[test]

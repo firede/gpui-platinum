@@ -98,8 +98,20 @@ impl Render for IconDrag {
             draw_icon(pen, 26, 4, kind, true);
             let name = fit_title(&title, 80, language);
             let width = Font::Small.measure_in(&name, language);
-            pen.rect((84 - width) / 2 - 2, 38, width + 4, 13, BLACK);
-            pen.text((84 - width) / 2, 48, &name, Font::Small, WHITE);
+            pen.rect(
+                (84 - width) / 2 - 2,
+                38,
+                width + 4,
+                Font::Small.line_height() + 1,
+                BLACK,
+            );
+            pen.text(
+                (84 - width) / 2,
+                39 + Font::Small.ascent(),
+                &name,
+                Font::Small,
+                WHITE,
+            );
         })
     }
 }
@@ -141,6 +153,7 @@ pub struct IconView {
     label: SharedString,
     theme: Theme,
     language: Language,
+    plain_when_inactive: bool,
 }
 
 impl EventEmitter<IconEvent> for IconView {}
@@ -166,7 +179,15 @@ impl IconView {
             label: "Files".into(),
             theme: Theme::default(),
             language: Language::English,
+            plain_when_inactive: false,
         }
+    }
+    /// Inverts the chosen item's name only in the window in front, as a
+    /// folder window of the desk does: in a window behind, its icon alone
+    /// shows it chosen.
+    pub fn plain_when_inactive(mut self, plain: bool) -> Self {
+        self.plain_when_inactive = plain;
+        self
     }
     pub fn size(mut self, width: i32, height: i32) -> Self {
         self.width = width.max(100);
@@ -428,6 +449,7 @@ impl Render for IconView {
         let theme = self.theme;
         let language = self.language;
         let focused = self.focus.is_focused(window);
+        let plain_when_inactive = self.plain_when_inactive;
         let width = self.width;
         let height = self.height;
         let inset = self.inset();
@@ -611,12 +633,15 @@ impl Render for IconView {
                                         }
                                         let name = fit_title(&title, 80, language);
                                         let width = Font::Small.measure_in(&name, language);
+                                        let inverted = selected
+                                            && !(plain_when_inactive
+                                                && crate::window::content_is_inactive());
                                         pen.rect(
                                             (84 - width) / 2 - 2,
                                             38,
                                             width + 4,
                                             Font::Small.line_height() + 1,
-                                            if selected {
+                                            if inverted {
                                                 if focused && !crate::window::content_is_inactive()
                                                 {
                                                     theme.accent.dark
@@ -632,7 +657,7 @@ impl Render for IconView {
                                             39 + Font::Small.ascent(),
                                             &name,
                                             Font::Small,
-                                            if selected { WHITE } else { BLACK },
+                                            if inverted { WHITE } else { BLACK },
                                         );
                                     }))
                                     .when_some(image, |cell, image| {
@@ -736,7 +761,10 @@ pub fn draw_icon(pen: &mut Pen, x: i32, y: i32, kind: IconKind, selected: bool) 
         }
         IconKind::Disk => {
             box_at(p, 2, 9, 28, 16, GRAY_2);
-            p.bevel(3, 10, 26, 14, WHITE, GRAY_7);
+            p.hline(3, 10, 26, WHITE);
+            p.vline(3, 10, 14, WHITE);
+            p.hline(3, 23, 26, GRAY_7);
+            p.vline(28, 11, 13, GRAY_7);
             p.rect(5, 18, 14, 2, BLACK);
             p.rect(24, 18, 2, 2, 0x559955);
             p.hline(3, 25, 27, GRAY_7);

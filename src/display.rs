@@ -29,8 +29,10 @@ pub fn paragraph_in(
         .flex_col()
         .w(px(width as f32))
         .children(lines.into_iter().enumerate().map(move |(index, line)| {
+            // Each line two rows taller than the face's, its text at the top.
             div()
                 .id(("line", index))
+                .h(px((font.line_height() + 2) as f32))
                 .child(text_in_language(line, font, BLACK, language))
         }))
 }

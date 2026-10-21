@@ -1,21 +1,25 @@
 use std::{
+    cell::RefCell,
     collections::HashMap,
+    rc::Rc,
     time::{Duration, SystemTime},
 };
 
-use chrono::{DateTime, Datelike, Local};
+use chrono::{DateTime, Datelike, FixedOffset, Utc};
 
 use gpui::{
     AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, MouseButton, Window,
     div, prelude::*, px,
 };
 use gpui_platinum::locale::desk;
+
+use super::menu_icons::application_icon;
 use gpui_platinum::{
     ColumnEvent, ColumnView, Font, IconEvent, IconItem, IconKind, IconView, InputEvent, Language,
-    PopupMenu, Table, TableColumn, TableEvent, TextField, Theme, button, label_in,
+    PopupMenu, Table, TableColumn, TableEvent, TextField, Theme, button, empty_state_in, label_in,
     models::{FileTree, NodeKind, TreeNode},
     paint::drawing,
-    paragraph_in, text_in_language,
+    paragraph_in, status_bar_in, text_in_language,
     theme::*,
     window::GROW_BOX_SIZE,
 };
@@ -44,6 +48,8 @@ pub struct Cabinet {
     icons: Entity<IconView>,
     table: Entity<Table>,
     columns: Entity<ColumnView>,
+    /// The pictures of the list's rows, which its Name column reads.
+    row_icons: Rc<RefCell<Vec<Option<&'static [&'static str]>>>>,
     button_focus: HashMap<usize, FocusHandle>,
     spring_task: Option<gpui::Task<()>>,
     context: bool,
@@ -69,11 +75,16 @@ impl Cabinet {
                 .always_scrollbar(true)
                 .frame(false)
                 .scroll_bar_room(GROW_BOX_SIZE - 1)
+                .plain_when_inactive(true)
         });
+        let row_icons: Rc<RefCell<Vec<Option<&'static [&'static str]>>>> = Rc::default();
+        let icons_of_rows = row_icons.clone();
         let table = cx.new(|cx| {
             Table::with_columns(
                 vec![
-                    TableColumn::new("Name").width(150),
+                    TableColumn::new("Name")
+                        .width(150)
+                        .icon(move |row| icons_of_rows.borrow().get(row).copied().flatten()),
                     TableColumn::new("Size").width(70).right(true),
                     TableColumn::new("Kind").width(100),
                 ],
@@ -82,6 +93,7 @@ impl Cabinet {
             )
             .size(328, 174)
             .always_scrollbar(true)
+            .focus_ring(false)
         });
         let columns = cx.new(|cx| {
             ColumnView::new(FileTree::new(Vec::new()), cx)
@@ -169,6 +181,7 @@ impl Cabinet {
             icons,
             table,
             columns,
+            row_icons,
             button_focus: HashMap::new(),
             spring_task: None,
             context: false,
@@ -244,6 +257,11 @@ impl Cabinet {
             .find(self.folder)
             .map(|node| node.children.clone())
             .unwrap_or_default();
+        // Where the chosen item was, for the item that takes its place
+        // when it leaves, as the original keeps its chosen index.
+        let index = self
+            .selected
+            .and_then(|id| self.ids.iter().position(|candidate| *candidate == id));
         self.ids = items.iter().map(|node| node.id).collect();
         self.button_focus.retain(|id, _| self.ids.contains(id));
         for id in &self.ids {
@@ -253,7 +271,11 @@ impl Cabinet {
         }
         self.selected = self
             .selected
-            .filter(|id| self.files.read(cx).path(*id).contains(&self.folder));
+            .filter(|id| self.files.read(cx).path(*id).contains(&self.folder))
+            .or_else(|| {
+                let index = index?.min(self.ids.len().checked_sub(1)?);
+                self.ids.get(index).copied()
+            });
         let icons = items
             .iter()
             .map(|node| {
@@ -279,6 +301,7 @@ impl Cabinet {
                 ]
             })
             .collect();
+        *self.row_icons.borrow_mut() = items.iter().map(small_icon).collect();
         let headers = ["columnName", "columnSize", "columnKind"]
             .map(|key| desk(self.language, key))
             .to_vec();
@@ -377,7 +400,9 @@ impl Render for Cabinet {
                             let kind = icon_kind(node);
                             let title = truncate_name(&node.title, 80, language);
                             let focus = self.button_focus[&id].clone();
-                            let focused = focus.is_focused(window);
+                            // The ring shows as the keyboard reaches it.
+                            let focused =
+                                focus.is_focused(window) && window.last_input_was_keyboard();
                             let columns = ((width - 16) / 84).max(1) as usize;
                             let theme = self.theme;
                             div()
@@ -413,11 +438,9 @@ impl Render for Cabinet {
                                     let pressed =
                                         window.text_style().color == gpui::rgb(WHITE).into();
                                     let mut face = gpui_platinum::paint::Pen::new(56, 56);
-                                    if pressed {
-                                        face.sunken();
-                                    } else {
-                                        face.raised(GRAY_2);
-                                    }
+                                    gpui_platinum::widgets::draw_bevel_button(
+                                        &mut face, false, pressed, false,
+                                    );
                                     let shift = i32::from(pressed);
                                     gpui_platinum::draw_icon(
                                         &mut face,
@@ -566,23 +589,13 @@ impl Focusable for FindFile {
 impl FindFile {
     pub fn new(files: Entity<FileTree>, cx: &mut Context<Self>) -> Self {
         let query = cx.new(|cx| TextField::new(cx).size(110., 22.).label("Search for"));
-        let where_menu =
-            cx.new(|cx| PopupMenu::new(["on local disks", "on “Platinum Disk”"], cx).width(180));
-        let what = cx.new(|cx| PopupMenu::new(["name", "kind"], cx).width(70));
-        let how = cx.new(|cx| {
-            PopupMenu::new(["contains", "starts with", "ends with", "is"], cx).width(100)
-        });
+        let where_menu = cx.new(|cx| PopupMenu::new(["on local disks", "on “Platinum Disk”"], cx));
+        let what = cx.new(|cx| PopupMenu::new(["name", "kind"], cx));
+        let how = cx.new(|cx| PopupMenu::new(["contains", "starts with", "ends with", "is"], cx));
         let table = cx.new(|cx| {
-            Table::with_columns(
-                vec![
-                    TableColumn::new("Name").width(150),
-                    TableColumn::new("Kind").width(100),
-                    TableColumn::new("Where").width(182),
-                ],
-                Vec::new(),
-                cx,
-            )
-            .size(448, 132)
+            Table::with_columns(found_columns(Language::English, Vec::new()), Vec::new(), cx)
+                .size(448, 132)
+                .always_scrollbar(true)
         });
         cx.subscribe(&query, |this, _, event, cx| {
             if *event == InputEvent::Submitted {
@@ -618,7 +631,7 @@ impl FindFile {
         self.width = width.max(400);
         self.height = height.max(180);
         self.table.update(cx, |view, cx| {
-            view.set_size(self.width - 20, self.height - 122, cx)
+            view.set_size(self.width - 20, self.height - FIND_CHROME, cx)
         });
         cx.notify();
     }
@@ -639,12 +652,7 @@ impl FindFile {
             .update(cx, |field, cx| field.set_language(language, cx));
         self.table.update(cx, |table, cx| {
             table.set_language(language, cx);
-            table.set_headers(
-                ["columnName", "columnKind", "columnWhere"]
-                    .map(|key| desk(language, key))
-                    .to_vec(),
-                cx,
-            );
+            table.set_columns(found_columns(language, Vec::new()), cx);
         });
         let disk = self
             .files
@@ -723,10 +731,9 @@ impl FindFile {
         if let Some(root) = files.roots.first() {
             visit(&root.children, &query, what, how, language, &mut self.found);
         }
-        let rows = self
-            .found
+        let nodes: Vec<_> = self.found.iter().filter_map(|id| files.find(*id)).collect();
+        let rows = nodes
             .iter()
-            .filter_map(|id| files.find(*id))
             .map(|node| {
                 vec![
                     node.title.clone(),
@@ -735,7 +742,13 @@ impl FindFile {
                 ]
             })
             .collect();
-        self.table.update(cx, |table, cx| table.set_rows(rows, cx));
+        let icons = nodes.iter().map(|node| small_icon(node)).collect();
+        // By name, as the original's table sorts at first.
+        self.table.update(cx, |table, cx| {
+            table.set_columns(found_columns(language, icons), cx);
+            table.set_rows(rows, cx);
+            table.sort_by(0, false, cx);
+        });
         self.searched = true;
         cx.notify();
     }
@@ -743,75 +756,178 @@ impl FindFile {
 impl Render for FindFile {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let language = self.language;
+        let found = if self.searched {
+            count(language, "foundCount", self.found.len())
+        } else {
+            String::new()
+        };
         div()
             .flex()
             .flex_col()
-            .gap(px(8.))
-            .p(px(10.))
             .w_full()
             .h_full()
             .child(
                 div()
                     .flex()
-                    .items_center()
+                    .flex_col()
                     .gap(px(6.))
-                    .child(label_in(desk(language, "findItems"), language))
-                    .child(self.where_menu.clone()),
+                    .pt(px(10.))
+                    .px(px(10.))
+                    .pb(px(8.))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .child(label_in(desk(language, "findItems"), language))
+                            .child(self.where_menu.clone()),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .child(label_in(desk(language, "whose"), language))
+                            .child(self.what.clone())
+                            .child(self.how.clone())
+                            .child(self.query.clone())
+                            .child(div().flex_1())
+                            .child(
+                                button("find", desk(language, "find"))
+                                    .width(60)
+                                    .default_button()
+                                    .disabled(self.query.read(cx).value().trim().is_empty())
+                                    .theme(self.theme)
+                                    .language(language)
+                                    .on_click(cx.listener(|this, _, _, cx| this.search(cx))),
+                            ),
+                    ),
             )
             .child(
                 div()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.))
-                    .child(label_in(desk(language, "whose"), language))
-                    .child(self.what.clone())
-                    .child(self.how.clone())
-                    .child(self.query.clone())
-                    .child(
-                        button("find", desk(language, "find"))
-                            .width(60)
-                            .default_button()
-                            .disabled(self.query.read(cx).value().trim().is_empty())
-                            .theme(self.theme)
-                            .language(language)
-                            .on_click(cx.listener(|this, _, _, cx| this.search(cx))),
-                    ),
+                    .flex_1()
+                    .min_h_0()
+                    .px(px(10.))
+                    .child(if self.searched {
+                        self.table.clone().into_any_element()
+                    } else {
+                        // An empty list's ring, with what to do in it.
+                        let (width, height) = (self.width - 20, self.height - FIND_CHROME);
+                        div()
+                            .relative()
+                            .w(px(width as f32))
+                            .h(px(height as f32))
+                            .child(div().absolute().inset_0().child(drawing(
+                                width as f32,
+                                height as f32,
+                                |pen, _, _| {
+                                    pen.bevel(0, 0, pen.width, pen.height, GRAY_7, WHITE);
+                                    pen.frame(1, 1, pen.width - 2, pen.height - 2, BLACK);
+                                    pen.rect(2, 2, pen.width - 4, pen.height - 4, WHITE);
+                                },
+                            )))
+                            .child(empty_state_in(desk(language, "chooseWhatToFind"), language))
+                            .into_any_element()
+                    }),
             )
-            .child(if self.searched {
-                self.table.clone().into_any_element()
-            } else {
+            // The count, its right end against the resize corner.
+            .child(
                 div()
-                    .w_full()
-                    .h(px((self.height - 122) as f32))
-                    .border_1()
-                    .border_color(gpui::rgb(BLACK))
-                    .bg(gpui::rgb(WHITE))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(label_in(desk(language, "chooseWhatToFind"), language))
-                    .into_any_element()
-            })
-            .child(label_in(
-                if self.searched {
-                    count(language, "foundCount", self.found.len())
-                } else {
-                    String::new()
-                },
-                language,
-            ))
+                    .mt(px(8.))
+                    .h(px(GROW_BOX_SIZE as f32))
+                    .child(status_bar_in([found], self.width - GROW_BOX_SIZE, language)),
+            )
     }
 }
 
+/// The height of Find File's window that is not its list: the rows above
+/// it, 24 high with the Find button's ring, and the count below.
+const FIND_CHROME: i32 = 10 + 24 + 6 + 24 + 8 + 8 + GROW_BOX_SIZE;
+
+/// The columns of what Find File found, its names with their pictures.
+fn found_columns(
+    language: Language,
+    icons: Vec<Option<&'static [&'static str]>>,
+) -> Vec<TableColumn> {
+    vec![
+        TableColumn::new(desk(language, "columnName"))
+            .width(150)
+            .icon(move |row| icons.get(row).copied().flatten()),
+        TableColumn::new(desk(language, "columnKind")).width(100),
+        TableColumn::new(desk(language, "columnWhere")).width(182),
+    ]
+}
+
+/// A node's picture at 16 pixels, for lists of them.
+pub fn small_icon(node: &TreeNode) -> Option<&'static [&'static str]> {
+    Some(match node.kind {
+        NodeKind::Folder => SMALL_FOLDER,
+        NodeKind::Document => SMALL_DOCUMENT,
+        NodeKind::Disk => return None,
+        NodeKind::Application | NodeKind::ControlPanel => application_icon(match icon_kind(node) {
+            IconKind::Calculator => "calculator",
+            IconKind::Jotter => "jotter",
+            IconKind::Scribe => "scribe",
+            IconKind::Ledger => "ledger",
+            IconKind::Puzzle => "puzzle",
+            IconKind::Clock => "alarmClock",
+            IconKind::Controls => "controls",
+            _ => "sound",
+        }),
+    })
+}
+
+const SMALL_FOLDER: &[&str] = &[
+    "................",
+    "................",
+    ".####...........",
+    "#wwww#..........",
+    "###############.",
+    "#wwwwwwwwwwwww#.",
+    "#w++++++++++++#.",
+    "#w++++++++++++#.",
+    "#w++++++++++++#.",
+    "#w++++++++++++#.",
+    "#w++++++++++++#.",
+    "#w++++++++++++#.",
+    "#+++++++++++++#.",
+    "###############.",
+];
+const SMALL_DOCUMENT: &[&str] = &[
+    "..########......",
+    "..#wwwwww##.....",
+    "..#wwwwww#w#....",
+    "..#wwwwww####...",
+    "..#wwwwwwwww#...",
+    "..#w::::::ww#...",
+    "..#wwwwwwwww#...",
+    "..#w:::::::w#...",
+    "..#wwwwwwwww#...",
+    "..#w::::::ww#...",
+    "..#wwwwwwwww#...",
+    "..#w:::::::w#...",
+    "..#wwwwwwwww#...",
+    "..###########...",
+];
+
+/// The width of Get Info's content: its window's, 250, less its frame and
+/// its padding.
+const INFO_WIDTH: i32 = 250 - 12 - 24;
+
 pub struct GetInfo {
+    focus: FocusHandle,
     files: Entity<FileTree>,
     id: usize,
     comments: Entity<TextField>,
     language: Language,
+    /// The zone the desk's clock keeps, which dates are told in.
+    zone: FixedOffset,
 }
+// The window takes the focus, not its comments, until they are clicked or
+// tabbed to.
 impl Focusable for GetInfo {
-    fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.comments.focus_handle(cx)
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
     }
 }
 impl GetInfo {
@@ -819,14 +935,16 @@ impl GetInfo {
         files: Entity<FileTree>,
         id: usize,
         comments: Entity<HashMap<usize, String>>,
+        zone: FixedOffset,
         cx: &mut Context<Self>,
     ) -> Self {
         let text = comments.read(cx).get(&id).cloned().unwrap_or_default();
+        // Three lines of text, as wide as a text area is.
         let field = cx.new(|cx| {
             TextField::new(cx)
                 .multiline(true)
                 .with_text(text)
-                .size(226., 52.)
+                .size(200., 48.)
                 .label("Comments")
         });
         cx.subscribe(&field, move |_, field, event, cx| {
@@ -841,10 +959,12 @@ impl GetInfo {
         .detach();
         cx.observe(&files, |_, _, cx| cx.notify()).detach();
         Self {
+            focus: cx.focus_handle(),
             files,
             id,
             comments: field,
             language: Language::English,
+            zone,
         }
     }
     pub fn set_theme(&mut self, theme: Theme, cx: &mut Context<Self>) {
@@ -886,6 +1006,7 @@ impl Render for GetInfo {
             )
         };
         div()
+            .track_focus(&self.focus)
             .flex()
             .flex_col()
             .p(px(12.))
@@ -901,7 +1022,7 @@ impl Render for GetInfo {
                     }))
                     .child(label_in(node.title.clone(), language)),
             )
-            .child(gpui_platinum::separator(226))
+            .child(gpui_platinum::separator(INFO_WIDTH))
             .children(
                 [
                     (desk(language, "kindLabel"), kind_name(language, node.kind)),
@@ -909,7 +1030,7 @@ impl Render for GetInfo {
                     (desk(language, "whereLabel"), where_text),
                     (
                         desk(language, "modifiedLabel"),
-                        modified_date(node.modified, language),
+                        modified_date(node.modified, self.zone, language),
                     ),
                 ]
                 .into_iter()
@@ -919,11 +1040,16 @@ impl Render for GetInfo {
                         .id(("info-row", index))
                         .flex()
                         .gap(px(8.))
-                        .child(div().w(px(62.)).child(label_in(label, language)))
-                        .child(wrapped(&value, 150, language))
+                        .child(
+                            div()
+                                .w(px(62.))
+                                .flex_shrink_0()
+                                .child(label_in(label, language)),
+                        )
+                        .child(div().flex_shrink_0().child(wrapped(&value, 150, language)))
                 }),
             )
-            .child(gpui_platinum::separator(226))
+            .child(gpui_platinum::separator(INFO_WIDTH))
             .child(label_in(desk(language, "commentsLabel"), language))
             .child(self.comments.clone())
             .into_any_element()
@@ -1158,8 +1284,8 @@ fn application_memory(title: &str) -> usize {
     (1usize << 20) + title.len() * (96usize << 10)
 }
 
-fn modified_date(time: SystemTime, language: Language) -> String {
-    let date: DateTime<Local> = time.into();
+fn modified_date(time: SystemTime, zone: FixedOffset, language: Language) -> String {
+    let date = DateTime::<Utc>::from(time).with_timezone(&zone);
     match language {
         Language::English => date.format("%a, %b %-d, %Y, %-I:%M %p").to_string(),
         Language::SimplifiedChinese | Language::TraditionalChinese => {

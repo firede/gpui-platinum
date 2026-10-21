@@ -4,9 +4,9 @@ use gpui::{
 };
 use gpui_platinum::{
     Alert, AlertEvent, AlertKind, Alignment, FileDialogEvent, FindEvent, FindReplace, Font,
-    InputEvent, Language, OpenDialog, PageSetup, PageSetupState, RichTextArea, Ruler, RulerChanged,
-    RulerState, Run, SaveDialog, SaveTarget, SheetEvent, SheetView, StyleAttribute, TextField,
-    TextStyle, Theme,
+    FormatState, InputEvent, Language, OpenDialog, PageSetup, PageSetupState, RichTextArea, Ruler,
+    RulerChanged, RulerState, Run, SaveDialog, SaveTarget, SheetEvent, SheetView, StyleAttribute,
+    TextField, TextStyle, Theme, Toolbar, bevel_button,
     locale::{desk, format_message},
     models::{Cell, FileTree, Sheet},
     paint::drawing,
@@ -69,7 +69,6 @@ pub struct Documents {
     alert_choice: Option<usize>,
     pending: Option<Pending>,
     ready: Option<Pending>,
-    toolbar_focus: [FocusHandle; 3],
     _subscriptions: Vec<Subscription>,
     file_subscriptions: Vec<Subscription>,
 }
@@ -122,7 +121,7 @@ impl Documents {
                 }
             }
             DocumentKind::Scribe => {
-                let area = cx.new(RichTextArea::new);
+                let area = cx.new(|cx| RichTextArea::new(cx).show_format_bar(false));
                 // The document fills the window, its scroll bar over the
                 // window's line, down to the row of the resize corner.
                 area.read(cx)
@@ -132,7 +131,7 @@ impl Documents {
                     Ruler::new(
                         RulerState {
                             left: 8,
-                            right: 340,
+                            right: 360,
                             first: 0,
                         },
                         cx,
@@ -140,6 +139,8 @@ impl Documents {
                     .width(380)
                 });
                 subscriptions.push(cx.subscribe(&area, |_, _, _: &InputEvent, cx| cx.notify()));
+                // The toolbar's format buttons light as the selection moves.
+                subscriptions.push(cx.observe(&area, |_, _, cx| cx.notify()));
                 subscriptions.push(
                     cx.subscribe(&ruler, |this: &mut Self, _, _: &RulerChanged, cx| {
                         this.apply_ruler(cx)
@@ -222,7 +223,6 @@ impl Documents {
             alert_choice: None,
             pending: None,
             ready: None,
-            toolbar_focus: std::array::from_fn(|_| cx.focus_handle()),
             _subscriptions: subscriptions,
             file_subscriptions: Vec::new(),
         };
@@ -250,6 +250,14 @@ impl Documents {
                 .save
                 .as_ref()
                 .is_some_and(|save| save.read(cx).is_open())
+    }
+
+    /// The style and size of Scribe's selection, for its Size menu.
+    pub fn format_state(&self, cx: &App) -> Option<FormatState> {
+        match &self.content {
+            Content::Scribe { area, .. } => Some(area.read(cx).format_state(cx)),
+            _ => None,
+        }
     }
 
     pub fn title(&self) -> &str {
@@ -388,7 +396,7 @@ impl Documents {
                 show_ruler,
             } => {
                 // Under the toolbar and the ruler, over the foot.
-                let height = self.height - 28 - GROW_BOX_SIZE - if *show_ruler { 22 } else { 0 };
+                let height = self.height - 32 - GROW_BOX_SIZE - if *show_ruler { 22 } else { 0 };
                 area.update(cx, |area, cx| {
                     area.set_size(self.width as f32, height.max(80) as f32, cx)
                 });
@@ -456,6 +464,7 @@ impl Documents {
         let save = cx.new(|cx| {
             SaveDialog::new(self.files.clone(), cx)
                 .prompt(desk(self.language, "saveAsLabel"))
+                .new_folders(true)
                 .theme(self.theme)
                 .language(self.language)
         });
@@ -887,75 +896,28 @@ impl Render for Documents {
             } => {
                 let editor = area.read(cx).editor();
                 let count = word_count(editor.read(cx).value(), lang);
-                let toolbar = div()
-                    .flex()
-                    .items_center()
-                    .gap(px(2.))
-                    .h(px(28.))
-                    .bg(rgb(self.theme.background))
-                    .child(
-                        tool_button(
-                            "save",
-                            desk(lang, "save"),
-                            SAVE_ICON,
-                            false,
-                            &self.toolbar_focus[0],
-                            self.theme,
-                        )
+                // Save, then Find and the ruler, then the format bar's
+                // buttons, in the one toolbar, as the original's Scribe has.
+                let tool = |id: &'static str, icon, on: bool| {
+                    bevel_button(id, desk(lang, id))
+                        .icon_only(icon)
+                        .selected(on)
+                        .theme(self.theme)
+                        .language(lang)
                         .on_click(
-                            cx.listener(|this, _, window, cx| this.command("save", window, cx)),
+                            cx.listener(move |this, _, window, cx| this.command(id, window, cx)),
                         )
-                        .on_key_down(cx.listener(
-                            |this, event: &gpui::KeyDownEvent, window, cx| {
-                                if matches!(event.keystroke.key.as_str(), "space" | "enter") {
-                                    this.command("save", window, cx);
-                                    cx.stop_propagation();
-                                }
-                            },
-                        )),
-                    )
-                    .child(
-                        tool_button(
-                            "find",
-                            desk(lang, "find"),
-                            FIND_ICON,
-                            false,
-                            &self.toolbar_focus[1],
-                            self.theme,
-                        )
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.command("find", window, cx)),
-                        )
-                        .on_key_down(cx.listener(
-                            |this, event: &gpui::KeyDownEvent, window, cx| {
-                                if matches!(event.keystroke.key.as_str(), "space" | "enter") {
-                                    this.command("find", window, cx);
-                                    cx.stop_propagation();
-                                }
-                            },
-                        )),
-                    )
-                    .child(
-                        tool_button(
-                            "ruler",
-                            desk(lang, "ruler"),
-                            RULER_ICON,
-                            *show_ruler,
-                            &self.toolbar_focus[2],
-                            self.theme,
-                        )
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.command("ruler", window, cx)),
-                        )
-                        .on_key_down(cx.listener(
-                            |this, event: &gpui::KeyDownEvent, window, cx| {
-                                if matches!(event.keystroke.key.as_str(), "space" | "enter") {
-                                    this.command("ruler", window, cx);
-                                    cx.stop_propagation();
-                                }
-                            },
-                        )),
-                    );
+                };
+                let toolbar = Toolbar::new()
+                    .id("scribe-tools")
+                    .theme(self.theme)
+                    .language(lang)
+                    .item(tool("save", SAVE_ICON, false))
+                    .separator()
+                    .item(tool("find", FIND_ICON, false))
+                    .item(tool("ruler", RULER_ICON, *show_ruler))
+                    .separator();
+                let toolbar = area.read(cx).format_items(toolbar, cx);
                 div()
                     .flex()
                     .flex_col()
@@ -999,62 +961,22 @@ impl Render for Documents {
     }
 }
 
-fn tool_button(
-    id: &'static str,
-    label: String,
-    icon: &'static [&'static str],
-    selected: bool,
-    focus: &FocusHandle,
-    theme: Theme,
-) -> gpui::Stateful<gpui::Div> {
-    let handle = focus.clone();
-    div()
-        .id(id)
-        .role(Role::Button)
-        .aria_label(label)
-        .track_focus(focus)
-        .tab_stop(true)
-        .size(px(24.))
-        .text_color(rgb(BLACK))
-        .active(|style| style.text_color(rgb(WHITE)))
-        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-            window.focus(&handle, cx)
-        })
-        .child(drawing(24., 24., move |pen, window, _| {
-            let pressed = window.text_style().color == rgb(WHITE).into();
-            if pressed || selected {
-                pen.sunken();
-                pen.rect(2, 2, 20, 20, theme.accent.light);
-            } else {
-                pen.raised(theme.background);
-            }
-            for (y, row) in icon.iter().enumerate() {
-                for (x, pixel) in row.chars().enumerate() {
-                    if pixel == '#' {
-                        pen.dot(x as i32 + 4, y as i32 + 4, BLACK);
-                    } else if pixel == 'w' {
-                        pen.dot(x as i32 + 4, y as i32 + 4, WHITE);
-                    }
-                }
-            }
-        }))
-}
 const SAVE_ICON: &[&str] = &[
+    "................",
+    ".#############..",
+    ".#:#wwwwwww#:#..",
+    ".#:#wwwwwww#:#..",
+    ".#:#wwwwwww#:##.",
+    ".#:#########::#.",
+    ".#::::::::::::#.",
+    ".#::#######:::#.",
+    ".#::#ww##ww#::#.",
+    ".#::#ww##ww#::#.",
+    ".#::#ww##ww#::#.",
     ".##############.",
-    ".#www######www#.",
-    ".#www#wwww#www#.",
-    ".#www#wwww#www#.",
-    ".#www#wwww#www#.",
-    ".#www######www#.",
-    ".#wwwwwwwwwwww#.",
-    ".#wwwwwwwwwwww#.",
-    ".#ww########ww#.",
-    ".#ww#wwwwww#ww#.",
-    ".#ww#wwwwww#ww#.",
-    ".#ww#wwwwww#ww#.",
-    ".#ww#wwwwww#ww#.",
-    ".#ww########ww#.",
-    ".##############.",
+    "................",
+    "................",
+    "................",
     "................",
 ];
 const FIND_ICON: &[&str] = &[

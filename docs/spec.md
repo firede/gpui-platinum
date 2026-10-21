@@ -174,7 +174,8 @@ The look has no hover state: nothing changes as the pointer passes over.
 
 ### 5.3 Radio button
 
-- Circle **12×12** (the pixel circle in `radioMask`), label as a check box.
+- Circle **12×12** (the pixel circle `draw_radio` draws), label as a check
+  box.
 - Outline Black, face Gray2; the pixels along the outline take White toward
   the top left and Gray7 toward the bottom right (by `x + y` against 11).
 - **On:** a black dot 4×4, its corners cut, centered.
@@ -263,7 +264,8 @@ The look has no hover state: nothing changes as the pointer passes over.
 - An input method's composition shows in place of the selection,
   underlined, the caret within it. A password field shows • for each
   character and neither copies nor cuts.
-- Command-A, -C, -X, -V, -Z and Shift-Command-Z edit; `EditCommand` gives
+- Command-A, -C, -X, -V, -Z and Shift-Command-Z edit; the actions of
+  `text_input` (`Copy`, `Cut`, `Paste`, `Undo`, `Redo`, `SelectAll`) give
   the same commands to an app's Edit menu.
 - Placeholder text Gray7. **Disabled:** outline Gray6, face Gray2, text Gray8.
 - **Document content** is the exception to the focus ring of text: the text
@@ -357,10 +359,8 @@ The look has no hover state: nothing changes as the pointer passes over.
   one pixel deep along its right and bottom. Items **18** tall, titles **18**
   in from the outline, keyboard equivalents right-aligned **12** from the
   edge, separators **8** tall (an etched line at their middle). A check mark
-  ✓ sits **6** in from the outline. On a Mac, and in a browser on one,
-  equivalents are marked by symbols, as ↑⌘S (Control ^, Option ~, Return
-  ↵, Delete ⌫); elsewhere by name, as Ctrl+Shift+S, Command counting as
-  Ctrl (`MacKeys`).
+  ✓ sits **6** in from the outline. A keyboard equivalent is one key with
+  the platform's command key, marked ⌘ and the key, as ⌘S.
 - Highlighted item: the accent's Dark, text White. Disabled items Gray8.
 - A chosen item blinks for **150 ms** before its action runs. Submenus open
   to the right, overlapping by 3 pixels, marked by a right-pointing triangle.

@@ -2,146 +2,286 @@
 
 [English](README.md) | 简体中文
 
-一套面向 Rust 与 [GPUI](https://github.com/longbridge/gpui-fast) 的 Platinum 桌面控件：灰色表面、像素切角、立体斜面和点阵文字，延续九十年代末的桌面风格。控件通过 GPUI 的原生渲染器绘制，仓库附有控件图库和经典桌面示例。
+[![verify](https://github.com/firede/gpui-platinum/actions/workflows/verify.yml/badge.svg?branch=main)](https://github.com/firede/gpui-platinum/actions/workflows/verify.yml)
 
-![GPUI 控件图库](docs/gallery@2x.png)
+一套为 [GPUI](https://github.com/longbridge/gpui-fast) 编写的控件，风格取自
+上世纪 90 年代末灰色、带斜面立体感的 "Platinum" 桌面外观。所有控件都通过
+GPUI 的渲染器逐像素绘制。仓库里还附带一个"经典桌面"示例，把这些控件实际用了
+起来。它是 [mygo-platinum](https://github.com/firede/mygo-platinum) 的 Rust
+移植版。可以在 [gpui-platinum.firede.com](https://gpui-platinum.firede.com)
+看到由 GPUI 绘制的桌面。
 
-更多：[第 2 页](docs/gallery-2@2x.png)（按钮、输入框、富文本）、[第 3 页](docs/gallery-3@2x.png)（集合与布局）、[第 4 页](docs/gallery-4@2x.png)（日期、颜色、电子表格）、[第 5 页](docs/gallery-5@2x.png)（文档与导航）。
+![控件一览](docs/gallery@2x.png)
 
-这是 [mygo-platinum](https://github.com/firede/mygo-platinum) 的 GPUI 版本，沿用原项目的视觉语言、字体和原创图像，并以 GPUI 的元素、实体和事件构建 Rust API。它仅在风格上致敬经典桌面，与 Apple Inc. 没有任何关联。
+更多：[第 2 页](docs/gallery-2@2x.png)（斜面按钮、工具栏、输入框、状态类控件、
+富文本、弹出窗口）、[第 3 页](docs/gallery-3@2x.png)（列表、表格、布局）、
+[第 4 页](docs/gallery-4@2x.png)（日期、颜色、表格计算、标尺）、
+[第 5 页](docs/gallery-5@2x.png)（文档与导航）。
 
-项目处于早期 0.x 阶段，API 可能变化。目前依赖固定到 `longbridge/gpui-fast` 的 `b836dd9` 修订版；应用中的 GPUI 依赖应使用同一修订版。本仓库的检查和截图不代表已经验证 GPUI 支持的所有平台。
+> **仅为风格上的致敬。** 本项目与 Apple Inc. 没有任何关联，也未获其认可或
+> 支持。项目没有使用 Apple 的任何字体、图标、图片或商标：西文点阵字体、所有
+> 图标和图片都是为 mygo-platinum 原创绘制的，东亚文字字形来自开源的缝合像素
+> 字体，设计规范（[docs/spec.md](docs/spec.md)）也是从零写成的。
+
+> [!WARNING]
+> **这是一个早期的个人项目。** 它为作者自用而写，按原样分享，不承诺提供支持。
+> 0.x 版本之间 API 随时可能变化；它依赖的 gpui-fast v0.1.10（修订版
+> `b836dd9`）本身也还年轻、仍在变化。请固定修订版使用，并做好随之调整的准备。
 
 ## 包含哪些控件
 
-| 控件 | Rust API |
+| 控件 | 函数 |
 |---|---|
-| 按钮、默认与取消按钮、复选框、展开三角 | `button`、`checkbox`、`disclosure`、`Control`、`CheckState`、`button_scope` |
-| 单选组、标签页、分段选择 | `radio`、`tab`、`ChoiceGroup`、`ChoiceItem` |
-| 滑杆、滚动条、确定与不确定进度条 | `Slider`、`ScrollBar`、`progress_bar`、`indeterminate_progress` |
-| 文本框、密码框、多行输入 | `TextField` |
-| 富文本、样式、字号、段落对齐 | `RichTextArea`、`RichText`、`TextStyle`、`SizeMenu` |
-| 列表、树、表格、图标网格 | `ListBox`、`TreeView`、`Table`、`TableColumn`、`IconView` |
-| 菜单、子菜单、右键菜单 | `PopupMenu`、`MenuBar`、`Menu`、`MenuItem`、`ContextMenu` |
-| 窗口框架与底边弹出窗口 | `PlatinumWindow`、`WindowState`、`PopupWindow`、`zoom_rects` |
-| 日历、日期、时间、数字、搜索输入 | `CalendarView`、`DatePicker`、`TimeField`、`NumberField`、`SearchField`、`Stepper` |
-| 组合框、颜色与字体选择器 | `Combobox`、`ColorWell`、`FontPicker` |
-| 警告框、对话框、查找替换、页面设置 | `Alert`、`Dialog`、`FindReplace`、`PageSetup` |
-| 面向应用自有文件树的打开与保存对话框 | `OpenDialog`、`SaveDialog`、`models::FileTree` |
-| 进度对话框与通知 | `ProgressDialog`、`Banner`、`Toasts` |
-| 导航和文档布局 | `ColumnView`、`DocumentTabs`、`PathPopup`、`Breadcrumbs`、`Pagination`、`Ruler`、`Split`（像素或 `.percent()`）、`ScrollView` |
-| 文字、分组、工具栏、状态显示 | `label`、`paragraph`、`group_box`、`separator`、`Toolbar`、`placard`、`window_header_parts`、`badge`、`tag`、`status_bar` |
-| 辅助显示 | `Balloon`、`image_well`、`card`、`empty_state`、`chasing_arrows` |
+| 按钮、默认按钮与取消按钮 | `button` |
+| 复选框（支持混合状态） | `checkbox` |
+| 单选按钮与单选组 | `radio`、`ChoiceGroup::radio` |
+| 滑块（支持刻度） | `Slider` |
+| 进度条，确定与不确定两种 | `progress_bar`、`indeterminate_progress` |
+| 展开三角 | `disclosure` |
+| 分组框与分隔线 | `group_box`、`separator` |
+| 标签页控件 | `tab`、`ChoiceGroup::tabs` |
+| 弹出菜单 | `PopupMenu` |
+| 文本框、密码框、多行文本区 | `TextField` |
+| 列表框（支持图标、灰显行） | `ListBox` |
+| 滚动条 | `ScrollBar` |
+| 窗口框架：条纹标题栏，关闭、缩放与折叠框，缩放角，路径菜单 | `PlatinumWindow` |
+| 菜单栏、菜单、子菜单、快捷键 | `MenuBar`、`Menu`、`MenuItem` |
+| 警告框、可移动的模态对话框 | `Alert`、`Dialog` |
+| 用点阵字体绘制的文字 | `label`、`text_in`、`paragraph` |
+| 斜面按钮、图标按钮、开关、分段控件 | `bevel_button`、`icon_button`、`ChoiceGroup::segments` |
+| 带溢出菜单的工具栏 | `Toolbar` |
+| 小箭头、数字框、搜索框 | `Stepper`、`NumberField`、`SearchField` |
+| 旋转箭头、标牌、窗口头部、徽标、标签、图像槽 | `chasing_arrows`、`placard`、`window_header`、`badge`、`tag`、`image_well` |
+| 帮助气球、右键菜单 | `Balloon`、`ContextMenu` |
+| 树视图、可排序表格、图标视图 | `TreeView`、`Table`、`IconView` |
+| 分栏、滚动视图、工具窗口 | `Split`、`ScrollView`、带 `utility` 的 `PlatinumWindow` |
+| 日历、日期选择器、时间输入框 | `CalendarView`、`DatePicker`、`TimeField` |
+| 组合框、颜色槽与取色器 | `Combobox`、`ColorWell` |
+| 带公式的电子表格、公式栏 | `SheetView` |
+| 查找替换对话框、标尺 | `FindReplace`、`find_next`、`replace_all`、`Ruler` |
+| 分栏视图、文档标签页、字体选择器、页面设置 | `ColumnView`、`DocumentTabs`、`FontPicker`、`PageSetup` |
+| 进度对话框、横幅、提示消息（toast）、空状态 | `ProgressDialog`、`Banner`、`Toasts`、`empty_state` |
+| 路径弹出菜单、面包屑、分页、卡片、状态栏 | `PathPopup`、`Breadcrumbs`、`Pagination`、`card`、`status_bar` |
+| 富文本：样式、四种字号、段落对齐；格式栏 | `RichTextArea`、`SizeMenu` |
+| 停靠在底边的弹出窗口 | `PopupWindow` |
+| 打开与保存对话框 | `OpenDialog`、`SaveDialog` |
+| 窗口打开时的缩放矩形动画 | `zoom_rects` |
 
-[API 指南](docs/api.md) 介绍控件的所有权、事件、焦点、本地化，以及与 Go API 的对应关系。运行 `cargo doc --no-deps --open` 可查看从当前源码生成的参考文档。
+每个控件都具备完整的状态（按下、禁用、聚焦、默认、选中、选定，以及位于后台
+窗口时的非活动状态），可以用键盘操作，并通过 GPUI 的无障碍支持向屏幕阅读器
+描述自己。有独特外观的控件还导出了对应的 `draw_…` 函数，方便你画出外观一致的
+自定义控件。
+
+控件名沿用 mygo-platinum，按 Rust 的命名习惯书写。两者不同之处：
+
+| mygo-platinum | 本库 |
+|---|---|
+| `Button`、`Checkbox`、`Disclosure` | `button`、`checkbox`、`disclosure` |
+| `RadioGroup`、`TabControl`、`Segmented` | `ChoiceGroup::radio`、`::tabs`、`::segments` |
+| `TextArea` | 带 `.multiline(true)` 的 `TextField` |
+| `SplitPercent`、`SplitVertical` | 带 `.percent()`、`.vertical()` 的 `Split` |
+| `Calendar`、`Sheet` | `CalendarView`、`SheetView` |
+| `FormulaBar`、`FormatBar` | 内置于 `SheetView` 与 `RichTextArea` |
+| `Window` | `PlatinumWindow` |
+| `Find`、`ReplaceAll` | `find_next`、`replace_all` |
+| `SpringOpen`、`ZoomRects` | `PopupWindow::spring_open`、`zoom_rects` |
+| `Card`、`EmptyState` | `card`、`empty_state` |
 
 ## 使用
 
-使用支持 Rust 2024 edition 的当前 Rust 工具链，并安装所固定 GPUI 版本要求的原生构建依赖。示例是原生应用，需要图形会话；各平台的环境配置请参阅 [GPUI 仓库](https://github.com/longbridge/gpui-fast)。
-
-应用与本仓库位于同一父目录时：
+需要较新的稳定版 Rust（gpui-fast 使用 1.98 构建），以及 gpui-fast v0.1.10，
+修订版 `b836dd9`。应用自己的 GPUI 依赖必须是同一修订版：不同 GPUI 的类型
+不能混用。
 
 ```toml
 [dependencies]
-gpui-platinum = { path = "../gpui-platinum" }
+gpui-platinum = { git = "https://github.com/firede/gpui-platinum" }
 gpui = { git = "https://github.com/longbridge/gpui-fast", rev = "b836dd9" }
 gpui_platform = { git = "https://github.com/longbridge/gpui-fast", rev = "b836dd9", features = ["font-kit", "runtime_shaders", "wayland", "x11"] }
 ```
 
-在打开第一个窗口前，调用一次 `gpui_platinum::init(cx)`，注册原生文本编辑、字体回退和模态对话框的键盘绑定。通过 `cx.new` 创建有状态控件，保存实体并订阅事件；轻量控件在 `Render::render` 中由应用状态构建：
-
 ```rust
 use gpui::{prelude::*, *};
-use gpui_platinum::{CheckState, Slider, Theme, checkbox};
+use gpui_platinum::{CheckState, MenuEvent, PopupMenu, Slider, button, button_scope, checkbox};
 
-struct SoundSettings {
-    enabled: bool,
+struct Settings {
+    sound: bool,
     volume: f64,
+    sort: Entity<PopupMenu>,
+    sort_by: usize,
+    _sort_changed: Subscription,
 }
 
-impl Render for SoundSettings {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let on_volume_change = cx.listener(|this, value: &f64, _, cx| {
-            this.volume = *value;
+impl Settings {
+    fn new(cx: &mut Context<Self>) -> Self {
+        let sort = cx.new(|cx| PopupMenu::new(["Name", "Date", "Size"], cx).caption("Sort by:"));
+        let _sort_changed = cx.subscribe(&sort, |this, _, MenuEvent(index), cx| {
+            this.sort_by = *index;
             cx.notify();
         });
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(8.))
-            .p(px(16.))
-            .child(
-                checkbox(
-                    "sounds",
-                    "Play alert sounds",
-                    if self.enabled { CheckState::On } else { CheckState::Off },
-                )
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.enabled = !this.enabled;
-                    cx.notify();
-                })),
-            )
-            .child(
-                Slider::new("volume", self.volume, 0., 100.)
-                    .theme(Theme::default())
-                    .label("Volume")
-                    .on_change(move |value, window, cx| {
-                        on_volume_change(&value, window, cx);
-                    }),
-            )
+        Self { sound: true, volume: 50., sort, sort_by: 0, _sort_changed }
     }
+
+    fn apply(&mut self) { /* … */ }
+}
+
+impl Render for Settings {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let set_volume = cx.listener(|this, volume: &f64, _, cx| {
+            this.volume = *volume;
+            cx.notify();
+        });
+        let sound = if self.sound { CheckState::On } else { CheckState::Off };
+        button_scope(
+            "settings",
+            div()
+                .flex()
+                .flex_col()
+                .p(px(12.))
+                .gap(px(8.))
+                .child(checkbox("sound", "Play alert sounds", sound).on_click(cx.listener(
+                    |this, _, _, cx| {
+                        this.sound = !this.sound;
+                        cx.notify();
+                    },
+                )))
+                .child(
+                    Slider::new("volume", self.volume, 0., 100.)
+                        .label("Volume")
+                        .on_change(move |volume, window, cx| set_volume(&volume, window, cx)),
+                )
+                .child(self.sort.clone())
+                .child(
+                    div()
+                        .flex()
+                        .gap(px(10.))
+                        .child(button("cancel", "Cancel").cancel_button())
+                        .child(button("ok", "OK").default_button().on_click(cx.listener(
+                            |this, _, _, _| this.apply(),
+                        ))),
+                ),
+        )
+    }
+}
+
+fn main() {
+    gpui_platform::application().run(|cx: &mut App| {
+        gpui_platinum::init(cx); // 在打开第一个窗口之前调用一次
+        cx.open_window(WindowOptions::default(), |_, cx| cx.new(Settings::new))
+            .expect("open a window");
+        cx.activate(true);
+    });
 }
 ```
 
-为轻量控件提供稳定 ID，在应用中保存值，修改后调用 `cx.notify()`。`TextField`、`Table` 等实体控件通过类型化事件报告操作。API 指南包含这两种模式的用法。
+控件分两类。轻量控件（`button`、`checkbox`、`Slider`、`ChoiceGroup` 以及
+展示类控件）是每次渲染时根据应用状态重新构建的元素：给每个控件一个稳定的
+ID，在回调里更新状态并调用 `cx.notify()`。自带状态的控件（`TextField`、
+`PopupMenu`、`ListBox`、`Table`、各种对话框）是实体：用 `cx.new` 创建一次，
+保留句柄，并订阅它们的类型化事件。`button_scope` 让 Return 和 Escape 落到其中
+的默认按钮和取消按钮上。[API 指南](docs/api.md)（英文）介绍这两类控件、焦点、
+语言与绘制；`cargo doc --no-deps --open` 打开 API 参考。
 
-内置六种强调色：Lavender、Graphite、Harbor、Moss、Ember 和 Orchid。将 `Theme::accent` 设为 `theme::ACCENTS` 中的颜色，并传给控件；运行中切换时调用控件的 `set_theme` 方法。
+内置六种强调色：Lavender、Graphite、Harbor、Moss、Ember 和 Orchid，见
+`theme::ACCENTS`，通过 `Theme::accent` 设置。
 
 ## 经典桌面
 
-![GPUI 中文桌面示例](docs/desktop-zh-hans@2x.png)
+![桌面示例](docs/desktop-zh-hans@2x.png)
 
-桌面在一个原生 GPUI 窗口中运行，包含菜单栏、可切换图标/列表/按钮/分栏视图的内存磁盘、可移动和折叠的窗口框架，以及计算器、便笺本、写字板、账簿、拼图、闹钟和控制面板。写字板使用本库的富文本编辑器、标尺、查找替换和打开/保存对话框。磁盘及文档对话框操作的是示例自己的数据，并非系统文件选择器。
+`examples/desktop.rs` 在一个窗口里实现了一整套桌面：
 
-控件和桌面提供英文、简体中文、繁体中文、日文、韩文消息目录。`Language` 选择文案和东亚文字的地区字形。目录位于 `assets/locales/controls` 与 `assets/locales/desktop`。
+- 带时钟和应用菜单的菜单栏；
+- 可以打开、也可以拖进废纸篓的桌面图标；
+- 可以移动、缩放、卷起、最大化，以及停靠到底边成为弹出窗口的窗口；
+- 一个浏览自带小磁盘的文件浏览器：支持图标、按钮、列表、分栏四种视图，以及
+  弹簧文件夹、按住 Option 拖动复制、显示简介、复制、放回原处、标题栏路径菜单，
+  还有"查找文件"；
+- 用这些控件搭出来的应用：计算器、便笺本、写字板（富文本编辑器，带样式、字号、
+  标尺、查找替换、页面设置和打开/存储对话框）、账簿（电子表格）、拼图、闹钟、
+  控件（按函数名列出库里的每个控件，都可以直接操作），以及外观、日期与时间、
+  语言、声音、鼠标五个控制面板。
+
+磁盘只存在于内存中，打开/存储对话框浏览的是它，而不是电脑上的文件。
+
+桌面支持英文、简体中文、繁体中文、日文和韩文，跟随系统语言，也可以在"语言"
+控制面板中选择。文字、日期与时间，以及东亚文字的地区字形都会随之切换。消息
+目录在 `assets/locales/desktop`。
+
+桌面里所有的名称和图片都是原创的。网站展示的是 GPUI 绘制的桌面图片；桌面本身
+是原生应用，不在浏览器中运行。
 
 ## 运行示例
 
 ```sh
-cargo run --example gallery
-cargo run --example controls
-cargo run --example desktop
-cargo run --example desktop -- --lang zh-Hans
+cargo run --example gallery                    # 分五页展示所有控件
+cargo run --example gallery -- --png gallery.png --page 2   # 不开窗口，把第 2 页渲染成图片
+cargo run --example controls                   # 按函数名列出所有控件
+cargo run --example desktop                    # 经典桌面
+cargo run --example desktop -- --png desk.png --lang ja     # 不开窗口渲染成图片，日文界面
 ```
 
-`./scripts/bundle.sh --gallery` 构建图库的 macOS 应用包。`./scripts/screenshots.sh` 通过 GPUI 渲染器重新生成七张文档配图；传入 `--offline` 可使用已缓存的依赖。
+`--scale 2` 以两倍尺寸渲染图片。图片由 GPUI 的离屏渲染器绘制，所固定的修订版
+在 macOS 和 Linux 上提供它，Windows 上没有。`./scripts/screenshots.sh` 生成
+`docs` 里的配图；`./scripts/bundle.sh --gallery`（或 `--desktop`）把示例打包成
+macOS 应用。
 
-Gallery 按页展示控件；Controls 是可浏览的控件目录；Desktop 将它们组合成应用。参阅 [API 指南](docs/api.md#examples) 和[设计规范](docs/spec.md)。
+`./scripts/site.sh` 把网页连同桌面绘制的图片（`desktop --site <dir>`）构建到
+`site/dist`；`./scripts/deploy.sh` 按正式网址构建，并按 `wrangler.jsonc` 的
+配置部署到 Cloudflare。在 GitHub 上发布 Release 时也会自动部署。
 
-## 验证
+## 测试
 
 ```sh
 ./scripts/verify.sh
 ```
 
-脚本检查格式、运行所有目标的测试和文档示例，并运行将警告视为错误的 Clippy。测试覆盖文本缓冲区、富文本格式、日期、公式、树操作、选择与键盘计算，并对部分像素绘制结果与 `tests/reference` 中的参考图进行比对。
+这个脚本依次运行 `cargo fmt --check`、所有目标的全部测试、文档测试，以及禁止
+警告的 Clippy；GitHub 会在 macOS、Windows 和 Linux 上运行它。额外的参数会
+传给 Cargo，例如 `--offline`。测试包括：
 
-这些检查不等于对所有交互、屏幕阅读器或操作系统的完整自动化审查。在目标平台上还应实际检查 Tab/Shift-Tab、菜单和对话框焦点、输入法、拖动、窗口缩放与后台窗口状态。`docs` 配图来自本 GPUI 实现；`tests/reference` 是从原项目保留的外观参考。
+- 每个控件、gallery 的各页和桌面的场景，由 GPUI 的离屏渲染器绘制，与
+  `tests/reference/snapshots` 中 mygo-platinum 的 golden 图逐像素比对。它们在
+  由 Metal 绘制的 macOS 上运行，其他平台上跳过：
 
-## 字体与绘制
+  ```sh
+  cargo test --test snapshots             # 所有场景
+  cargo test --test snapshots -- tabs     # 名称含 "tabs" 的场景
+  ```
 
-- 坐标采用逻辑像素，在整数显示缩放下保留点阵网格；系统字体回退使用平台文字渲染。
-- 西文使用来自 [platinum-fonts](https://github.com/firede/platinum-fonts) 的 Platinum Sans、Platinum Sans Small；东亚文字使用内置 `cjk12` 地区字库。
-- 点阵字库未覆盖的字符回退到系统字体。原生文本组合和剪贴板操作通过 GPUI 输入接口处理。
-- `paint::Pen` 记录像素填充与文字；导出的 `draw_*` 函数供自定义控件复用相同外观。
-- 稳定元素 ID 用于保留焦点和元素状态。有状态控件应复用实体，不应每次渲染都重新创建。
+  不一致的场景会把绘制结果和用红色标出差异像素的图留在 `target/snapshots`；
+  标记为 pending 的场景只报告差异，不算失败；
+- 控件的绘制与 `tests/reference` 中 mygo-platinum 的图片比对；
+- 控件的键盘操作、菜单与取值范围，以及随时间的行为（闪烁、光标闪动、重复、
+  延时），使用测试执行器的时钟；
+- `Font::measure_styled` 与 `Pen::text_styled` 的绘制结果是否一致；
+- 文本缓冲、富文本、日期、公式、树和桌面各应用的单元测试。
 
-## 文档与网站
+有意修改了控件外观后，运行 `./scripts/screenshots.sh`，并查看 `docs` 里的
+新图。
 
-- [API 指南](docs/api.md)：应用初始化、控件类别、状态、事件、输入与本地化。
-- [设计规范](docs/spec.md)：颜色、尺寸和预期交互。
-- [网页](site/index.html)：五种语言的介绍，展示由 GPUI 绘制的桌面，样式所用的图片也由本库绘制（`cargo run --example desktop -- --site <目录>`）。`./scripts/site.sh` 把它构建到 `site/dist`，可用 `python3 -m http.server -d site/dist` 预览；`./scripts/deploy.sh` 构建后按 `wrangler.jsonc` 部署到 Cloudflare。
+## 说明
+
+- 像素即 GPUI 的逻辑像素：控件在任意整数倍缩放的显示器上都很清晰，在 2 倍屏上
+  以 2×2 的像素块绘制。
+- 文字使用 [platinum-fonts](https://github.com/firede/platinum-fonts) 的点阵
+  字体绘制，打包在 `assets/fonts`：Platinum Sans Bold（`Font::Bold`）与
+  Platinum Sans Small（`Font::Small`），另有 `Font::Sans` 和
+  `Font::SmallBold`。它们覆盖 ASCII、常用标点、Latin-1 的全部字母（带重音的
+  字母，以及 Æ、Ð、Ø、Þ、Œ、ß）和最常用的中欧字母（Ł、Ś、Č、Ő、Ą…）。
+- 东亚文字使用 platinum-fonts 中 `cjk12` 的 12px 字体绘制，打包了四种地区
+  字形，由控件的 `.language(…)` 选择。没有字体绘制的字符（希腊文、其他带重音
+  的字母）在调用 `init` 之后会用系统字体在同一基线上绘制，因此任何文字都可以
+  输入和显示。
+- 控件自身的文字（按钮、对话框、标签和屏幕阅读器读出的名称）提供英文、简体
+  中文、繁体中文、日文和韩文，来自 `assets/locales/controls`，跟随每个控件的
+  `Language`。日历、日期选择器和时间输入框按语言的习惯书写日期；
+  `first_weekday`、`day_first` 和 `hour_cycle` 用来按用户的区域格式设置。
+- 文本行会为东亚字形留出空间，与 mygo-platinum 设置了东亚字体后的行为一致。
+  `text_input::set_east_asian_line_room(false)` 让英文文本行只按西文字体排列。
 
 ## 许可
 
-MIT，详见 [LICENSE](LICENSE)。点阵字形及许可声明位于 [assets/fonts](assets/fonts)；网站字体保留其 [OFL 声明](site/fonts/OFL.txt)。原始设计与图像来自 [mygo-platinum](https://github.com/firede/mygo-platinum)，本项目不使用 Apple 的字体或图标资源。
+MIT，详见 [LICENSE](LICENSE)。字体来自
+[platinum-fonts](https://github.com/firede/platinum-fonts)，其字形数据采用
+SIL Open Font License 1.1，见 [assets/fonts](assets/fonts)。

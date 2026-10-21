@@ -1,14 +1,19 @@
 # API guide
 
-[English overview](../README.md) · [中文介绍](../README.zh.md) · [Design specification](spec.md)
+[README](../README.md) · [简体中文](../README.zh.md) ·
+[Design specification](spec.md)
 
-`gpui-platinum` is a Rust component library built on GPUI. Its public crate name is `gpui_platinum`. The component library lives in `src`; the desktop applications live in `examples/support`.
-
-The crate currently uses the `longbridge/gpui-fast` fork at revision `b836dd9`. An application must use that same GPUI revision: types from a different GPUI package are not interchangeable. Generate the source reference with `cargo doc --no-deps --open`.
+The crate is `gpui-platinum`, imported as `gpui_platinum`. The controls are
+in `src`; the desktop's applications are in `examples/support`. It is built
+on gpui-fast v0.1.10, revision `b836dd9`, and an application must use the
+same revision: types from another GPUI are not interchangeable.
+`cargo doc --no-deps --open` opens the reference generated from the
+source, which is the last word on what can be called.
 
 ## Application setup
 
-Initialize the library once before constructing the first window:
+Call `gpui_platinum::init` once, before the first window. It registers text
+editing, font fallback and the dialogs' keys.
 
 ```rust
 use gpui::{prelude::*, *};
@@ -38,27 +43,37 @@ fn main() {
                 name: cx.new(|cx| TextField::new(cx).label("Your name").size(220., 22.)),
             })
         })
-        .expect("open application window");
+        .expect("open a window");
         cx.activate(true);
     });
 }
 ```
 
-This opens one native window. Application-level commands, focus traversal and window lifetime belong to the application. The examples show bindings for Tab/Shift-Tab, Quit, menu commands and closing the last window.
+The application owns its commands, Tab order and windows. The examples bind
+Tab and Shift-Tab, Quit and menu commands, and quit when the last window
+closes.
 
-## Ownership and updates
+## Two kinds of control
 
-There are two component patterns.
+**Elements** are built anew on every render from the application's state:
+`button`, `checkbox`, `disclosure`, `ChoiceGroup`, `Slider`, `ScrollBar`,
+`Split`, the text functions and the displays. Give each interactive element
+a stable ID, pass its current value, and in its callback update the state
+and call `cx.notify()`.
 
-**Lightweight elements** are constructed on each render. They include `button`, `checkbox`, `disclosure`, `ChoiceGroup`, `Slider`, `ScrollBar`, labels and display helpers. Give each interactive element a stable ID; supply its current state; update application state in the callback and call `cx.notify()`.
+**Entities** keep state between renders: `TextField`, `RichTextArea`,
+`ListBox`, `Table`, `PopupMenu`, the pickers and the dialogs among them.
+Make each once with `cx.new`, keep the `Entity<T>` in the view that owns
+it, and render a clone of the handle. Call setters with
+`entity.update(cx, |control, cx| …)`.
 
-**Entity controls** retain their state between renders. Construct them with `cx.new`, store the returned `Entity<T>` in the owning view, and render a clone of the handle. Examples include `TextField`, `ListBox`, `Table`, `PopupMenu` and `RichTextArea`. Use `entity.update(cx, |control, cx| ...)` to call setters.
-
-Do not recreate entity controls inside `Render::render`: doing so discards selection, scroll position, composition and undo history. Keep each GPUI `Subscription` alive in the owner or explicitly detach it when it should last as long as the subscribed entity.
+Do not make an entity in `Render::render`: a new one loses its selection,
+scroll position, composition and undo history. Keep each `Subscription` in
+its owner, or `detach` it to let it live as long as the entity it watches.
 
 ### Callbacks
 
-Click handlers can use `cx.listener` directly:
+A click handler takes `cx.listener` as it is:
 
 ```rust,ignore
 button("apply", "Apply").on_click(cx.listener(|this, _, _, cx| {
@@ -67,7 +82,8 @@ button("apply", "Apply").on_click(cx.listener(|this, _, _, cx| {
 }))
 ```
 
-Value callbacks such as `Slider::on_change` pass a value, whereas `cx.listener` expects a reference to an event. Adapt the listener at the boundary:
+A value callback, such as `Slider::on_change`, passes the value, where
+`cx.listener` expects a reference. Adapt it:
 
 ```rust,ignore
 let change = cx.listener(|this, value: &f64, _, cx| {
@@ -80,11 +96,12 @@ Slider::new("volume", self.volume, 0., 100.)
     .on_change(move |value, window, cx| change(&value, window, cx))
 ```
 
-Alternatively, capture `cx.weak_entity()` and update the owner from the callback. Examples use this when a value callback needs to coordinate several entities.
+Or capture `cx.weak_entity()` and update the owner through it, as the
+examples do where one callback reaches several entities.
 
-### Entity events
+### Events
 
-Subscribe to a control's typed events in the owning entity's constructor:
+Subscribe to an entity's events where its owner is made:
 
 ```rust,ignore
 let field = cx.new(|cx| TextField::new(cx).label("Search"));
@@ -96,42 +113,91 @@ let subscription = cx.subscribe(&field, |this, field, event: &InputEvent, cx| {
 });
 ```
 
-`InputEvent::Changed` reports an edit; `Submitted` reports Return in a single-line field. Other controls expose events such as `DateChanged`, `ListEvent`, `TreeEvent`, `TableEvent`, `MenuChoice`, `SheetEvent` and `WindowEvent`.
+`InputEvent::Changed` reports an edit and `Submitted` Return in a
+single-line field. Other entities report `MenuEvent`, `MenuChoice`,
+`ListEvent`, `TreeEvent`, `TableEvent`, `ColumnEvent`, `IconEvent`,
+`DateChanged`, `TimeChanged`, `ColorChanged`, `FontChanged`, `SheetEvent`,
+`WindowEvent`, `FileDialogEvent` and others; each is named in the
+reference.
 
-## Buttons and choice groups
+## Buttons and choices
 
-- `button(id, label)` returns `Control`. `.default_button()` gives it the outer default ring; `.cancel_button()` assigns its cancel behavior.
-- Wrap related buttons and fields in `button_scope(id, content)` to route Return/Enter and Escape/Command-period to that scope's default and cancel buttons. Nested dialogs manage their own scope.
-- `checkbox` accepts `CheckState::Off`, `On` or `Mixed`. The callback decides the next value.
-- `radio` and `tab` draw individual choices. Use `ChoiceGroup::radio`, `ChoiceGroup::tabs` or `ChoiceGroup::segments` for a group with one tab stop and arrow navigation.
-- `disclosure` reports a click through its callback; Left/Right also close/open it when a change is needed.
-- `bevel_button` and `icon_button` provide compact buttons. `Control::selected` makes a bevel button a toggle; `Toolbar` arranges controls and moves overflow items into a menu.
+- `button(id, label)` returns a `Control`. `.default_button()` gives it the
+  default ring and `.cancel_button()` makes it the cancel button.
+- `button_scope(id, content)` sends Return and Enter to the default button
+  inside it, and Escape and Command-period to the cancel button. A dialog
+  is a scope of its own.
+- `checkbox` takes `CheckState::Off`, `On` or `Mixed`; its callback decides
+  the next state.
+- `radio` and `tab` draw one choice. `ChoiceGroup::radio`, `::tabs` and
+  `::segments` make a group with one tab stop, moved through with the
+  arrow keys. `draw_tab_pane` draws the pane under a row of tabs.
+- `disclosure` reports a click; Left and Right also close and open it.
+- `bevel_button` and `icon_button` make small square buttons.
+  `Control::selected` makes a bevel button a toggle, and
+  `Control::menu_arrow` shows the pop-down arrow of a button that opens a
+  menu.
+- `Toolbar` lays out controls and moves those that do not fit into an
+  overflow menu.
 
-Use `.disabled(true)` where supported to make a control skip input and keyboard traversal. Give icon-only controls a meaningful label.
+`.disabled(true)` dims a control and takes it out of Tab order. Give a
+control that shows only an icon a label for screen readers.
 
-## Text and rich text
+## Text
 
-`TextField` provides single-line text by default. `.password(true)` masks the display and prevents copying; `.multiline(true)` enables a text area with wrapping and scrolling; `.read_only(true)` allows reading and selection without edits. `.with_text` sets the initial document; `.set_value` replaces it.
+`label` and `text_in` return a `TextIn`: one line sized to its text. Made
+as tall as a control beside it, it centers its capitals as the control
+centers its own. `paragraph` wraps text to a width.
 
-Selections and public ranges use UTF-8 byte offsets, not character counts. The input handler translates GPUI's UTF-16 composition ranges at the platform boundary. User navigation follows grapheme boundaries. `set_value` imports a new document and resets its editing history; use selection and replacement APIs for an edit that should participate in undo.
+`TextField` is a single-line field. `.password(true)` masks it and forbids
+copying; `.multiline(true)` makes a text area that wraps and scrolls;
+`.read_only(true)` lets text be selected but not changed; `.indent(first)`
+starts each paragraph's first line further in. `.document(true)` makes a
+text area the content of a document window: white to the window's edges,
+its scroll bar on the window's line, with no ring of its own;
+`set_document_layout` sets its margins. `.with_text` gives the first text
+and `set_value` replaces it, clearing the undo history.
 
-`RichTextArea` combines a native-input text editor with a formatting bar. `RichText` is the corresponding model without a view. `TextStyle`, `StyleAttribute`, `Run`, `Alignment` and `FormatState` describe formatting. Four bitmap scales, bold, italic, underline and paragraph alignment are available. `editor()` exposes the underlying `Entity<TextField>` for commands and `FindReplace`.
+Selections and ranges are UTF-8 byte offsets. The field converts GPUI's
+UTF-16 composition ranges, and the caret moves by grapheme.
 
-`SizeMenu` connects a size selector to an editor. `FontPicker` produces a `FontChoice`; the application decides how to apply the choice. Bitmap families are deliberately limited; selecting a family in the picker does not replace the library's rendering system.
+Lines of text make room for East Asian glyphs, as the original's do once it
+has East Asian faces. `text_input::set_east_asian_line_room(false)` fits
+English lines to the Latin face alone, as the original's are without them.
+The setting holds for the whole process; lines in the other languages
+always make room.
 
-## Collections and navigation
+`RichTextArea` is a text area with a format bar: bold, italic, underline,
+four sizes and paragraph alignment. `.show_format_bar(false)` hides the
+bar, leaving its shortcuts; `.bar_gap` puts room between the bar and the
+text. `editor()` returns the `Entity<TextField>` under it, for commands and
+for `FindReplace`. `RichText` is the model without a view; `TextStyle`,
+`StyleAttribute`, `Run`, `Alignment` and `FormatState` describe its
+formatting. `SizeMenu` sets an editor's size.
 
-### Lists and trees
+## Collections
 
-`ListBox` contains `ListItem` values with labels and disabled states. `ListEvent::Selected` reports a row; `Activated` reports Return or double-click. Navigation includes arrows, Home/End, Page Up/Down and prefix typing.
+### Lists, trees and columns
 
-`TreeView::from_nodes` accepts `Vec<models::TreeNode>`. A node has a stable ID, title, open state and children. `TreeNode::item`, `.with_children`, `.with_icon` and `.with_data` allow application-owned outline data; `data::<T>()` retrieves a typed payload. `TreeView::new` also accepts the existing `FileTree` model used by the desktop.
+`ListBox` shows `ListItem`s, each with a label and a `disabled` flag, and
+`.icons` gives rows pictures. `ListEvent::Selected` reports a row and
+`Activated` Return or a double click. The arrow keys, Home, End, Page Up,
+Page Down and typing a name's first letters move the selection.
 
-`ColumnView` uses the same nodes and presents their ancestor path in adjacent columns. `set_selection(Some(id), cx)` reconstructs the path and reveals the item. A tree's silent selection setter opens ancestors as needed.
+`TreeView::from_nodes` takes a `Vec<models::TreeNode>`: each node has an
+ID, a title, an open state and children. `TreeNode::item`,
+`.with_children`, `.with_icon` and `.with_data` build an outline of the
+application's own, and `data::<T>()` reads a node's data back.
+`TreeView::new` takes a `models::FileTree`, as the desktop's disk.
+
+`ColumnView` shows the same nodes in columns, one per level of the path to
+the item chosen. `set_selection(Some(id), cx)` opens the path to an item
+and shows it.
 
 ### Tables
 
-`Table::new(headers, rows, cx)` is a convenient string-table constructor. `Table::with_columns` supplies explicit presentation:
+`Table::new(headers, rows, cx)` makes a table of strings.
+`Table::with_columns` sets each column up:
 
 ```rust,ignore
 let table = cx.new(|cx| {
@@ -148,80 +214,156 @@ let table = cx.new(|cx| {
 });
 ```
 
-`fixed(true)` prevents sorting by a column; its edge can still be resized. `TableColumn::icon` supplies an optional 16-pixel `gpui::ImageSource` by model row index. `set_column_comparator` sorts on underlying values when display strings such as “2 KB” do not sort numerically. Selection indices always refer to the supplied model rows, even after sorting.
+A `fixed(true)` column does not sort, though its edge still resizes.
+`TableColumn::icon` gives each row, by its model index, a picture of up to
+16×16 pixels, drawn from rows of characters. `set_column_comparator` sorts
+a column by its values where the text shown, as "2 KB", would sort wrong.
+Row indices always refer to the model's rows, sorted or not.
 
-Click selects one row; Shift extends a range; Command/Control toggles individual rows. `TableEvent::Selected` reports the current row, `SelectionChanged(BTreeSet<usize>)` reports the selected set and `Activated` reports activation. Observe the collection event when the operation concerns several rows; the cursor may stay on the same row while the selection changes.
+A click chooses a row, Shift extends the range, and Command or Control
+adds or removes one row. `TableEvent::Selected` reports the current row,
+`SelectionChanged` the set chosen, and `Activated` an activation. Watch
+`SelectionChanged` for actions on several rows: the current row can stay
+while the set changes.
 
-`set_selection` and `set_selected_rows` synchronize a view without emitting user-selection events. Use those setters to coordinate several views of one model; avoid writing a single selection back to a table in response to its own multi-selection event.
+`set_selection` and `set_selected_rows` change the selection without an
+event, to keep several views of one model in step. Do not write one row
+back to a table in answer to its own `SelectionChanged`.
 
-### Icons and other navigation
+### Icons
 
-`IconItem::new(title, IconKind)` uses the bundled artwork. `.image(source)` or `IconItem::from_image` accepts a custom `ImageSource`, drawn in a 32-pixel square. A 32×32 `RenderImage` whose pixels are each opaque or clear is drawn pixel for pixel and, when chosen, darkened by half, as the original does; `.selected_image` supplies a chosen look of its own. `IconView` scrolls, selects and activates items; its events also support the desktop example's drag/drop behavior.
+`IconItem::new(title, IconKind)` uses the library's icons;
+`IconItem::from_image` and `.image` take an `ImageSource`, drawn in a
+32-pixel square. A 32×32 `RenderImage` of pixels each opaque or clear is
+drawn pixel for pixel and, when chosen, darkened by half, as the original
+does; `.selected_image` gives a chosen look of its own. `IconView` scrolls,
+chooses, opens and drags items. `.frame(true)` draws the sunken outline of
+a view standing alone, `.always_scrollbar(true)` keeps its scroll bar, and
+`.scroll_bar_room` leaves room under the bar for a window's resize corner.
 
-`DocumentTabs` manages document selection and close events. `PathPopup`, `Breadcrumbs` and `Pagination` emit path/page changes. `Ruler` emits indentation changes; `Split` reports a divider position: the first pane's width in pixels, or with `.percent()` the percentage of the room it takes, so that both panes grow and shrink with the split. A split too small for the first pane's width shrinks the pane, the second keeping its least, and leaves the width for when it grows again. `ScrollView` wraps GPUI scroll state.
+### Navigation and layout
 
-## Menus, frames and dialogs
+`DocumentTabs` reports `DocumentTabEvent::Selected` and `Closed`.
+`PathPopup`, `Breadcrumbs` and `Pagination` report the path or page
+chosen, and `Ruler` its indents.
 
-`Menu::icon` accepts static pixel rows for a menu title; `.icon_title(true)` displays its text beside the icon. Keep the title meaningful because it also names the menu for accessibility.
+`Split` reports its divider's position: the first pane's width in pixels,
+or, with `.percent()`, the share of the room it takes, so both panes grow
+and shrink with the split. `.vertical()` stacks the panes. A split too
+small for the first pane's width shrinks that pane, keeping the second's
+least, and gives the width back as it grows. `ScrollView` draws GPUI's
+scrolling in the content frame.
 
-`MenuItem` describes a title, separator, checked/disabled state, shortcut and optional submenu. `MenuBar` and `ContextMenu` report the selected menu and item path through `MenuChoice`. `PopupMenu` reports `MenuEvent(index)` for a single selection.
+## Menus, windows and dialogs
 
-The containing window should pass keyboard equivalents to `MenuBar::dispatch_shortcut` from its key handler. The menu bar is drawn inside the GPUI window; it does not install an operating-system menu bar.
+`PopupMenu` reports `MenuEvent(index)`. `.caption("Sort by:")` puts text
+before the button; `.bevel(icon)` draws it as a bevel button with an icon
+and the pop-down arrow, as a file dialog's folder.
 
-`PlatinumWindow` is a movable and resizable frame **inside** an existing GPUI window. It does not create a new OS window. The owner handles activation and stacking, and subscribes to close, move, resize and path-selection events. `set_active(false, cx)` propagates inactive presentation to its content. `WindowState` stores position, size and collapsed state. `PopupWindow` provides a bottom-edge tab.
+`MenuItem` has a title, a check mark, a disabled state, a keyboard
+equivalent and an optional submenu, or is a separator. `MenuBar` and
+`ContextMenu` report the menu and item chosen as a `MenuChoice`.
+`Menu::icon` gives a menu an icon for a title, and `.icon_title(true)`
+shows its text beside it; the text also names the menu for screen
+readers. The window's key handler passes keys to
+`MenuBar::dispatch_shortcut`. The menu bar is drawn in the GPUI window; it
+does not install the system's menu bar.
 
-`Alert`, `Dialog`, `FindReplace`, `PageSetup` and `ProgressDialog` are retained entities. Construct and retain them, use their `show`/`close` methods and render them with the owner. Dialogs save and restore focus, keep Tab traversal within the modal layer and provide default/cancel actions.
+`PlatinumWindow` is a frame that moves and resizes **inside** a GPUI
+window; it does not open a window of the system. Its owner raises it and
+handles its `WindowEvent`s: activation, closing, moving, resizing and the
+path menu's choice. `set_active(false, cx)` draws it and its content as a
+window in the background. `WindowState` holds its position, size and
+whether it is rolled up. `PopupWindow` is a window docked at the bottom
+edge, as a tab.
 
-`OpenDialog` and `SaveDialog` operate on an `Entity<models::FileTree>`. They browse an application's model and emit an open/save result. The owner performs the document operation. Use GPUI's platform APIs separately when a native filesystem picker is needed.
+`Alert`, `Dialog`, `ProgressDialog`, `FindReplace` and `PageSetup` are
+entities: keep them, call `show` and `close`, and render them with their
+owner. A dialog keeps Tab inside itself, gives the focus back when it
+closes, and answers Return and Escape with its default and cancel
+buttons. `ColorWell` opens its color picker as such a dialog, titled with
+the well's label. `FontPicker` reports a `FontChoice` and draws its sample
+in the style chosen; the application decides what to do with it.
 
-`Banner` and `Toasts` provide retained notifications. `Balloon` attaches delayed help to an element. Display helpers such as `status_bar`, `placard`, `badge`, `card` and `empty_state` compose directly with GPUI layout. `card()` is a raised panel, a column whose content is added with `.child`; `empty_state(text)` centers one line of gray text in the room its parent gives it.
+`OpenDialog` and `SaveDialog` browse an `Entity<models::FileTree>` and
+report `FileDialogEvent::Opened` or `Saved`; the owner opens or saves the
+document. `.new_folders(true)` lets New Folder make a folder; it is dimmed
+otherwise. For the system's own file picker, use GPUI's platform APIs.
 
-## Focus, input and accessibility
+`Banner` and `Toasts` show notices. `Balloon` gives an element help that
+shows after a delay. `card()` is a raised panel, a column filled with
+`.child`; `empty_state(text)` centers one line of gray text in the room its
+parent gives it. `status_bar`, `placard`, `badge`, `tag` and the other
+displays are elements laid out like any other.
 
-Bind Tab and Shift-Tab to `window.focus_next(cx)` and `window.focus_prev(cx)` at the application level, as the examples do. Retained controls implement `Focusable`, so their handles can be focused through GPUI. Choice groups manage their own arrow navigation; sheets move through cells and release Tab at the outer boundary.
+## Focus, keyboard and accessibility
 
-Embedded scroll bars can use `.tab_stop(false)` to preserve the containing editor's or collection's focus. Standalone scroll bars remain keyboard-focusable by default.
+Bind Tab and Shift-Tab to `window.focus_next(cx)` and
+`window.focus_prev(cx)`, as the examples do. Entities implement
+`Focusable`. A choice group moves with the arrow keys inside one tab stop;
+a sheet moves through its cells and lets Tab out at its edges. A scroll
+bar inside an editor or a list takes `.tab_stop(false)` to leave the focus
+there; one standing alone keeps its tab stop.
 
-Controls expose GPUI/AccessKit roles, labels and relevant states. Tables and sheets expose cell nodes in addition to their pixel painting. Names should describe the action or value; visible labels alone are not a substitute for a label on an icon-only input. Accessibility behavior still needs runtime checks with the screen reader and platform targeted by an application.
+Controls give GPUI's accessibility tree their roles, names and states;
+tables and sheets give their cells too. A name says what the control does
+or holds. Check an application with the screen reader of each platform it
+targets.
 
-## Themes, language and drawing
+## Themes and languages
 
-`Theme` contains the background and an `Accent`; `theme::ACCENTS` contains six accents. Most controls accept a theme builder and entity controls expose `set_theme`. The application owns theme propagation.
+`Theme` holds the background and an `Accent`; `theme::ACCENTS` holds the
+six accents. Controls take a theme with `.theme(…)`, and entities change
+it with `set_theme`; the application passes it on.
 
-`Language` has `English`, `SimplifiedChinese`, `TraditionalChinese`, `Japanese` and `Korean`. `.language(...)` selects control wording and glyph forms; `set_language` updates retained controls. Literal application labels remain application-owned. `tr(language, key)` reads a control catalog entry; `locale::desk` reads the desktop catalog. Catalog JSON is embedded at compile time.
+`Language` is `English`, `SimplifiedChinese`, `TraditionalChinese`,
+`Japanese` or `Korean`. `.language(…)` chooses a control's words and the
+forms of its East Asian glyphs, and `set_language` changes them. Text the
+application passes in stays as it is. `tr(language, key)` reads the
+controls' catalog and `locale::desk` the desktop's; both are compiled in.
+Calendars, date pickers and time fields write dates as the language does;
+`first_weekday`, `day_first` and `hour_cycle` set the regional formats.
 
-`Font::truncate` and `Font::truncate_in` return text shortened with an ellipsis to fit a logical-pixel width, with the latter measuring the selected language's regional glyphs.
+## Drawing
 
-The regular and bold Latin bitmap faces are bundled with four regional CJK faces. System-font fallback handles missing bitmap characters after `init`. Date/time controls use the selected language's built-in order and hour cycle, with explicit overrides where the control offers them.
+`paint::Pen` draws fills and text on a grid of logical pixels, and
+`drawing(width, height, |pen, window, cx| …)` makes an element of it.
+`rect`, `frame`, `bevel` and `dot` fill; `translucent` blends a fill over
+what is under it and `drop_shadow` draws a menu's or an alert's shadow;
+`text` draws a line and `text_styled` a line in a `TextStyle`.
+`Font::measure` and `Font::measure_styled` measure what they draw, and
+`Font::truncate` and `truncate_in` shorten text with an ellipsis to fit a
+width.
 
-Lines of text are as tall as the glyphs they may hold: after `init`, an English text field's lines also make room for the regional glyphs, which stand two pixels above a capital, as the original's do once an app gives it East Asian faces with `SetEastAsian`. `text_input::set_east_asian_line_room(false)` fits English lines to the Latin face alone, as the original's are without them; the setting is process-wide, and lines in the other languages always make room.
+The `draw_…` functions — `draw_button`, `draw_checkbox`, `draw_tab_pane`,
+`draw_window_frame`, `draw_list_box` and the rest — draw a control's look
+for a control of your own or a test. They make no focus, input or
+accessibility node; a control of your own adds those.
 
-`paint::Pen` draws logical-pixel fills and text, and `drawing` embeds a pen callback in GPUI. `draw_*` functions are useful for a custom control or appearance fixture; they do not create focus, input handling or accessibility nodes. A custom interactive control must add those separately.
+The Latin faces and the four regional `cjk12` faces are compiled in. After
+`init`, characters no face draws fall back to the system's font.
 
 ## Examples
 
-| Example | Purpose |
+| Example | What it is |
 |---|---|
-| `gallery` | A paginated visual overview of the component families |
-| `controls` | A browsable catalog with working entity controls and dialogs |
-| `desktop` | Window stacking, menus, virtual files and small desktop applications |
+| `gallery` | Every control, on five pages |
+| `controls` | Every control, live, by the name of its function, with its dialogs |
+| `desktop` | The classic desktop: windows, menus, a disk and small applications |
 
-Run them with `cargo run --example <name>`. `./scripts/bundle.sh --gallery` produces a macOS app bundle for the gallery. `./scripts/screenshots.sh` regenerates the five gallery images and two desktop images with the GPUI renderer; `--offline` uses cached dependencies. The desktop accepts `--lang en`, `zh-Hans`, `zh-Hant`, `ja` or `ko`. PNG export requires the platform's GPUI offscreen renderer, which the pinned revision provides on macOS and Linux; it is unavailable on Windows.
+Run them with `cargo run --example <name>`. `--png <file>` renders a
+picture without a window, at `--scale <n>`; the gallery takes `--page <n>`
+and the desktop `--lang en`, `zh-Hans`, `zh-Hant`, `ja` or `ko`. Pictures
+need GPUI's offscreen renderer, which the pinned revision has on macOS
+and Linux, not on Windows. `./scripts/screenshots.sh` renders the pictures
+in `docs`.
 
-## Relationship to the Go project
+## From the Go library
 
-The original Go library binds values by pointer and reports changes when an immediate-mode view is rebuilt. This port uses GPUI's retained entities and typed events. Names follow Rust conventions:
-
-| Go API | GPUI API |
-|---|---|
-| `Button`, `Checkbox`, `Disclosure` | `button`, `checkbox`, `disclosure` |
-| `RadioGroup`, `TabControl`, `Segmented` | `ChoiceGroup::radio`, `::tabs`, `::segments` |
-| `TextArea` | `TextField::multiline(true)` |
-| `SplitVertical`, `SplitPercent`, `SplitVerticalPercent` | `Split::vertical`, `::percent`, both |
-| `Calendar`, `Sheet` | `CalendarView`, `SheetView` |
-| `FormulaBar`, `FormatBar` | composed into `SheetView` and `RichTextArea` |
-| `Window` | `PlatinumWindow` |
-| `Find`, `ReplaceAll` | `find_next`, `replace_all` |
-| `SpringOpen`, `ZoomRects` | `PopupWindow::spring_open`, `zoom_rects` |
-
-There is no drop-in compatibility with the Go API. In particular, the Go `WindowOptions` configuration and arbitrary locale catalogs do not have an identical Rust API. The design specification describes the shared visual target; the reference generated from the current Rust source is authoritative for callable methods.
+mygo-platinum binds values by pointer and reports changes as an
+immediate-mode view is built again. This port uses GPUI's entities and
+typed events, and Rust's naming; the
+[README](../README.md#what-is-in-it) maps the names. It is not a drop-in
+match: in particular, the Go library's window options and its catalogs an
+application can extend have no Rust equivalent. The design specification
+describes the look both share.

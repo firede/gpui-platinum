@@ -347,7 +347,7 @@ impl Gallery {
         }
         model.cursor = Cell::new(1, 4);
         model.anchor = Cell::new(1, 4);
-        let font_picker = cx.new(|cx| FontPicker::new(cx).families(FONTS).width(444));
+        let font_picker = cx.new(|cx| FontPicker::new(cx).families(FONTS).width(446));
         font_picker.update(cx, |picker, cx| {
             picker.set_choice(
                 FontChoice {
@@ -403,13 +403,10 @@ impl Gallery {
                     .size(200., 74.)
                     .label("Note")
             }),
-            sort: cx
-                .new(|cx| PopupMenu::new(["Name", "Date Modified", "Size", "Kind"], cx).width(116)),
-            view_as: cx.new(|cx| {
-                PopupMenu::new(["as Icons", "as List"], cx)
-                    .width(83)
-                    .disabled(true)
+            sort: cx.new(|cx| {
+                PopupMenu::new(["Name", "Date Modified", "Size", "Kind"], cx).caption("Sort by:")
             }),
+            view_as: cx.new(|cx| PopupMenu::new(["as Icons", "as List"], cx).disabled(true)),
             fonts: cx.new(|cx| ListBox::new(FONTS, cx).size(150, 82).selected(2)),
             front: front.clone(),
             back: back.clone(),
@@ -464,7 +461,7 @@ impl Gallery {
             calendar,
             date,
             time: cx.new(|cx| TimeField::new(9, 41, 0, cx).step(5)),
-            combo: cx.new(|cx| Combobox::new(FONTS, cx).width(160).label("Font")),
+            combo: cx.new(|cx| Combobox::new(FONTS, cx).label("Font")),
             color: cx.new(|cx| ColorWell::new(ACCENTS[0].mid, cx).label("Highlight color")),
             sheet: cx.new(|cx| {
                 SheetView::new(model, cx)
@@ -482,7 +479,7 @@ impl Gallery {
                     },
                     cx,
                 )
-                .width(456)
+                .width(458)
             }),
             columns,
             columns_initialized: false,
@@ -492,7 +489,6 @@ impl Gallery {
                     vec!["Platinum Disk".into(), "Documents".into(), "Letters".into()],
                     cx,
                 )
-                .width(84)
             }),
             documents: cx.new(|cx| {
                 DocumentTabs::new(vec!["Letter".into(), "Notes".into()], cx)
@@ -666,7 +662,7 @@ impl Gallery {
                             .disabled(true)
                             .theme(self.theme),
                     )
-                    .child(separator(206))
+                    .child(separator(208))
                     .child(
                         ChoiceGroup::radio(
                             "size",
@@ -748,7 +744,7 @@ impl Gallery {
             )
             .child(
                 group_box("Pop-up menus", 232)
-                    .child(row(6).child(label("Sort by:")).child(self.sort.clone()))
+                    .child(self.sort.clone())
                     .child(self.view_as.clone()),
             )
             .child(
@@ -786,7 +782,7 @@ impl Gallery {
                         }),
                 ),
             )
-            .child(div().absolute().left(px(12.)).top(px(36.)).child(text_in(
+            .child(div().absolute().left(px(12.)).top(px(35.)).child(text_in(
                 [
                     "General settings go here.",
                     "Who may connect.",
@@ -1002,7 +998,7 @@ impl Gallery {
                     text_in(format!("{}. {name}", index + 1), Font::Small, BLACK)
                 })),
         )
-        .size(144, 140)
+        .size(143, 140)
         .theme(self.theme);
         row(12)
             .p(px(12.))
@@ -1324,21 +1320,17 @@ fn focus_sample(theme: Theme) -> impl IntoElement {
         });
         paint_at(pen, 132, 3, 70, 30, |list| {
             list.bevel(0, 0, 70, 30, GRAY_7, WHITE);
-            let mut rows = Pen::new(68, 28);
-            rows.rect(1, 1, 66, 26, WHITE);
-            rows.frame(0, 0, 68, 28, BLACK);
-            let mut content = Pen::new(68, 28);
-            content.rect(1, 1, 66, 16, theme.accent.dark);
-            content.text(4, 11, "Focused", Font::Small, WHITE);
-            content.text(4, 27, "Row", Font::Small, BLACK);
-            content.clip(gpui_platinum::paint::Rect {
-                x: 1,
-                y: 1,
-                width: 66,
-                height: 26,
+            paint_at(list, 1, 1, 68, 28, |rows| {
+                draw_list_box(
+                    rows,
+                    &["Focused", "Row"],
+                    0,
+                    Some(0),
+                    true,
+                    false,
+                    theme.accent,
+                )
             });
-            rows.append(content, 0, 0);
-            list.append(rows, 1, 1);
             draw_focus_ring(list, 0, theme.accent.dark);
         });
     })

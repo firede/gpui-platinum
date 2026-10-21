@@ -5,19 +5,18 @@ use gpui_platinum::Language;
 
 pub fn scenes() -> Vec<Scene> {
     let mut scenes: Vec<Scene> = [
-        ("gallery-page-1", false),
-        ("gallery-page-2", true),
-        ("gallery-page-3", false),
-        ("gallery-page-4", false),
-        ("gallery-page-5", false),
+        "gallery-page-1",
+        "gallery-page-2",
+        "gallery-page-3",
+        "gallery-page-4",
+        "gallery-page-5",
     ]
     .into_iter()
     .enumerate()
-    .map(|(page, (name, pending))| {
-        let scene = Scene::new(name, 756., 476., move |_, cx| {
+    .map(|(page, name)| {
+        Scene::new(name, 756., 476., move |_, cx| {
             Gallery::for_capture(page, cx)
-        });
-        if pending { scene.pending() } else { scene }
+        })
     })
     .collect();
     for (name, language) in [

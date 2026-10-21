@@ -241,7 +241,10 @@ impl Gallery {
         })
         .detach();
         let rich = cx.new(|cx| {
-            let mut rich = RichTextArea::new(cx).size(452., 118.).show_size_menu(false);
+            let mut rich = RichTextArea::new(cx)
+                .size(452., 124.)
+                .bar_gap(6.)
+                .show_size_menu(false);
             rich.set_runs(
                 &[
                     Run {
@@ -291,8 +294,7 @@ impl Gallery {
             rich
         });
         rich.read(cx).editor().update(cx, |editor, cx| {
-            editor.set_alignments(&[Alignment::Center, Alignment::Left, Alignment::Right], cx);
-            editor.select(0, 0, cx);
+            editor.set_alignments(&[Alignment::Center, Alignment::Left, Alignment::Right], cx)
         });
         let rows = PLANETS
             .iter()
@@ -439,7 +441,7 @@ impl Gallery {
                     cx,
                 )
                 .label("Right-click here")
-                .size(206, 40)
+                .size(208, 40)
             }),
             rich,
             docks: [projects, mail],
@@ -879,13 +881,18 @@ impl Gallery {
                                     .icon(NEW_ICON)
                                     .theme(self.theme),
                             )
-                            .child(bevel_button("style", "Style").theme(self.theme).on_click(
-                                cx.listener(|this, event: &gpui::ClickEvent, window, cx| {
-                                    this.style_menu.update(cx, |menu, cx| {
-                                        menu.show_at(0, event.position(), window, cx)
-                                    });
-                                }),
-                            )),
+                            .child(
+                                bevel_button("style", "Style")
+                                    .menu_arrow(true)
+                                    .theme(self.theme)
+                                    .on_click(cx.listener(
+                                        |this, event: &gpui::ClickEvent, window, cx| {
+                                            this.style_menu.update(cx, |menu, cx| {
+                                                menu.show_at(0, event.position(), window, cx)
+                                            });
+                                        },
+                                    )),
+                            ),
                     )
                     .child(
                         ChoiceGroup::segments("segment", self.segment, ["Left", "Center", "Right"])
@@ -945,7 +952,11 @@ impl Gallery {
                     row(10)
                         .items_start()
                         .child(image_well(48, 48).label("Picture"))
-                        .child(balloon("Drop a picture in\nthe well to use it.", 150)),
+                        .child(drawing(150., 50., |pen, _, _| {
+                            draw_balloon(pen);
+                            pen.text(10, 22, "Drop a picture in", Font::Small, BLACK);
+                            pen.text(10, 35, "the well to use it.", Font::Small, BLACK);
+                        })),
                 ),
             )
             .child(
@@ -975,9 +986,14 @@ impl Gallery {
                                     .h(px(118.))
                                     .w_full()
                                     .overflow_hidden()
-                                    .bg(rgb(GRAY_6))
-                                    .border_1()
-                                    .border_color(rgb(BLACK))
+                                    .child(div().absolute().inset_0().child(drawing(
+                                        208.,
+                                        118.,
+                                        |pen, _, _| {
+                                            pen.rect(0, 0, 208, 118, GRAY_6);
+                                            pen.frame(0, 0, 208, 118, BLACK);
+                                        },
+                                    )))
                                     .child(self.docks[1].clone())
                                     .child(self.docks[0].clone()),
                             ),

@@ -424,6 +424,7 @@ pub struct RichTextArea {
     height: f32,
     show_size_menu: bool,
     show_format_bar: bool,
+    bar_gap: f32,
     theme: Theme,
     language: Language,
     configure: bool,
@@ -453,6 +454,7 @@ impl RichTextArea {
             height: 210.,
             show_size_menu: true,
             show_format_bar: true,
+            bar_gap: 0.,
             theme: Theme::default(),
             language: Language::English,
             configure: true,
@@ -481,7 +483,6 @@ impl RichTextArea {
         self
     }
 
-    /// Shows the optional point-size control beside the format buttons.
     /// Shows the format bar above the text, as it is unless hidden: the
     /// shortcuts style the text without it.
     pub fn show_format_bar(mut self, show: bool) -> Self {
@@ -490,15 +491,25 @@ impl RichTextArea {
         self
     }
 
-    /// The height of the format bar, or nothing when it is hidden.
+    /// Puts room between the format bar and the text, as a column of the
+    /// original's holding a format bar and a rich text area apart does.
+    pub fn bar_gap(mut self, gap: f32) -> Self {
+        self.bar_gap = gap.max(0.);
+        self.configure = true;
+        self
+    }
+
+    /// The height of the format bar and the room under it, or nothing when
+    /// the bar is hidden.
     fn bar_height(&self) -> f32 {
         if self.show_format_bar {
-            FORMAT_BAR_HEIGHT
+            FORMAT_BAR_HEIGHT + self.bar_gap
         } else {
             0.
         }
     }
 
+    /// Shows the optional point-size control beside the format buttons.
     pub fn show_size_menu(mut self, show: bool) -> Self {
         self.show_size_menu = show;
         self
@@ -690,6 +701,7 @@ impl Render for RichTextArea {
             .flex_col()
             .min_w(px(self.width))
             .h(px(self.height))
+            .gap(px(self.bar_gap))
             .when(self.show_format_bar, |area| area.child(bar))
             .child(self.editor.clone())
     }

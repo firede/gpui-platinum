@@ -8,11 +8,11 @@ use gpui::{
     div, point, prelude::*, px, rgb,
 };
 use gpui_platinum::{
-    Breadcrumbs, ListBox, Pagination, PathPopup, RichTextArea, Ruler, RulerState, SheetView, Table,
-    TableColumn, TextField, Theme, TreeView, draw_list_box,
+    Breadcrumbs, Font, ListBox, Pagination, PathPopup, RichTextArea, Ruler, RulerState, ScrollView,
+    SheetView, Split, Table, TableColumn, TextField, Theme, TreeView, draw_list_box,
     models::{Cell, FileTree, NodeKind, Sheet, TreeNode},
     paint::{Pen, drawing},
-    theme::GRAY_2,
+    theme::{BLACK, GRAY_2},
 };
 use std::{cell::RefCell, rc::Rc};
 
@@ -535,7 +535,114 @@ pub fn scenes() -> Vec<Scene> {
         .pending(),
     );
 
+    // Panes stacked, the first 40 tall.
+    scenes.push(Scene::new("split-vertical", 180., 140., |_, _| {
+        Elements(Box::new(|| {
+            padded(
+                10.,
+                Split::new("split", 40., text_in("Top pane"), text_in("Bottom pane"))
+                    .size(160, 120)
+                    .vertical(),
+            )
+            .into_any_element()
+        }))
+    }));
+
+    // Panes stacked, the first taking 30% of the room, at least 40.
+    scenes.push(Scene::new("split-percent", 180., 147., |_, _| {
+        Elements(Box::new(|| {
+            padded(
+                10.,
+                Split::new("split", 30., text_in("30%"), text_in("70%"))
+                    .size(160, 127)
+                    .vertical()
+                    .percent(),
+            )
+            .into_any_element()
+        }))
+    }));
+
+    // The divider dragged 30 right and moved back 8 with Left, and the
+    // lines at the right scrolled down by 40.
+    scenes.push(
+        Scene::new("split-scrollview", 290., 130., |_, _| SplitScroll {
+            position: Rc::new(std::cell::Cell::new(80.)),
+            handle: gpui::ScrollHandle::new(),
+        })
+        .prepare(|app, window| {
+            drag(app, window, (93., 30.), (123., 30.), Modifiers::default());
+            keys(app, window, "left");
+            input(
+                app,
+                window,
+                PlatformInput::ScrollWheel(gpui::ScrollWheelEvent {
+                    position: point(px(200.), px(60.)),
+                    delta: gpui::ScrollDelta::Pixels(point(px(0.), px(-40.))),
+                    modifiers: Modifiers::default(),
+                    touch_phase: gpui::TouchPhase::Moved,
+                }),
+            );
+        }),
+    );
+
     scenes
+}
+
+/// A pane of text beside one of lines that scroll, the divider between
+/// them where it was last put.
+struct SplitScroll {
+    position: Rc<std::cell::Cell<f32>>,
+    handle: gpui::ScrollHandle,
+}
+
+impl Render for SplitScroll {
+    fn render(&mut self, _: &mut gpui::Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+        let position = self.position.get();
+        let lines = div()
+            .flex()
+            .flex_col()
+            .gap(px(2.))
+            .children((1..=20).map(|n| {
+                let text = format!("Line {n}");
+                let font = Font::Small;
+                drawing(
+                    font.measure(&text) as f32,
+                    font.line_height() as f32,
+                    move |pen, _, _| pen.text(0, font.ascent(), &text, font, BLACK),
+                )
+            }));
+        let setter = self.position.clone();
+        padded(
+            10.,
+            Split::new(
+                "split",
+                position,
+                text_in("Left pane"),
+                ScrollView::new("scroll", &self.handle, lines).size(260 - position as i32 - 7, 100),
+            )
+            .size(260, 100)
+            .on_change(move |position, _, _| setter.set(position)),
+        )
+    }
+}
+
+/// A line of text in the small face, sized to it, as the original's TextIn.
+fn text_in(text: &'static str) -> impl IntoElement {
+    let font = Font::Small;
+    drawing(
+        font.measure(text) as f32,
+        font.line_height() as f32,
+        move |pen, _, _| pen.text(0, font.ascent(), text, font, BLACK),
+    )
+}
+
+/// Elements made anew each frame, as a stateless scene draws them.
+struct Elements(Box<dyn Fn() -> gpui::AnyElement>);
+
+impl Render for Elements {
+    fn render(&mut self, _: &mut gpui::Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+        (self.0)()
+    }
 }
 
 /// Views in a column, padded and 10 apart, then a card, an empty state and

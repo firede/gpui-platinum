@@ -186,6 +186,8 @@ struct DividerState {
     focus: FocusHandle,
     config: Config,
     dragging: bool,
+    /// Whether a press gave it the focus it has.
+    pressed: bool,
     start_pointer: f32,
     start_position: f32,
 }
@@ -241,6 +243,7 @@ impl Element for Divider {
                         focus: cx.focus_handle().tab_stop(true),
                         config: config.clone(),
                         dragging: false,
+                        pressed: false,
                         start_pointer: 0.,
                         start_position: 0.,
                     }))
@@ -272,6 +275,7 @@ impl Element for Divider {
             .on_mouse_down(MouseButton::Left, move |event, window, cx| {
                 let mut state = down.borrow_mut();
                 window.focus(&state.focus, cx);
+                state.pressed = true;
                 state.dragging = true;
                 state.start_pointer = f32::from(if state.config.vertical {
                     event.position.y
@@ -312,12 +316,18 @@ impl Element for Divider {
     ) {
         prepaint.element.paint(window, cx);
         {
-            let state = prepaint.state.borrow();
+            let mut state = prepaint.state.borrow_mut();
             let (width, height) = state.config.dimensions();
             let mut pen = Pen::new(width, height);
             draw_split_divider(&mut pen, state.config.vertical);
-            if state.focus.is_focused(window) && window.last_input_was_keyboard() {
-                pen.frame(0, 0, width, height, state.config.theme.accent.dark);
+            // Ringed while it has the focus from the keyboard, not when a
+            // press gave it, whatever keys move it after.
+            let focused = state.focus.is_focused(window);
+            if !focused {
+                state.pressed = false;
+            }
+            if focused && !state.pressed {
+                crate::draw_focus_ring(&mut pen, 0, state.config.theme.accent.dark);
             }
             pen.paint(bounds.origin, window);
         }

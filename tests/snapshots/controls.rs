@@ -871,8 +871,7 @@ fn windows() -> Vec<Scene> {
             press(app, window, 130., 19., command);
             release(app, window, 130., 19., command);
             hover(app, window, 130., 76.);
-        })
-        .pending(),
+        }),
         Scene::elements("well-balloon", 260., 80., |_, _| {
             div()
                 .flex()

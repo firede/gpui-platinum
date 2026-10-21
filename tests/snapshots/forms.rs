@@ -448,9 +448,6 @@ fn pagesetup() -> Scene {
         page.update(cx, |page, cx| page.show(window, cx));
         Stack::column(10., 0., vec![picker.into(), page.into()])
     })
-    // The picker's list boxes are not yet drawn as the original's: their
-    // frame and rows wait on the list boxes' own work.
-    .pending()
 }
 
 /// The picker once Bold is checked, the page setup closed.
@@ -459,6 +456,4 @@ fn fontpicker() -> Scene {
         let picker = font_picker(cx, true);
         Stack::column(10., 0., vec![picker.into()])
     })
-    // As the page setup's: its list boxes.
-    .pending()
 }

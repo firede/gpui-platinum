@@ -384,7 +384,7 @@ impl TimeField {
             minute_step: 1,
             twelve_hours: None,
             typed: String::new(),
-            typed_at: Instant::now(),
+            typed_at: cx.background_executor().now(),
             style: FieldStyle::new(96),
             _subscription: subscription,
         }
@@ -488,10 +488,11 @@ impl TimeField {
         if self.segment == 2 {
             return;
         }
-        if self.typed_at.elapsed() > Duration::from_secs(1) {
+        let now = cx.background_executor().now();
+        if now.duration_since(self.typed_at) > Duration::from_secs(1) {
             self.typed.clear();
         }
-        self.typed_at = Instant::now();
+        self.typed_at = now;
         self.typed.push(digit);
         let twelve = self.layout().twelve;
         let maximum = if self.segment == 0 {

@@ -226,7 +226,11 @@ impl TextField {
                     .timer(Duration::from_millis(500))
                     .await;
                 let result = field.update(cx, |field, cx| {
-                    if field.focused && field.activity.elapsed() >= Duration::from_millis(500) {
+                    let idle = cx
+                        .background_executor()
+                        .now()
+                        .duration_since(field.activity);
+                    if field.focused && idle >= Duration::from_millis(500) {
                         field.blink_on = !field.blink_on;
                         cx.notify();
                     }
@@ -262,7 +266,7 @@ impl TextField {
             preceding_line: false,
             reveal_caret: false,
             focused: false,
-            activity: Instant::now(),
+            activity: cx.background_executor().now(),
             blink_on: true,
             _blink_task: blink_task,
         }
@@ -501,7 +505,7 @@ impl TextField {
     }
 
     fn activity(&mut self, cx: &mut Context<Self>) {
-        self.activity = Instant::now();
+        self.activity = cx.background_executor().now();
         self.blink_on = true;
         self.reveal_caret = true;
         self.preferred_x = None;

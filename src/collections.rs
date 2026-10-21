@@ -59,7 +59,7 @@ impl TreeView {
             theme: Theme::default(),
             language: Language::English,
             prefix: String::new(),
-            typed_at: Instant::now(),
+            typed_at: cx.background_executor().now(),
             default_icons: true,
         }
     }
@@ -186,11 +186,12 @@ impl TreeView {
                 if text.chars().any(char::is_control) {
                     return;
                 }
-                if self.typed_at.elapsed() > Duration::from_secs(1) {
+                let now = cx.background_executor().now();
+                if now.duration_since(self.typed_at) > Duration::from_secs(1) {
                     self.prefix.clear();
                 }
                 self.prefix.push_str(text);
-                self.typed_at = Instant::now();
+                self.typed_at = now;
                 self.model.select_prefix(&self.prefix);
             }
         }

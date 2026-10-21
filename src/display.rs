@@ -7,7 +7,7 @@ use crate::{
     widgets::text_in_language,
 };
 use gpui::{prelude::*, *};
-use std::{sync::OnceLock, time::Instant};
+use std::time::Instant;
 
 #[track_caller]
 pub fn paragraph(text: impl Into<SharedString>, font: Font, width: i32) -> impl IntoElement {
@@ -364,17 +364,27 @@ pub fn status_bar_in(
         }))
 }
 
-fn frame_number() -> usize {
-    static START: OnceLock<Instant> = OnceLock::new();
-    (START.get_or_init(Instant::now).elapsed().as_millis() / 100) as usize
+/// When the application's first animation began, by the executor's clock.
+struct AnimationStart(Instant);
+
+impl gpui::Global for AnimationStart {}
+
+/// The tenth of a second the animations are on, by the executor's clock.
+fn frame_number(cx: &mut App) -> usize {
+    let now = cx.background_executor().now();
+    if !cx.has_global::<AnimationStart>() {
+        cx.set_global(AnimationStart(now));
+    }
+    let start = cx.global::<AnimationStart>().0;
+    (now.duration_since(start).as_millis() / 100) as usize
 }
 
 pub fn indeterminate_progress(width: i32, theme: Theme) -> impl IntoElement {
     canvas(
         |_, _, _| (),
-        move |bounds, _, window, _| {
+        move |bounds, _, window, cx| {
             let mut pen = Pen::new(width, 14);
-            let phase = frame_number() as i32;
+            let phase = frame_number(cx) as i32;
             crate::draw_progress_indeterminate(&mut pen, phase, theme.accent);
             pen.paint(bounds.origin, window);
             window.request_animation_frame();
@@ -388,9 +398,9 @@ pub fn indeterminate_progress(width: i32, theme: Theme) -> impl IntoElement {
 pub fn chasing_arrows() -> impl IntoElement {
     canvas(
         |_, _, _| (),
-        move |bounds, _, window, _| {
+        move |bounds, _, window, cx| {
             let mut pen = Pen::new(16, 16);
-            draw_chasing_arrows(&mut pen, frame_number() % 8);
+            draw_chasing_arrows(&mut pen, frame_number(cx) % 8);
             pen.paint(bounds.origin, window);
             window.request_animation_frame();
         },

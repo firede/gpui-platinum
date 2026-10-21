@@ -73,7 +73,7 @@ impl ListBox {
             theme: Theme::default(),
             language: Language::English,
             prefix: String::new(),
-            typed_at: Instant::now(),
+            typed_at: cx.background_executor().now(),
             disabled: false,
             focus_ring: true,
             always_scrollbar: false,
@@ -245,11 +245,12 @@ impl ListBox {
             && !event.keystroke.modifiers.alt
             && let Some(text) = &event.keystroke.key_char
         {
-            if self.typed_at.elapsed() > Duration::from_secs(1) {
+            let now = cx.background_executor().now();
+            if now.duration_since(self.typed_at) > Duration::from_secs(1) {
                 self.prefix.clear();
             }
             self.prefix.push_str(&text.to_lowercase());
-            self.typed_at = Instant::now();
+            self.typed_at = now;
             if let Some(index) = self.items.iter().position(|item| {
                 !item.disabled && item.label.to_lowercase().starts_with(&self.prefix)
             }) {

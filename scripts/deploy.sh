@@ -8,5 +8,5 @@
 set -eu
 cd "$(dirname "$0")/.."
 
-./scripts/site.sh site/dist
+SITE=https://gpui-platinum.firede.com ./scripts/site.sh site/dist
 npx --yes wrangler@4 deploy

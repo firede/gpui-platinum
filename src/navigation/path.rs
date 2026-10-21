@@ -453,7 +453,7 @@ impl Render for Pagination {
         let title = crate::tr(language, "pageOf")
             .replace("{page}", &self.page.to_string())
             .replace("{pages}", &self.pages.to_string());
-        let width = Font::Bold.measure_in(&title, language) + 16;
+        let width = Font::Bold.measure_in(&title, language);
         div()
             .id("pagination")
             .role(Role::Group)
@@ -461,16 +461,16 @@ impl Render for Pagination {
             .track_focus(&self.focus)
             .tab_stop(true)
             .flex()
+            .items_center()
+            .gap(px(8.))
             .h(px(22.))
             .flex_shrink_0()
             .on_key_down(cx.listener(Self::key_down))
             .child(
-                page_arrow("previous", false, self.page > 1, theme).on_mouse_down(
-                    MouseButton::Left,
+                page_arrow("previous", false, self.page > 1, theme, language).on_click(
                     cx.listener(|this, _, window, cx| {
                         window.focus(&this.focus, cx);
                         this.select(this.page.saturating_sub(1), cx);
-                        cx.stop_propagation();
                     }),
                 ),
             )
@@ -478,38 +478,40 @@ impl Render for Pagination {
                 pen.language = language;
                 pen.text_centered(&title, Font::Bold, BLACK);
                 if focused {
-                    pen.hline(4, 20, width - 8, theme.accent.dark);
+                    pen.hline(0, 20, width, theme.accent.dark);
                 }
             }))
             .child(
-                page_arrow("next", true, self.page < self.pages, theme).on_mouse_down(
-                    MouseButton::Left,
+                page_arrow("next", true, self.page < self.pages, theme, language).on_click(
                     cx.listener(|this, _, window, cx| {
                         window.focus(&this.focus, cx);
                         this.select(this.page + 1, cx);
-                        cx.stop_propagation();
                     }),
                 ),
             )
     }
 }
-fn page_arrow(id: &'static str, next: bool, enabled: bool, _: Theme) -> gpui::Stateful<gpui::Div> {
-    div()
-        .id(id)
-        .role(Role::Button)
-        .aria_label(if next { "Next page" } else { "Previous page" })
-        .w(px(22.))
-        .h(px(22.))
-        .child(drawing(22., 22., move |pen, _, _| {
-            pen.raised(GRAY_2);
-            for row in 0..7 {
-                let width = 4 - (row - 3i32).abs();
-                pen.hline(
-                    if next { 9 } else { 13 - width },
-                    7 + row,
-                    width,
-                    if enabled { BLACK } else { GRAY_7 },
-                );
-            }
-        }))
+
+/// The month arrows of the calendar, on the bevel buttons that turn pages.
+const PAGE_BACK: [&str; 7] = ["...#", "..##", ".###", "####", ".###", "..##", "...#"];
+const PAGE_NEXT: [&str; 7] = ["#...", "##..", "###.", "####", "###.", "##..", "#..."];
+
+/// A square bevel button turning to the previous page, or the next, which
+/// leaves the keyboard to the pagination around it.
+fn page_arrow(
+    id: &'static str,
+    next: bool,
+    enabled: bool,
+    theme: Theme,
+    language: Language,
+) -> crate::Control {
+    let label = if next { "nextPage" } else { "previousPage" };
+    crate::bevel_button(id, crate::tr(language, label))
+        .icon_only(if next { &PAGE_NEXT } else { &PAGE_BACK })
+        .width(22)
+        .height(22)
+        .disabled(!enabled)
+        .tab_stop(false)
+        .theme(theme)
+        .language(language)
 }

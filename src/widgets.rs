@@ -211,6 +211,7 @@ pub struct Control {
     height: Option<i32>,
     icon: Option<&'static [&'static str]>,
     icon_only: bool,
+    menu_arrow: bool,
     pub(crate) disabled: bool,
     default: bool,
     cancel: bool,
@@ -237,6 +238,7 @@ impl Control {
             height: None,
             icon: None,
             icon_only: false,
+            menu_arrow: false,
             disabled: false,
             default: false,
             cancel: false,
@@ -277,6 +279,12 @@ impl Control {
     }
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        self
+    }
+    /// Shows a bevel button's pop-down arrow after its content, as a
+    /// button that opens a menu.
+    pub fn menu_arrow(mut self, arrow: bool) -> Self {
+        self.menu_arrow = arrow;
         self
     }
     pub fn default_button(mut self) -> Self {
@@ -331,6 +339,11 @@ impl Control {
                     + icon_width
                     + if icon_width > 0 && label_width > 0 {
                         4
+                    } else {
+                        0
+                    }
+                    + if self.menu_arrow {
+                        BEVEL_ARROW_WIDTH
                     } else {
                         0
                     }
@@ -543,6 +556,7 @@ impl Element for Control {
         let language = self.language;
         let icon = self.icon;
         let icon_only = self.icon_only;
+        let menu_arrow = self.menu_arrow;
         let mut element = element
             .child(drawing(
                 (width + extra) as f32,
@@ -557,13 +571,12 @@ impl Element for Control {
                     let mut inner = Pen::new(width, height);
                     inner.language = language;
                     if kind == ControlKind::Bevel {
-                        draw_bevel_content(
+                        draw_bevel_parts(
                             &mut inner,
                             if icon_only { "" } else { &label },
                             icon,
-                            disabled,
-                            pressed,
-                            selected,
+                            menu_arrow,
+                            (disabled, pressed, selected),
                             theme,
                         );
                     } else {
@@ -636,6 +649,20 @@ pub fn draw_bevel_content(
     on: bool,
     theme: Theme,
 ) {
+    draw_bevel_parts(pen, label, icon, false, (disabled, pressed, on), theme);
+}
+
+/// The room a bevel button's pop-down arrow takes after its content.
+const BEVEL_ARROW_WIDTH: i32 = 9;
+
+fn draw_bevel_parts(
+    pen: &mut Pen,
+    label: &str,
+    icon: Option<&[&str]>,
+    arrow: bool,
+    (disabled, pressed, on): (bool, bool, bool),
+    theme: Theme,
+) {
     draw_bevel_button(pen, disabled, pressed, on);
     let label_width = Font::Bold.measure_in(label, pen.language);
     let icon_width = icon.map_or(0, |rows| {
@@ -647,7 +674,8 @@ pub fn draw_bevel_content(
             4
         } else {
             0
-        };
+        }
+        + if arrow { BEVEL_ARROW_WIDTH } else { 0 };
     let offset = i32::from(pressed || on);
     let mut x = (pen.width - content_width) / 2 + offset;
     if let Some(rows) = icon {
@@ -671,17 +699,19 @@ pub fn draw_bevel_content(
         );
         x += icon_width + 4;
     }
-    pen.text(
-        x,
-        (pen.height - 9) / 2 + 9 + offset,
-        label,
-        Font::Bold,
-        if disabled || crate::window::content_is_inactive() {
-            GRAY_8
-        } else {
-            BLACK
-        },
-    );
+    let ink = if disabled || crate::window::content_is_inactive() {
+        GRAY_8
+    } else {
+        BLACK
+    };
+    pen.text(x, (pen.height - 9) / 2 + 9 + offset, label, Font::Bold, ink);
+    if arrow {
+        // A triangle pointing down, 8 in from the right side.
+        let (x, y) = (pen.width - 8 - 5, (pen.height - 3) / 2 + offset);
+        for row in 0..3 {
+            pen.hline(x + row, y + row, 5 - 2 * row, ink);
+        }
+    }
 }
 
 pub fn button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Control {
@@ -1076,7 +1106,7 @@ pub fn draw_disclosure(pen: &mut Pen, open: bool, disabled: bool, pressed: bool)
     let (line, fill, highlight) = if disabled {
         (GRAY_6, GRAY_3, GRAY_3)
     } else if crate::window::content_is_inactive() {
-        (GRAY_8, GRAY_2, GRAY_2)
+        (GRAY_8, GRAY_3, GRAY_3)
     } else if pressed {
         (BLACK, BLACK, BLACK)
     } else {

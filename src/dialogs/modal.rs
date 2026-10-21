@@ -284,6 +284,7 @@ pub(super) fn modal<T: Render + 'static>(
 
 pub(super) fn draw_frame(pen: &mut Pen, theme: Theme) {
     let (w, h) = (pen.width, pen.height);
+    pen.drop_shadow();
     pen.rect(0, 0, w, h, theme.background);
     pen.frame(0, 0, w, h, BLACK);
     pen.bevel(1, 1, w - 2, h - 2, WHITE, GRAY_7);

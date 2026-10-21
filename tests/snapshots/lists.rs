@@ -12,7 +12,6 @@ use gpui_platinum::{
     TreeView, draw_list_box,
     models::{Cell, FileTree, NodeKind, Sheet, TreeNode},
     paint::{Pen, drawing},
-    text_input,
     theme::GRAY_2,
 };
 use std::{cell::RefCell, rc::Rc};
@@ -513,17 +512,7 @@ pub fn scenes() -> Vec<Scene> {
         }),
     );
 
-    // The original's tests have no East Asian faces: lines fit the Latin.
-    scenes.into_iter().map(latin_lines).collect()
-}
-
-fn latin_lines(mut scene: Scene) -> Scene {
-    let view = scene.view;
-    scene.view = Box::new(move |window, cx| {
-        text_input::set_east_asian_line_room(false);
-        view(window, cx)
-    });
-    scene
+    scenes
 }
 
 const PRODUCE: [(&str, &str, f64); 9] = [

@@ -200,6 +200,9 @@ fn draw(platform: &std::rc::Rc<dyn gpui::Platform>, scene: Scene) -> RgbaImage {
         gpui_platform::current_headless_renderer,
     );
     app.update(gpui_platinum::init);
+    // The original's golden tests and gallery run without East Asian faces,
+    // their lines fitting the Latin face alone; its desktop has them.
+    gpui_platinum::text_input::set_east_asian_line_room(scene.name.starts_with("desktop"));
     let view = scene.view;
     let window = app
         .open_window(

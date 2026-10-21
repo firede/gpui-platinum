@@ -4,6 +4,11 @@ name: site
 # published, from the release's tag, or by hand, from the branch chosen.
 # Needs the repository's secret CLOUDFLARE_API_TOKEN: a token that may edit
 # Workers (Cloudflare's "Edit Cloudflare Workers" template).
+#
+# On macOS: the desktop example draws the page's pictures with GPUI's
+# offscreen renderer, which there is Metal, the renderer the pictures are
+# checked against (tests/snapshots); on Linux it would be wgpu on a
+# software adapter, whose pictures nothing checks.
 on:
   release:
     types: [published]
@@ -18,13 +23,15 @@ concurrency:
 
 jobs:
   deploy:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    runs-on: macos-latest
+    timeout-minutes: 30
     environment:
       name: site
       url: https://gpui-platinum.firede.com
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - run: ./scripts/deploy.sh
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

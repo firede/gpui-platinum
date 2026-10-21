@@ -392,6 +392,72 @@ fn boards() -> Vec<Scene> {
     ]
 }
 
+/// Draws lines of text, each from the top `y` of its line as the original
+/// places them, in the system (bold) or application (small) face.
+fn lines(pen: &mut Pen, lines: &[(i32, &str, Font)]) {
+    for &(y, text, font) in lines {
+        pen.text(0, y + font.ascent(), text, font, BLACK);
+    }
+}
+
+fn text() -> Vec<Scene> {
+    const SAMPLES: &str = "€5 £5 ¥5 ¢5 ® ™ ±1 §2 ¶ ¿Qué? ¡Sí! «oui» ‹a› a·b 5µm ¬ ´ ¨ ¸";
+    vec![Scene::new("accents", 400., 278., |_, cx| {
+        let name = cx.new(|cx| {
+            TextField::new(cx)
+                .with_text("Café")
+                .label("Name")
+                .size(120., 22.)
+        });
+        let notes = cx.new(|cx| {
+            TextField::new(cx)
+                .multiline(true)
+                .with_text(
+                    "ÉLÈVE, Über, Ångström, Æble, Þór\nfaçade, naïve, señor, Straße, smørrebrød, cœur, ðað",
+                )
+                .label("Notes")
+                .size(300., 40.)
+        });
+        Held::new((name, notes), |(name, notes), _, _| {
+            div()
+                .flex()
+                .flex_col()
+                .items_start()
+                .p(px(8.))
+                .gap(px(8.))
+                .child(drawing(384., 140., |pen, _, _| {
+                    let (system, app) = (Font::Bold, Font::Small);
+                    lines(
+                        pen,
+                        &[
+                            (46, SAMPLES, system),
+                            (60, SAMPLES, app),
+                            (76, "Łódź, Żółć, Český Krumlov, Říčany, Győr, Ğüneş, Ąę, ďť İı", system),
+                            (92, "Łódź, Żółć, Český Krumlov, Říčany, Győr, Ğüneş, Ąę, ĺŕ ďť ĎŤ İı", app),
+                            (108, "Iași, Țară; Rīga, Ķemeri, Liepāja, Ņ", system),
+                            (124, "Iași, Țară; Rīga, Ķemeri, Liepāja, Ņ", app),
+                            (4, "ÀÁÂÃÄÅÆ ÇÈÉÊË ÌÍÎÏ Ñ ÒÓÔÕÖØŒ ÙÚÛÜ Ý", system),
+                            (18, "àáâãäåæ çèéêë ìíîï ñ òóôõöøœ ùúûü ýÿ ß Ðð Þþ", system),
+                            (
+                                32,
+                                "ÀÁÂÃÄÅÆ ÇÈÉÊË ÌÍÎÏ Ñ ÒÓÔÕÖØŒ ÙÚÛÜ Ý àáâãäåæ çèéêë ìíîï ñ òóôõöøœ ùúûü ýÿ ß Ðð Þþ",
+                                app,
+                            ),
+                        ],
+                    )
+                }))
+                .child(button("resume", "Résumé"))
+                .child(name.clone())
+                .child(notes.clone())
+        })
+    })
+    // The original drew this without East Asian faces, its text area's
+    // lines centering the Latin ink alone; this library always has them,
+    // whose taller ink puts each line a pixel lower, as the original's
+    // does once it is given them.
+    .pending()]
+}
+
 fn status() -> Vec<Scene> {
     vec![Scene::new("stepper-status", 420., 80., |_, cx| {
         let stepper = cx.new(|cx| Stepper::new(cx).label("Count"));
@@ -487,6 +553,137 @@ fn popup_windows(name: &'static str, files_front: bool, tools_x: i32) -> Scene {
                 .child(tools.clone())
         })
     })
+}
+
+/// A tab control as the original builds one: the tabs, 8 in from the
+/// pane's left, over the pane, whose content is 12 in from its sides.
+fn tab_control(
+    id: &'static str,
+    selected: usize,
+    labels: &'static [&'static str],
+    (width, height): (i32, i32),
+    content: impl IntoElement,
+) -> impl IntoElement {
+    let widths: Vec<i32> = labels.iter().map(|l| Font::Bold.measure(l) + 24).collect();
+    let gap_x = 8 + widths[..selected].iter().map(|w| w - 1).sum::<i32>();
+    let gap_width = widths[selected];
+    let top = 23;
+    div()
+        .relative()
+        .w(px(width as f32))
+        .h(px(height as f32))
+        .flex_shrink_0()
+        .child(div().absolute().top(px(top as f32)).child(drawing(
+            width as f32,
+            (height - top) as f32,
+            move |pen, _, _| draw_tab_pane(pen, gap_x, gap_width),
+        )))
+        .child(
+            div()
+                .absolute()
+                .left(px(8.))
+                .top_0()
+                .child(ChoiceGroup::tabs(id, selected, labels.iter().copied())),
+        )
+        .child(
+            div()
+                .absolute()
+                .left(px(12.))
+                .right(px(12.))
+                .top(px((top + 12) as f32))
+                .flex()
+                .flex_col()
+                .gap(px(6.))
+                .child(content),
+        )
+}
+
+const BOLD_ICON: &[&str] = &[
+    "######..", ".##..##.", ".##..##.", ".#####..", ".##..##.", ".##..##.", "######..",
+];
+
+const PAGE_ICON: &[&str] = &[
+    "#####...", "#...##..", "#...###.", "#.....#.", "#.###.#.", "#.....#.", "#.###.#.", "#.....#.",
+    "#######.",
+];
+
+fn groups() -> Vec<Scene> {
+    vec![
+        Scene::elements("bevel-states", 460., 110., |_, _| {
+            div()
+                .flex()
+                .flex_col()
+                .p(px(8.))
+                .gap(px(8.))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .child(bevel_button("normal", "Normal"))
+                        .child(bevel_button("on", "On").selected(true))
+                        .child(bevel_button("off", "Off").selected(false))
+                        .child(bevel_button("disabled", "Disabled").disabled(true))
+                        .child(bevel_button("page", "Page").icon(PAGE_ICON))
+                        .child(icon_button("bold", BOLD_ICON, "Bold").selected(true))
+                        .child(bevel_button("menu", "Menu").menu_arrow(true)),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .child(drawing(60., 22., |pen, _, _| {
+                            draw_bevel_button(pen, false, true, false);
+                            let x = (pen.width - Font::Bold.measure("Pressed")) / 2 + 1;
+                            let top = 1 + (pen.height - Font::Bold.cap_height()) / 2;
+                            pen.text(x, top + Font::Bold.ascent(), "Pressed", Font::Bold, BLACK);
+                        }))
+                        .child(ChoiceGroup::segments(
+                            "segments",
+                            1,
+                            ["Left", "Center", "Right"],
+                        )),
+                )
+                .child(
+                    Toolbar::new()
+                        .item(icon_button("new", PAGE_ICON, "New"))
+                        .separator()
+                        .item(icon_button("bold-tool", BOLD_ICON, "Bold").selected(true))
+                        .item(bevel_button("plain", "Plain")),
+                )
+        }),
+        Scene::elements("check-radio-widgets", 220., 80., |_, _| {
+            div()
+                .flex()
+                .flex_col()
+                .p(px(6.))
+                .gap(px(2.))
+                .child(checkbox("show", "Show hidden files", CheckState::On))
+                .child(checkbox("disabled", "Disabled option", CheckState::Off).disabled(true))
+                .child(ChoiceGroup::radio("sort", 0, ["By name", "By date"]))
+        }),
+        Scene::elements("group-tabs", 420., 130., |_, _| {
+            div()
+                .flex()
+                .items_start()
+                .p(px(8.))
+                .gap(px(10.))
+                .child(
+                    group_box("Options", 140)
+                        .child(checkbox("sounds", "Sounds", CheckState::On))
+                        .child(separator(140 - 24))
+                        .child(checkbox("blink", "Blink", CheckState::On)),
+                )
+                .child(tab_control(
+                    "tabs",
+                    1,
+                    &["General", "Views", "Labels"],
+                    (240, 110),
+                    checkbox("content", "Tab content", CheckState::On),
+                ))
+        }),
+    ]
 }
 
 fn windows() -> Vec<Scene> {
@@ -703,6 +900,8 @@ pub fn scenes() -> Vec<Scene> {
     let mut scenes = boards();
     scenes.extend(dialogs());
     scenes.extend(status());
+    scenes.extend(text());
+    scenes.extend(groups());
     scenes.extend(windows());
     scenes
 }

@@ -8,8 +8,8 @@ use gpui::{
     div, point, prelude::*, px, rgb,
 };
 use gpui_platinum::{
-    ListBox, RichTextArea, SheetView, Table, TableColumn, TextField, Theme, TreeView,
-    draw_list_box,
+    ListBox, RichTextArea, Ruler, RulerState, SheetView, Table, TableColumn, TextField, Theme,
+    TreeView, draw_list_box,
     models::{Cell, FileTree, NodeKind, Sheet, TreeNode},
     paint::{Pen, drawing},
     text_input,
@@ -494,6 +494,24 @@ pub fn scenes() -> Vec<Scene> {
             .size(160., 70.)
             .label("Text")
     }));
+
+    // The left margin dragged to 36, and the first-line indent to 18.
+    let ruler = slot::<Ruler>();
+    scenes.push(
+        hosted("ruler", 300., 50., 8., &ruler, |cx| {
+            let state = RulerState {
+                left: 16,
+                right: 240,
+                first: 0,
+            };
+            Ruler::new(state, cx).width(284)
+        })
+        .prepare(|app, window| {
+            let none = Modifiers::default();
+            drag(app, window, (24., 25.), (48., 25.), none);
+            drag(app, window, (45., 11.), (68., 11.), none);
+        }),
+    );
 
     // The original's tests have no East Asian faces: lines fit the Latin.
     scenes.into_iter().map(latin_lines).collect()

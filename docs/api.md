@@ -156,7 +156,7 @@ Click selects one row; Shift extends a range; Command/Control toggles individual
 
 ### Icons and other navigation
 
-`IconItem::new(title, IconKind)` uses the bundled artwork. `.image(source)` or `IconItem::from_image` accepts a custom `ImageSource`, drawn in a 32-pixel square. `IconView` scrolls, selects and activates items; its events also support the desktop example's drag/drop behavior.
+`IconItem::new(title, IconKind)` uses the bundled artwork. `.image(source)` or `IconItem::from_image` accepts a custom `ImageSource`, drawn in a 32-pixel square. A 32×32 `RenderImage` whose pixels are each opaque or clear is drawn pixel for pixel and, when chosen, darkened by half, as the original does; `.selected_image` supplies a chosen look of its own. `IconView` scrolls, selects and activates items; its events also support the desktop example's drag/drop behavior.
 
 `DocumentTabs` manages document selection and close events. `PathPopup`, `Breadcrumbs` and `Pagination` emit path/page changes. `Ruler` emits indentation changes; `Split` reports a divider position: the first pane's width in pixels, or with `.percent()` the percentage of the room it takes, so that both panes grow and shrink with the split. A split too small for the first pane's width shrinks the pane, the second keeping its least, and leaves the width for when it grows again. `ScrollView` wraps GPUI scroll state.
 

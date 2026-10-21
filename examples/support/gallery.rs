@@ -1291,19 +1291,11 @@ fn gallery_icons() -> Vec<IconItem> {
                 !inside(x - 1, y) || !inside(x + 1, y) || !inside(x, y - 1) || !inside(x, y + 1);
             rgba(if edge { BLACK } else { color })
         });
-        let mut selected = image.clone();
-        for pixel in selected.pixels_mut() {
-            for channel in &mut pixel.0[..3] {
-                *channel = (*channel as u16 * 128 / 255) as u8;
-            }
-        }
+        // Chosen, the icon view darkens it by half, as the original does.
         IconItem::from_image(
             title,
             Arc::new(RenderImage::new(vec![image::Frame::new(image)])),
         )
-        .selected_image(Arc::new(RenderImage::new(vec![image::Frame::new(
-            selected,
-        )])))
     })
     .into()
 }

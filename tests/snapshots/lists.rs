@@ -8,12 +8,12 @@ use gpui::{
     div, point, prelude::*, px, rgb,
 };
 use gpui_platinum::{
-    Breadcrumbs, ColumnView, DocumentTabs, Font, ListBox, Pagination, PathPopup, RichTextArea,
-    Ruler, RulerState, ScrollView, SheetView, Split, Table, TableColumn, TextField, Theme,
-    TreeView, draw_list_box,
+    Breadcrumbs, ColumnView, DocumentTabs, Font, IconItem, IconView, ListBox, Pagination,
+    PathPopup, PlatinumWindow, PlatinumWindowOptions, RichTextArea, Ruler, RulerState, ScrollView,
+    SheetView, Split, Table, TableColumn, TextField, Theme, TreeView, draw_list_box,
     models::{Cell, FileTree, NodeKind, Sheet, TreeNode},
     paint::{Pen, drawing},
-    theme::{BLACK, GRAY_2},
+    theme::{BLACK, GRAY_2, GRAY_5},
 };
 use std::{cell::RefCell, rc::Rc};
 
@@ -559,6 +559,38 @@ pub fn scenes() -> Vec<Scene> {
         Host(tabs.into(), 10., false)
     }));
 
+    // Four icons in a window, Beta clicked, Right to Gamma, which scrolls
+    // into view, and Gamma clicked; a utility window in front.
+    scenes.push(
+        Scene::new("iconview-utility", 320., 180., |_, cx| {
+            let items = ["Alpha", "Beta", "Gamma", "Delta"].map(test_icon).into();
+            let icons = cx.new(|cx| IconView::new(items, cx).size(268, 95).label("Icons"));
+            let frame = cx.new(|cx| {
+                PlatinumWindow::new("Icons", cx)
+                    .position(10., 10.)
+                    .size(280., 120.)
+                    .content(icons)
+            });
+            let tools = cx.new(|cx| {
+                PlatinumWindow::new("Tools", cx)
+                    .position(220., 100.)
+                    .size(90., 60.)
+                    .options(PlatinumWindowOptions {
+                        utility: true,
+                        ..Default::default()
+                    })
+            });
+            Desk(vec![frame.into(), tools.into()])
+        })
+        .prepare(|app, window| {
+            // Beta's icon, in the second cell of the first row.
+            click(app, window, 16. + 84. + 42., 29. + 20.);
+            keys(app, window, "right");
+            // Gamma's, scrolled up to the bottom of the view.
+            click(app, window, 16. + 42., 29. + 50.);
+        }),
+    );
+
     // Panes stacked, the first 40 tall.
     scenes.push(Scene::new("split-vertical", 180., 140., |_, _| {
         Elements(Box::new(|| {
@@ -671,6 +703,35 @@ impl Render for Elements {
 
 /// Views in a column, padded and 10 apart, then a card, an empty state and
 /// a status bar, as the original's paths-and-pages scene lays them.
+/// Windows on the desk's Gray5, the last in front.
+struct Desk(Vec<gpui::AnyView>);
+
+impl Render for Desk {
+    fn render(&mut self, _: &mut gpui::Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+        div()
+            .relative()
+            .size_full()
+            .bg(rgb(GRAY_5))
+            .children(self.0.clone())
+    }
+}
+
+/// The original's icon of its tests: a lavender square in a black outline.
+fn test_icon(title: &'static str) -> IconItem {
+    let image = image::RgbaImage::from_fn(32, 32, |x, y| {
+        if !(6..26).contains(&x) || !(4..28).contains(&y) {
+            image::Rgba([0, 0, 0, 0])
+        } else if x == 6 || x == 25 || y == 4 || y == 27 {
+            image::Rgba([0, 0, 0, 255])
+        } else {
+            // Blue, green and red, as GPUI's images hold them.
+            image::Rgba([0xdd, 0x88, 0x99, 255])
+        }
+    });
+    let image = gpui::RenderImage::new(vec![image::Frame::new(image)]);
+    IconItem::from_image(title, std::sync::Arc::new(image))
+}
+
 struct Column {
     views: Vec<gpui::AnyView>,
 }

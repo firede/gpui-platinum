@@ -17,6 +17,7 @@ use gpui_platinum::{
     paint::drawing,
     paragraph_in, text_in_language,
     theme::*,
+    window::GROW_BOX_SIZE,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,6 +68,7 @@ impl Cabinet {
                 .size(328, 174)
                 .always_scrollbar(true)
                 .frame(false)
+                .scroll_bar_room(GROW_BOX_SIZE - 1)
         });
         let table = cx.new(|cx| {
             Table::with_columns(
@@ -81,7 +83,11 @@ impl Cabinet {
             .size(328, 174)
             .always_scrollbar(true)
         });
-        let columns = cx.new(|cx| ColumnView::new(FileTree::new(Vec::new()), cx).size(328, 174));
+        let columns = cx.new(|cx| {
+            ColumnView::new(FileTree::new(Vec::new()), cx)
+                .size(328, 174)
+                .scroll_bar_room(GROW_BOX_SIZE - 1)
+        });
         cx.subscribe(&icons, |this, _, event, cx| match event {
             IconEvent::Selected(index) => this.select_index(*index, cx),
             IconEvent::Activated(index) => {
@@ -193,8 +199,12 @@ impl Cabinet {
         let body = self.height - 18;
         self.icons
             .update(cx, |view, cx| view.set_size(self.width, body, cx));
-        self.table
-            .update(cx, |view, cx| view.set_size(self.width, body, cx));
+        // Filling the window: the list's ring under the window's lines and
+        // the header's, its outline on them and on the resize corner's top
+        // edge.
+        self.table.update(cx, |view, cx| {
+            view.set_size(self.width + 4, body + 2 - (GROW_BOX_SIZE - 2), cx)
+        });
         self.columns
             .update(cx, |view, cx| view.set_size(self.width, body, cx));
         cx.notify();
@@ -343,13 +353,20 @@ impl Render for Cabinet {
             )],
         );
         let content = match self.mode {
-            1 => self.table.clone().into_any_element(),
+            1 => div()
+                .mt(px(-2.))
+                .ml(px(-2.))
+                .child(self.table.clone())
+                .into_any_element(),
             2 => self.columns.clone().into_any_element(),
+            // Room under the buttons for the resize corner, as the list view
+            // leaves.
             3 => div()
                 .relative()
                 .w_full()
-                .h(px((self.height - 18) as f32))
+                .h(px((self.height - 18 - GROW_BOX_SIZE) as f32))
                 .overflow_hidden()
+                .bg(gpui::rgb(WHITE))
                 .children(
                     self.ids
                         .iter()
@@ -444,7 +461,6 @@ impl Render for Cabinet {
             .relative()
             .w_full()
             .h_full()
-            .bg(gpui::rgb(WHITE))
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(|this, _, _, cx| {

@@ -200,6 +200,7 @@ pub struct TextField {
     disabled: bool,
     read_only: bool,
     borderless: bool,
+    document: bool,
     width: f32,
     height: f32,
     language: Language,
@@ -253,6 +254,7 @@ impl TextField {
             disabled: false,
             read_only: false,
             borderless: false,
+            document: false,
             width: 160.,
             height: 22.,
             language: Language::English,
@@ -314,6 +316,16 @@ impl TextField {
 
     pub fn borderless(mut self, borderless: bool) -> Self {
         self.borderless = borderless;
+        self
+    }
+
+    /// Make a text area the content of a document window: white to the
+    /// window's edges, its scroll bar laid over the window's line at its
+    /// right and the lines above and below it as a window's own scroll bar
+    /// is, no ring or outline of its own, and no focus ring: the window
+    /// shows where typing goes. `set_document_layout` sets its margins.
+    pub fn document(mut self, document: bool) -> Self {
+        self.document = document;
         self
     }
 
@@ -492,6 +504,11 @@ impl TextField {
 
     pub fn set_borderless(&mut self, borderless: bool, cx: &mut Context<Self>) {
         self.borderless = borderless;
+        cx.notify();
+    }
+
+    pub fn set_document(&mut self, document: bool, cx: &mut Context<Self>) {
+        self.document = document;
         cx.notify();
     }
 
@@ -972,7 +989,11 @@ impl TextField {
         let ink = if self.disabled { GRAY_8 } else { BLACK };
         let inactive = crate::window::content_is_inactive();
         let mut pen = Pen::new(width, height);
-        if self.borderless {
+        if self.document && self.multiline {
+            // A document's content: white to the window's edges, its scroll
+            // bar over the window's line at its right.
+            pen.rect(0, 0, width - SCROLLBAR_WIDTH as i32 + 1, height, WHITE);
+        } else if self.borderless {
             pen.rect(0, 0, width, height, face);
         } else {
             pen.bevel(0, 0, width, height, GRAY_7, WHITE);
@@ -1465,15 +1486,22 @@ impl Render for TextField {
                 .size_full(),
             )
             .when(self.multiline, |element| {
+                // A document's scroll bar lies over the window's lines at its
+                // right, top and bottom.
+                let (inset, length) = if self.document {
+                    (-1., self.height + 2.)
+                } else {
+                    (1., self.height - 2.)
+                };
                 element.child(
-                    div().absolute().right(px(1.)).top(px(1.)).child(
+                    div().absolute().right(px(inset)).top(px(inset)).child(
                         crate::ScrollBar::new(
                             "text-scroll",
                             self.scroll_y as f64,
                             self.viewport_height() as f64,
                             self.content_height() as f64,
                         )
-                        .length((self.height - 2.) as i32)
+                        .length(length as i32)
                         .step(LINE_HEIGHT as f64)
                         .theme(self.theme)
                         .tab_stop(false)

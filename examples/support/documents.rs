@@ -12,6 +12,7 @@ use gpui_platinum::{
     paint::drawing,
     text_in_language, text_input,
     theme::*,
+    window::GROW_BOX_SIZE,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -120,6 +121,11 @@ impl Documents {
             }
             DocumentKind::Scribe => {
                 let area = cx.new(RichTextArea::new);
+                // The document fills the window, its scroll bar over the
+                // window's line, down to the row of the resize corner.
+                area.read(cx)
+                    .editor()
+                    .update(cx, |editor, cx| editor.set_document(true, cx));
                 let ruler = cx.new(|cx| {
                     Ruler::new(
                         RulerState {
@@ -375,7 +381,8 @@ impl Documents {
                 ruler,
                 show_ruler,
             } => {
-                let height = self.height - 46 - if *show_ruler { 28 } else { 0 };
+                // Under the toolbar and the ruler, over the foot.
+                let height = self.height - 28 - GROW_BOX_SIZE - if *show_ruler { 22 } else { 0 };
                 area.update(cx, |area, cx| {
                     area.set_size(self.width as f32, height.max(80) as f32, cx)
                 });
@@ -935,13 +942,27 @@ impl Render for Documents {
                     .child(toolbar)
                     .when(*show_ruler, |el| el.child(ruler.clone()))
                     .child(area.clone())
-                    .child(
+                    .child({
+                        // The word count in a placard beside the resize corner.
+                        let width = self.width - GROW_BOX_SIZE;
                         div()
-                            .h(px(18.))
-                            .pl(px(3.))
-                            .bg(rgb(GRAY_2))
-                            .child(text_in_language(count, Font::Small, BLACK, lang)),
-                    )
+                            .relative()
+                            .w(px(width as f32))
+                            .h(px(GROW_BOX_SIZE as f32))
+                            .pl(px(6.))
+                            .child(div().absolute().left_0().top_0().child(drawing(
+                                width as f32,
+                                GROW_BOX_SIZE as f32,
+                                |pen, _, _| {
+                                    pen.rect(0, 0, pen.width, pen.height, GRAY_2);
+                                    pen.bevel(0, 0, pen.width, pen.height, WHITE, GRAY_7);
+                                },
+                            )))
+                            .child(
+                                text_in_language(count, Font::Small, BLACK, lang)
+                                    .height(GROW_BOX_SIZE),
+                            )
+                    })
                     .into_any_element()
             }
             Content::Ledger(sheet) => sheet.clone().into_any_element(),

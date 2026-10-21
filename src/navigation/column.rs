@@ -30,6 +30,7 @@ pub struct ColumnView {
     width: i32,
     height: i32,
     always_scrollbar: bool,
+    scroll_bar_room: i32,
     theme: Theme,
     language: Language,
 }
@@ -54,6 +55,7 @@ impl ColumnView {
             width: 420,
             height: 160,
             always_scrollbar: false,
+            scroll_bar_room: 0,
             theme: Theme::default(),
             language: Language::English,
         }
@@ -67,6 +69,13 @@ impl ColumnView {
     /// Keeps vertical scroll bars visible even when a column's rows fit.
     pub fn always_scrollbar(mut self, always: bool) -> Self {
         self.always_scrollbar = always;
+        self
+    }
+    /// Leaves `room` pixels at the right of the horizontal scroll bar, as for
+    /// the resize corner of the window the view fills, and lays the bar over
+    /// that window's lines at its left and bottom.
+    pub fn scroll_bar_room(mut self, room: i32) -> Self {
+        self.scroll_bar_room = room.max(0);
         self
     }
     pub fn theme(mut self, theme: Theme) -> Self {
@@ -102,7 +111,7 @@ impl ColumnView {
                 .position(|node| node.id == self.path[column])
             {
                 let top = row as i32 * ROW_HEIGHT;
-                let bottom = top + ROW_HEIGHT - (self.height - 16);
+                let bottom = top + ROW_HEIGHT - self.lists_height();
                 self.offsets[column] = self.offsets[column].min(top).max(bottom.max(0));
             }
         }
@@ -135,6 +144,11 @@ impl ColumnView {
         self.language = language;
         cx.notify();
     }
+    /// The height of the lists above the horizontal scroll bar, which lies
+    /// over their bottom line, or, filling a window, over the window's.
+    fn lists_height(&self) -> i32 {
+        self.height - if self.scroll_bar_room > 0 { 14 } else { 16 }
+    }
     fn rows(&self, column: usize) -> &[TreeNode] {
         if column == 0 {
             &self.model.roots
@@ -162,7 +176,7 @@ impl ColumnView {
         self.columns() as i32 * (COLUMN_WIDTH - 1) + 1
     }
     fn max_vertical(&self, column: usize) -> i32 {
-        (self.rows(column).len() as i32 * ROW_HEIGHT - (self.height - 16)).max(0)
+        (self.rows(column).len() as i32 * ROW_HEIGHT - self.lists_height()).max(0)
     }
     fn clamp_scroll_offsets(&mut self) {
         self.offsets.resize(self.columns(), 0);
@@ -186,8 +200,8 @@ impl ColumnView {
             if top < self.offsets[column] {
                 self.offsets[column] = top;
             }
-            if top + ROW_HEIGHT > self.offsets[column] + self.height - 16 {
-                self.offsets[column] = top + ROW_HEIGHT - (self.height - 16);
+            if top + ROW_HEIGHT > self.offsets[column] + self.lists_height() {
+                self.offsets[column] = top + ROW_HEIGHT - self.lists_height();
             }
         }
         cx.emit(ColumnEvent::Selected(id));
@@ -205,7 +219,7 @@ impl ColumnView {
                 if rows.is_empty() {
                     return;
                 }
-                let page = ((self.height - 16) / ROW_HEIGHT).max(1) as usize;
+                let page = (self.lists_height() / ROW_HEIGHT).max(1) as usize;
                 let at = current.unwrap_or(0);
                 let next = match event.keystroke.key.as_str() {
                     "up" => at.saturating_sub(1),
@@ -242,7 +256,7 @@ impl ColumnView {
 impl Render for ColumnView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.clamp_scroll_offsets();
-        let height = self.height - 16;
+        let height = self.lists_height();
         let theme = self.theme;
         let language = self.language;
         let focused = self.focus.is_focused(window);
@@ -378,6 +392,7 @@ impl Render for ColumnView {
             .w(px(self.width as f32))
             .h(px(self.height as f32))
             .flex_shrink_0()
+            .relative()
             .bg(gpui::rgb(WHITE))
             .on_key_down(cx.listener(Self::key_down))
             .on_mouse_down(
@@ -400,23 +415,33 @@ impl Render for ColumnView {
                     ),
             )
             .child(
-                ScrollBar::new(
-                    "columns-horizontal",
-                    self.horizontal as f64,
-                    self.width as f64,
-                    self.content_width() as f64,
-                )
-                .tab_stop(false)
-                .horizontal()
-                .length(self.width)
-                .step(COLUMN_WIDTH as f64 / 2.)
-                .theme(theme)
-                .on_change(move |value, _, cx| {
-                    horizontal_entity.update(cx, |this, cx| {
-                        this.horizontal = value.round() as i32;
-                        cx.notify();
-                    });
-                }),
+                div()
+                    .when(self.scroll_bar_room > 0, |bar| {
+                        bar.absolute().left(px(-1.)).top(px((height - 1) as f32))
+                    })
+                    .child(
+                        ScrollBar::new(
+                            "columns-horizontal",
+                            self.horizontal as f64,
+                            self.width as f64,
+                            self.content_width() as f64,
+                        )
+                        .tab_stop(false)
+                        .horizontal()
+                        .length(if self.scroll_bar_room > 0 {
+                            self.width + 1 - self.scroll_bar_room
+                        } else {
+                            self.width
+                        })
+                        .step(COLUMN_WIDTH as f64 / 2.)
+                        .theme(theme)
+                        .on_change(move |value, _, cx| {
+                            horizontal_entity.update(cx, |this, cx| {
+                                this.horizontal = value.round() as i32;
+                                cx.notify();
+                            });
+                        }),
+                    ),
             )
     }
 }

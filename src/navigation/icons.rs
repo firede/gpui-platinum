@@ -134,6 +134,7 @@ pub struct IconView {
     height: i32,
     frame: bool,
     always_scrollbar: bool,
+    scroll_bar_room: i32,
     offset: i32,
     drag_hover: Option<usize>,
     label: SharedString,
@@ -158,6 +159,7 @@ impl IconView {
             height: 180,
             frame: true,
             always_scrollbar: false,
+            scroll_bar_room: 0,
             offset: 0,
             drag_hover: None,
             label: "Files".into(),
@@ -183,6 +185,13 @@ impl IconView {
     /// bar appears only when the rows do not all fit.
     pub fn always_scrollbar(mut self, always: bool) -> Self {
         self.always_scrollbar = always;
+        self
+    }
+    /// Leaves `room` pixels under the scroll bar of an unframed view, as for
+    /// the resize corner of the window it fills, and lays the bar over that
+    /// window's lines above it and at its right, as the window's own.
+    pub fn scroll_bar_room(mut self, room: i32) -> Self {
+        self.scroll_bar_room = room.max(0);
         self
     }
     pub fn theme(mut self, theme: Theme) -> Self {
@@ -234,6 +243,7 @@ impl IconView {
             self.width,
             self.height,
             self.frame,
+            self.fills_window(),
             self.always_scrollbar,
             self.items.len(),
         )
@@ -243,6 +253,9 @@ impl IconView {
     }
     fn inset(&self) -> i32 {
         if self.frame { 2 } else { 0 }
+    }
+    fn fills_window(&self) -> bool {
+        !self.frame && self.scroll_bar_room > 0
     }
     fn content_width(&self) -> i32 {
         self.layout().width
@@ -335,6 +348,7 @@ fn icon_layout(
     width: i32,
     height: i32,
     frame: bool,
+    fills_window: bool,
     always_scrollbar: bool,
     count: usize,
 ) -> IconLayout {
@@ -357,8 +371,9 @@ fn icon_layout(
     layout.total = total(layout.columns);
     layout.scrolls |= layout.total > layout.height;
     if layout.scrolls {
-        // A framed view's bar shares the content's right outline.
-        let bar = if frame {
+        // A framed view's bar shares the content's right outline, and a
+        // window-filling view's lies over the window's line.
+        let bar = if frame || fills_window {
             SCROLL_BAR_WIDTH - 1
         } else {
             SCROLL_BAR_WIDTH
@@ -416,7 +431,13 @@ impl Render for IconView {
         let height = self.height;
         let inset = self.inset();
         let viewport_height = layout.height;
-        let bar_top = if self.frame { 1 } else { 0 };
+        let (bar_top, bar_length) = if self.frame {
+            (1, height - 2)
+        } else if self.fills_window() {
+            (-1, height + 1 - self.scroll_bar_room)
+        } else {
+            (0, height)
+        };
         let scroll_entity = cx.entity();
         div()
             .id("icons")
@@ -430,7 +451,9 @@ impl Render for IconView {
             .flex()
             .relative()
             .p(px(inset as f32))
-            .bg(gpui::rgb(WHITE))
+            // Filling a window, the room under its scroll bar shows the
+            // window's own face, as the corner's.
+            .when(!self.fills_window(), |view| view.bg(gpui::rgb(WHITE)))
             .on_key_down(cx.listener(Self::key_down))
             .on_drag_move::<IconDrag>(cx.listener(
                 |this, event: &gpui::DragMoveEvent<IconDrag>, _, cx| {
@@ -487,6 +510,7 @@ impl Render for IconView {
                     .w(px(layout.width as f32))
                     .h_full()
                     .overflow_hidden()
+                    .bg(gpui::rgb(WHITE))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, _, window, cx| {
@@ -629,7 +653,7 @@ impl Render for IconView {
                                 viewport_height as f64,
                                 layout.total as f64,
                             )
-                            .length(height - 2 * bar_top)
+                            .length(bar_length)
                             .step(SCROLL_STEP as f64)
                             .tab_stop(false)
                             .theme(theme)
@@ -937,10 +961,10 @@ mod tests {
     #[test]
     fn page_keys_move_by_the_rows_in_view_less_one() {
         // 260×110 shows one whole row in two columns: a page is one row.
-        let short = icon_layout(260, 110, true, false, 12);
+        let short = icon_layout(260, 110, true, false, false, 12);
         assert_eq!(short.page(), 2);
         // 280×300 shows four rows in three columns: a page is three rows.
-        let tall = icon_layout(280, 300, true, false, 24);
+        let tall = icon_layout(280, 300, true, false, false, 24);
         assert_eq!(tall.page(), 9);
         assert_eq!(icon_key_target(Some(0), "pagedown", 12, 2, 2), Some(2));
         assert_eq!(icon_key_target(Some(2), "pageup", 12, 2, 2), Some(0));
@@ -952,7 +976,7 @@ mod tests {
     fn a_scroll_bar_appears_when_the_rows_do_not_fit() {
         // Two rows in two columns fit 206×140 exactly, as in the gallery.
         assert_eq!(
-            icon_layout(206, 140, true, false, 4),
+            icon_layout(206, 140, true, false, false, 4),
             IconLayout {
                 width: 202,
                 height: 136,
@@ -963,23 +987,26 @@ mod tests {
         );
         // At 130 they do not, and the bar takes the room of its width less
         // the outline it shares.
-        let scrolled = icon_layout(206, 130, true, false, 4);
+        let scrolled = icon_layout(206, 130, true, false, false, 4);
         assert!(scrolled.scrolls);
         assert_eq!(scrolled.width, 187);
         assert_eq!(scrolled.columns, 2);
         // A bar can cost a column, and with it a row.
-        let fits = icon_layout(280, 300, true, false, 12);
+        let fits = icon_layout(280, 300, true, false, false, 12);
         assert_eq!((fits.scrolls, fits.columns, fits.total), (false, 3, 264));
-        let narrowed = icon_layout(260, 110, true, false, 12);
+        let narrowed = icon_layout(260, 110, true, false, false, 12);
         assert_eq!(
             (narrowed.scrolls, narrowed.width, narrowed.columns),
             (true, 241, 2)
         );
         assert_eq!(narrowed.total, 8 + 6 * CELL_HEIGHT);
         // An unframed view with a permanent bar gives it the full width.
-        let folder = icon_layout(328, 174, false, true, 1);
+        let folder = icon_layout(328, 174, false, false, true, 1);
         assert_eq!((folder.scrolls, folder.width), (true, 312));
-        assert_eq!(icon_layout(206, 130, true, false, 0).total, 0);
+        // Filling a window, the bar lies over the window's line at its right.
+        let filling = icon_layout(328, 174, false, true, true, 1);
+        assert_eq!((filling.scrolls, filling.width), (true, 313));
+        assert_eq!(icon_layout(206, 130, true, false, false, 0).total, 0);
     }
 
     fn numbered(count: usize) -> Vec<IconItem> {

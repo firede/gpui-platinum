@@ -440,6 +440,30 @@ pub(crate) fn text_middle(
     pen.text(x, y + (height - cap) / 2 + cap, text, font, color);
 }
 
+/// Draws text centered in the box, its capitals on the box's middle.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn text_centered(
+    pen: &mut Pen,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+    text: &str,
+    font: Font,
+    color: u32,
+) {
+    let text_width = font.measure_in(text, pen.language);
+    text_middle(
+        pen,
+        x + (width - text_width) / 2,
+        y,
+        height,
+        text,
+        font,
+        color,
+    );
+}
+
 const ROW_ARROW: [&str; 7] = ["#...", "##..", "###.", "####", "###.", "##..", "#..."];
 
 impl Render for ListBox {

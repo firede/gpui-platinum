@@ -468,7 +468,8 @@ impl Gallery {
             color: cx.new(|cx| ColorWell::new(ACCENTS[0].mid, cx).label("Highlight color")),
             sheet: cx.new(|cx| {
                 SheetView::new(model, cx)
-                    .size(456, 160)
+                    .size(456, 166)
+                    .formula_gap(6)
                     .dimensions(50, 10)
                     .label("Sales")
             }),

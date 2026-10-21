@@ -3,13 +3,13 @@
 
 use crate::Scene;
 use gpui::{
-    AnyWindowHandle, AppContext as _, Entity, Focusable as _, HeadlessAppContext, Keystroke,
-    Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PlatformInput, div,
-    point, prelude::*, px, rgb,
+    AnyWindowHandle, AppContext as _, Entity, Focusable as _, HeadlessAppContext, KeyDownEvent,
+    Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PlatformInput,
+    div, point, prelude::*, px, rgb,
 };
 use gpui_platinum::{
-    ListBox, Table, TableColumn, Theme, TreeView, draw_list_box,
-    models::{FileTree, NodeKind, TreeNode},
+    ListBox, SheetView, Table, TableColumn, Theme, TreeView, draw_list_box,
+    models::{Cell, FileTree, NodeKind, Sheet, TreeNode},
     paint::{Pen, drawing},
     theme::GRAY_2,
 };
@@ -35,6 +35,16 @@ fn slot<T>() -> Slot<T> {
     Rc::new(RefCell::new(None))
 }
 
+/// Lets the app settle and draws a frame, as a window does between inputs.
+fn frame(app: &mut HeadlessAppContext, window: AnyWindowHandle) {
+    app.run_until_parked();
+    app.update_window(window, |_, window, cx| {
+        let _ = window.draw(cx);
+    })
+    .unwrap();
+    app.run_until_parked();
+}
+
 /// Focuses the entity in the slot.
 fn focus<T: gpui::Focusable>(
     app: &mut HeadlessAppContext,
@@ -47,17 +57,31 @@ fn focus<T: gpui::Focusable>(
         window.focus(&handle, cx);
     })
     .unwrap();
-    app.run_until_parked();
+    frame(app, window);
 }
 
 /// Types keys into the focused element, one keystroke at a time.
 fn keys(app: &mut HeadlessAppContext, window: AnyWindowHandle, keys: &str) {
     for key in keys.split_whitespace() {
+        let keystroke = Keystroke::parse(key).unwrap();
         app.update_window(window, |_, window, cx| {
-            window.dispatch_keystroke(Keystroke::parse(key).unwrap(), cx);
+            if keystroke.key.chars().count() == 1 {
+                window.dispatch_keystroke(keystroke, cx);
+            } else {
+                // A key that types nothing, as Return, which the platform
+                // turns into a command rather than text.
+                window.dispatch_event(
+                    PlatformInput::KeyDown(KeyDownEvent {
+                        keystroke,
+                        is_held: false,
+                        prefer_character_input: false,
+                    }),
+                    cx,
+                );
+            }
         })
         .unwrap();
-        app.run_until_parked();
+        frame(app, window);
     }
 }
 
@@ -66,7 +90,7 @@ fn input(app: &mut HeadlessAppContext, window: AnyWindowHandle, event: PlatformI
         window.dispatch_event(event, cx);
     })
     .unwrap();
-    app.run_until_parked();
+    frame(app, window);
 }
 
 /// Presses the button at a point of the window, moves to another, and lets
@@ -128,11 +152,24 @@ fn padded(padding: f32, child: impl IntoElement) -> impl IntoElement {
         .child(child)
 }
 
-struct Host(gpui::AnyView, f32);
+/// The view, padded, at the top left of a row, or stretched across a
+/// column.
+struct Host(gpui::AnyView, f32, bool);
 
 impl Render for Host {
     fn render(&mut self, _: &mut gpui::Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
-        padded(self.1, self.0.clone())
+        if self.2 {
+            div()
+                .size_full()
+                .bg(rgb(GRAY_2))
+                .flex()
+                .flex_col()
+                .p(px(self.1))
+                .child(self.0.clone())
+                .into_any_element()
+        } else {
+            padded(self.1, self.0.clone()).into_any_element()
+        }
     }
 }
 
@@ -149,7 +186,24 @@ fn hosted<T: Render>(
     Scene::new(name, width, height, move |_, cx| {
         let entity = cx.new(make);
         *slot.borrow_mut() = Some(entity.clone());
-        Host(entity.into(), padding)
+        Host(entity.into(), padding, false)
+    })
+}
+
+/// A scene of one entity stretched across a padded column on Gray2.
+fn stretched<T: Render>(
+    name: &'static str,
+    width: f32,
+    height: f32,
+    padding: f32,
+    slot: &Slot<T>,
+    make: impl FnOnce(&mut gpui::Context<T>) -> T + 'static,
+) -> Scene {
+    let slot = slot.clone();
+    Scene::new(name, width, height, move |_, cx| {
+        let entity = cx.new(make);
+        *slot.borrow_mut() = Some(entity.clone());
+        Host(entity.into(), padding, true)
     })
 }
 
@@ -180,7 +234,7 @@ pub fn scenes() -> Vec<Scene> {
             [
                 Box::new(move |pen: &mut Pen| {
                     draw_list_box(pen, &FRUITS, 0, Some(1), true, false, accent)
-                }) as Cell,
+                }) as Drawn,
                 Box::new(move |pen: &mut Pen| {
                     draw_list_box(pen, &FRUITS, 2, Some(3), false, false, accent)
                 }),
@@ -250,6 +304,25 @@ pub fn scenes() -> Vec<Scene> {
             }
         }),
     );
+
+    // A2 clicked, 30 and a sum typed in, then Up and Shift-Right.
+    let sheet = slot::<SheetView>();
+    scenes.push(
+        stretched("sheet", 350., 200., 8., &sheet, |cx| {
+            let mut model = Sheet::new();
+            model.set(Cell::new(0, 0), "12");
+            SheetView::new(model, cx).size(330, 170).dimensions(50, 8)
+        })
+        .prepare(|app, window| {
+            // The sheet's ring is at 8, 38, under the formula bar.
+            click(app, window, 8. + 2. + 32. + 10., 38. + 2. + 36. + 5.);
+            keys(
+                app,
+                window,
+                "3 0 enter = S U M ( A 1 : A 2 ) enter up shift-right",
+            );
+        }),
+    );
     scenes
 }
 
@@ -289,11 +362,11 @@ fn sample_tree() -> FileTree {
     ])
 }
 
-type Cell = Box<dyn FnOnce(&mut Pen)>;
+type Drawn = Box<dyn FnOnce(&mut Pen)>;
 
 /// Cells of the same size in a row, padded and spaced by 6, as the
 /// original's boards draw them.
-fn board(width: f32, height: f32, cells: impl IntoIterator<Item = Cell>) -> impl IntoElement {
+fn board(width: f32, height: f32, cells: impl IntoIterator<Item = Drawn>) -> impl IntoElement {
     div().flex().p(px(6.)).gap(px(6.)).children(
         cells
             .into_iter()

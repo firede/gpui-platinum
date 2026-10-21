@@ -3,11 +3,13 @@
 
 use crate::Scene;
 use gpui::{
-    AnyWindowHandle, AppContext as _, Entity, Focusable as _, HeadlessAppContext, Keystroke, div,
-    prelude::*, px, rgb,
+    AnyWindowHandle, AppContext as _, Entity, Focusable as _, HeadlessAppContext, Keystroke,
+    Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PlatformInput, div,
+    point, prelude::*, px, rgb,
 };
 use gpui_platinum::{
-    ListBox, Theme, draw_list_box,
+    ListBox, Table, TableColumn, Theme, TreeView, draw_list_box,
+    models::{FileTree, NodeKind, TreeNode},
     paint::{Pen, drawing},
     theme::GRAY_2,
 };
@@ -57,6 +59,62 @@ fn keys(app: &mut HeadlessAppContext, window: AnyWindowHandle, keys: &str) {
         .unwrap();
         app.run_until_parked();
     }
+}
+
+fn input(app: &mut HeadlessAppContext, window: AnyWindowHandle, event: PlatformInput) {
+    app.update_window(window, |_, window, cx| {
+        window.dispatch_event(event, cx);
+    })
+    .unwrap();
+    app.run_until_parked();
+}
+
+/// Presses the button at a point of the window, moves to another, and lets
+/// go there, with modifiers held.
+fn drag(
+    app: &mut HeadlessAppContext,
+    window: AnyWindowHandle,
+    from: (f32, f32),
+    to: (f32, f32),
+    modifiers: Modifiers,
+) {
+    let at = |(x, y): (f32, f32)| point(px(x), px(y));
+    input(
+        app,
+        window,
+        PlatformInput::MouseDown(MouseDownEvent {
+            button: MouseButton::Left,
+            position: at(from),
+            modifiers,
+            click_count: 1,
+            first_mouse: false,
+        }),
+    );
+    if from != to {
+        input(
+            app,
+            window,
+            PlatformInput::MouseMove(MouseMoveEvent {
+                position: at(to),
+                pressed_button: Some(MouseButton::Left),
+                modifiers,
+            }),
+        );
+    }
+    input(
+        app,
+        window,
+        PlatformInput::MouseUp(MouseUpEvent {
+            button: MouseButton::Left,
+            position: at(to),
+            modifiers,
+            click_count: 1,
+        }),
+    );
+}
+
+fn click(app: &mut HeadlessAppContext, window: AnyWindowHandle, x: f32, y: f32) {
+    drag(app, window, (x, y), (x, y), Modifiers::default());
 }
 
 /// A view of its children on the window's Gray2, padded.
@@ -132,7 +190,103 @@ pub fn scenes() -> Vec<Scene> {
             ],
         )
     }));
+
+    // Sort by price twice (descending), click the first row, extend it with
+    // Shift-Down, add the fifth with a Command-click, and widen Name by 20.
+    let table = slot::<Table>();
+    scenes.push(
+        hosted("table", 270., 160., 10., &table, |cx| {
+            let rows = PRODUCE
+                .iter()
+                .map(|(name, color, price)| {
+                    vec![name.to_string(), color.to_string(), format!("{price:.2}")]
+                })
+                .collect();
+            Table::with_columns(
+                vec![
+                    TableColumn::new("Name").width(80),
+                    TableColumn::new("Color").width(70),
+                    TableColumn::new("Price").width(60).right(true),
+                ],
+                rows,
+                cx,
+            )
+            .size(240, 130)
+            .label("Produce")
+        })
+        .prepare(|app, window| {
+            // The headers are 17 high from y 11; Price starts at 10 + 2 + 150.
+            click(app, window, 182., 18.);
+            click(app, window, 182., 18.);
+            click(app, window, 20., 33.);
+            keys(app, window, "shift-down");
+            let command = Modifiers {
+                platform: true,
+                ..Modifiers::default()
+            };
+            drag(app, window, (20., 33. + 64.), (20., 33. + 64.), command);
+            // Name's right edge is at 10 + 2 + 80.
+            drag(app, window, (91., 18.), (111., 18.), Modifiers::default());
+        }),
+    );
+
+    // Down twice to Letters, Right twice into To Ada, Left twice back to
+    // Letters and closed, "p" for Pictures, then a click on its triangle.
+    let tree = slot::<TreeView>();
+    scenes.push(
+        hosted("treeview", 220., 130., 10., &tree, |cx| {
+            TreeView::new(sample_tree(), cx)
+                .size(180, 100)
+                .label("Files")
+                .default_icons(false)
+        })
+        .prepare({
+            let tree = tree.clone();
+            move |app, window| {
+                focus(app, window, &tree);
+                keys(app, window, "down down right right left left p enter");
+                // Pictures is the fourth row: 10 + 2 + 3 * 16.
+                click(app, window, 10. + 2. + 3. + 6., 10. + 2. + 48. + 8.);
+            }
+        }),
+    );
     scenes
+}
+
+const PRODUCE: [(&str, &str, f64); 9] = [
+    ("Kiwi", "green", 0.5),
+    ("Apricot", "orange", 1.25),
+    ("Banana", "yellow", 0.25),
+    ("Cherry", "red", 4.),
+    ("Fig", "purple", 2.5),
+    ("Lemon", "yellow", 0.75),
+    ("Grape", "green", 3.),
+    ("Date", "brown", 6.),
+    ("Mango", "orange", 1.5),
+];
+
+const FOLDER_MINI: [&str; 6] = [
+    "###.......",
+    "#..######.",
+    "#.......#.",
+    "#.......#.",
+    "#.......#.",
+    "#########.",
+];
+
+fn sample_tree() -> FileTree {
+    let folder = |id, title| TreeNode::new(id, title, NodeKind::Folder).with_icon(FOLDER_MINI);
+    let item = TreeNode::item;
+    let mut documents = folder(1, "Documents").with_children(vec![
+        folder(2, "Letters").with_children(vec![item(3, "To Ada"), item(4, "To Grace")]),
+        item(5, "Recipes"),
+    ]);
+    documents.open = true;
+    FileTree::new(vec![
+        documents,
+        folder(6, "Pictures").with_children(vec![item(7, "Beach")]),
+        item(8, "Read Me"),
+    ])
 }
 
 type Cell = Box<dyn FnOnce(&mut Pen)>;

@@ -1,4 +1,3 @@
-use gpui::ImageSource;
 use std::{any::Any, cmp::Ordering, rc::Rc, time::SystemTime};
 
 /// The kinds of items in the desk's in-memory disk.
@@ -39,7 +38,9 @@ pub struct TreeNode {
     pub alignments: Option<Vec<crate::Alignment>>,
     pub children: Vec<TreeNode>,
     pub open: bool,
-    pub icon: Option<ImageSource>,
+    /// A small picture at the left of its title, at most 12 rows tall, as
+    /// rows for [`crate::draw_bitmap_icon`].
+    pub icon: Option<Vec<String>>,
     data: Option<Rc<dyn Any>>,
 }
 
@@ -89,8 +90,12 @@ impl TreeNode {
         self
     }
 
-    pub fn with_icon(mut self, icon: impl Into<ImageSource>) -> Self {
-        self.icon = Some(icon.into());
+    pub fn with_icon(mut self, icon: impl IntoIterator<Item = impl AsRef<str>>) -> Self {
+        self.icon = Some(
+            icon.into_iter()
+                .map(|row| row.as_ref().to_owned())
+                .collect(),
+        );
         self
     }
 

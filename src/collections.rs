@@ -8,13 +8,14 @@ use std::{
 };
 
 use gpui::{
-    App, Bounds, ContentMask, Context, EventEmitter, FocusHandle, Focusable, ImageSource,
-    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, Point, Role,
-    ScrollWheelEvent, SharedString, Window, canvas, div, img, point, prelude::*, px,
+    App, Bounds, Context, EventEmitter, FocusHandle, Focusable, KeyDownEvent, MouseButton,
+    MouseDownEvent, MouseMoveEvent, Pixels, Point, Role, ScrollWheelEvent, SharedString, Window,
+    canvas, div, point, prelude::*, px,
 };
 
 use crate::{
-    Font, Language, ScrollBar, Theme,
+    Accent, Font, Language, ScrollBar, Theme,
+    list::text_middle,
     models::{FileTree, NodeKind, TreeNode},
     paint::{Pen, Rect},
     theme::*,
@@ -23,6 +24,16 @@ use crate::{
 const ROW_HEIGHT: i32 = 16;
 const HEADER_HEIGHT: i32 = 18;
 const SCROLL_WIDTH: i32 = 16;
+/// The room at either side of a table cell's text.
+const CELL_PAD: i32 = 5;
+/// How near a column's edge the pointer resizes it.
+const RESIZE_GRIP: i32 = 3;
+/// How far each level of a tree view is indented.
+const TREE_INDENT: i32 = 16;
+const TREE_TRIANGLE_LEFT: i32 = 3;
+const DISCLOSURE_SIZE: i32 = 12;
+const SORT_UP: [&str; 3] = ["..#..", ".###.", "#####"];
+const SORT_DOWN: [&str; 3] = ["#####", ".###.", "..#.."];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TreeEvent {
@@ -216,73 +227,95 @@ impl TreeView {
             let row = &rows[index];
             (row.node.id, row.depth, !row.node.children.is_empty())
         };
+        // A click on a triangle opens or closes its item, and chooses none.
+        let triangle = 2 + TREE_TRIANGLE_LEFT + depth as i32 * TREE_INDENT;
+        if children && x >= triangle - 2 && x < triangle + DISCLOSURE_SIZE + 2 {
+            self.model.toggle(id);
+            self.viewport.clamp(self.model.visible_rows().len());
+            cx.notify();
+            return;
+        }
         let previous = self.model.selected;
         self.model.select(id);
-        if children && x >= 2 + depth as i32 * 16 && x < 18 + depth as i32 * 16 {
-            self.model.toggle(id);
-        } else if event.click_count == 2 {
+        if event.click_count == 2 {
             cx.emit(TreeEvent::Activated(id));
         }
         self.changed(previous, cx);
     }
 
     fn paint(&self, bounds: Bounds<Pixels>, window: &mut Window) {
-        let focused = self.focus.is_focused(window) && !crate::window::content_is_inactive();
-        let mut frame = Pen::new(self.viewport.width, self.viewport.height);
-        self.viewport.draw_frame(&mut frame, focused, self.theme);
-        let mut pen = Pen::new(self.viewport.width, self.viewport.height);
+        let inactive = crate::window::content_is_inactive();
+        let focused = self.focus.is_focused(window) && !inactive;
+        let (width, height) = (self.viewport.width, self.viewport.height);
+        let accent = self.theme.accent;
+        let mut frame = Pen::new(width, height);
+        frame.bevel(0, 0, width, height, GRAY_7, WHITE);
+        let list_width = self.viewport.content_width();
+        let mut list = Pen::new(list_width, height - 2);
+        list.language = self.language;
+        list.rect(1, 1, list_width - 2, height - 4, WHITE);
+        list.frame(0, 0, list_width, height - 2, BLACK);
+        let mut pen = Pen::new(list_width, height - 2);
         pen.language = self.language;
         let rows = self.model.visible_rows();
-        for (visible, row) in rows
-            .iter()
-            .skip(self.viewport.offset)
-            .take(self.viewport.painted_rows())
-            .enumerate()
-        {
-            let y = 2 + visible as i32 * ROW_HEIGHT;
-            let x = 2 + row.depth as i32 * 16;
+        for (visible, row) in rows.iter().skip(self.viewport.offset).enumerate() {
+            let y = 1 + visible as i32 * ROW_HEIGHT;
+            if y >= height - 3 {
+                break;
+            }
+            let x = 1 + TREE_TRIANGLE_LEFT + row.depth as i32 * TREE_INDENT;
             let selected = self.model.selected == Some(row.node.id);
-            let ink = if selected && focused { WHITE } else { BLACK };
+            let mut ink = BLACK;
             if selected {
+                let mut face = GRAY_4;
+                if focused {
+                    (face, ink) = (accent.dark, WHITE);
+                }
                 pen.rect(
-                    x + 16,
+                    x + DISCLOSURE_SIZE + 2,
                     y,
-                    (self.viewport.content_width() - x - 16).max(0),
+                    list_width - x - DISCLOSURE_SIZE - 3,
                     ROW_HEIGHT,
-                    if focused {
-                        self.theme.accent.dark
-                    } else {
-                        GRAY_4
-                    },
+                    face,
                 );
             }
             if !row.node.children.is_empty() {
-                draw_disclosure(&mut pen, x + 3, y + 3, row.node.open);
+                let mut triangle = Pen::new(DISCLOSURE_SIZE, DISCLOSURE_SIZE);
+                crate::widgets::draw_disclosure(&mut triangle, row.node.open, false, false);
+                pen.append(triangle, x, y + (ROW_HEIGHT - DISCLOSURE_SIZE) / 2);
             }
-            let icon_width = row
-                .node
-                .icon
-                .as_ref()
-                .map_or_else(|| if self.default_icons { 12 } else { 0 }, tree_icon_width);
-            if row.node.icon.is_none() && self.default_icons {
-                draw_file_icon(&mut pen, x + 18, y + 2, row.node.kind, ink);
+            let mut title_x = x + DISCLOSURE_SIZE + 5;
+            if let Some(icon) = &row.node.icon {
+                draw_icon(
+                    &mut pen,
+                    title_x,
+                    y + (ROW_HEIGHT - icon.len() as i32) / 2,
+                    icon,
+                    accent,
+                    selected && focused,
+                );
+                title_x += icon_width(icon) + 4;
+            } else if self.default_icons {
+                draw_file_icon(&mut pen, title_x, y + 2, row.node.kind, ink);
+                title_x += 12 + 4;
             }
-            let title_x = x + 18 + if icon_width > 0 { icon_width + 4 } else { 0 };
-            let title = elide(
-                &row.node.title,
-                self.viewport.content_width() - title_x - 3,
-                self.language,
-            );
-            pen.text(title_x, y + 12, &title, Font::Small, ink);
+            let title =
+                Font::Small.truncate_in(&row.node.title, list_width - title_x - 4, self.language);
+            text_middle(&mut pen, title_x, y, ROW_HEIGHT, &title, Font::Small, ink);
         }
         pen.clip(Rect {
-            x: 2,
-            y: 2,
-            width: self.viewport.content_width() - 2,
-            height: self.viewport.height - 4,
+            x: 1,
+            y: 1,
+            width: list_width - 2,
+            height: height - 4,
         });
-        frame.append(pen, 0, 0);
-        paint_inside(&frame, bounds, window);
+        list.append(pen, 0, 0);
+        frame.set_dimmed(inactive);
+        frame.append(list, 1, 1);
+        if focused {
+            crate::widgets::draw_focus_ring(&mut frame, 0, accent.dark);
+        }
+        paint_at_origin(&frame, bounds, window);
     }
 }
 
@@ -315,22 +348,8 @@ impl Render for TreeView {
                     .absolute()
                     .left(px(2.))
                     .top(px((2 + index as i32 * ROW_HEIGHT) as f32))
-                    .w(px(self.viewport.content_width() as f32))
+                    .w(px((self.viewport.content_width() - 2) as f32))
                     .h(px(ROW_HEIGHT as f32))
-                    .when_some(row.node.icon.clone(), |row_element, icon| {
-                        row_element.child(
-                            div()
-                                .absolute()
-                                .left(px((row.depth as i32 * 16 + 18) as f32))
-                                .top(px(2.))
-                                .child(
-                                    img(icon.clone())
-                                        .w(px(tree_icon_width(&icon) as f32))
-                                        .h(px(12.))
-                                        .object_fit(gpui::ObjectFit::None),
-                                ),
-                        )
-                    })
             })
             .collect::<Vec<_>>();
         div()
@@ -343,7 +362,6 @@ impl Render for TreeView {
             .w(px(self.viewport.width as f32))
             .h(px(self.viewport.height as f32))
             .flex_shrink_0()
-            .overflow_hidden()
             .on_key_down(cx.listener(Self::key_down))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::mouse_down))
             .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _, cx| {
@@ -377,13 +395,6 @@ impl Render for TreeView {
     }
 }
 
-fn tree_icon_width(icon: &ImageSource) -> i32 {
-    match icon {
-        ImageSource::Render(image) => u32::from(image.size(0).width).min(12) as i32,
-        _ => 12,
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TableEvent {
     Selected(usize),
@@ -398,8 +409,10 @@ pub struct TableColumn {
     pub width: i32,
     pub right: bool,
     pub fixed: bool,
-    icon: Option<Rc<dyn Fn(usize) -> Option<ImageSource>>>,
+    icon: Option<RowIcon>,
 }
+
+type RowIcon = Rc<dyn Fn(usize) -> Option<Vec<String>>>;
 
 impl TableColumn {
     pub fn new(title: impl Into<String>) -> Self {
@@ -424,9 +437,21 @@ impl TableColumn {
         self.fixed = fixed;
         self
     }
-    /// Supplies an optional 16-pixel image by the row's model index.
-    pub fn icon(mut self, icon: impl Fn(usize) -> Option<ImageSource> + 'static) -> Self {
-        self.icon = Some(Rc::new(icon));
+    /// Gives each row, by its model index, a small picture at the left of
+    /// its cell: at most 16×16, as rows of '#' (black), 'o' (the accent's
+    /// dark color), '+' (its mid color), ':' (gray) and 'w' (white).
+    pub fn icon<I, S>(mut self, icon: impl Fn(usize) -> Option<I> + 'static) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.icon = Some(Rc::new(move |row| {
+            icon(row).map(|rows| {
+                rows.into_iter()
+                    .map(|row| row.as_ref().to_owned())
+                    .collect()
+            })
+        }));
         self
     }
 }
@@ -791,19 +816,26 @@ impl Table {
         let Some((x, y)) = self.viewport.local(event.position) else {
             return;
         };
-        if y < HEADER_HEIGHT + 2 {
-            let mut left = 2;
+        if y < HEADER_HEIGHT + 1 {
+            // An edge resizes its column; elsewhere a header sorts by its.
+            let mut right = 2;
             for (column, width) in self.columns.widths.iter().enumerate() {
-                if (x - left - width).abs() <= 3 {
+                right += width;
+                if (x - right).abs() <= RESIZE_GRIP {
                     self.columns.resizing = Some((column, x, *width));
                     return;
                 }
-                if x >= left && x < left + width && !self.columns.options[column].fixed {
-                    let descending = self
-                        .columns
-                        .sort
-                        .is_some_and(|(sorted, descending)| sorted == column && !descending);
-                    self.sort_by(column, descending, cx);
+            }
+            let mut left = 2;
+            for (column, width) in self.columns.widths.iter().enumerate() {
+                if x >= left && x < left + width {
+                    if !self.columns.options[column].fixed {
+                        let descending = self
+                            .columns
+                            .sort
+                            .is_some_and(|(sorted, descending)| sorted == column && !descending);
+                        self.sort_by(column, descending, cx);
+                    }
                     return;
                 }
                 left += width;
@@ -827,117 +859,188 @@ impl Table {
     fn paint(&self, bounds: Bounds<Pixels>, window: &mut Window) {
         let inactive = crate::window::content_is_inactive();
         let focused = self.focus.is_focused(window) && !inactive;
-        let mut frame = Pen::new(self.viewport.width, self.viewport.height);
-        self.viewport.draw_frame(&mut frame, focused, self.theme);
-        let mut pen = Pen::new(self.viewport.width, self.viewport.height);
-        pen.language = self.language;
-        for (visible, row) in self
-            .order
-            .iter()
-            .skip(self.viewport.offset)
-            .take(self.viewport.painted_rows())
-            .enumerate()
-        {
-            let y = 2 + HEADER_HEIGHT + visible as i32 * ROW_HEIGHT;
+        let (width, height) = (self.viewport.width, self.viewport.height);
+        let mut frame = Pen::new(width, height);
+        frame.bevel(0, 0, width, height, GRAY_7, WHITE);
+        let list_width = self.viewport.content_width();
+        let mut table = Pen::new(list_width, height - 2);
+        table.language = self.language;
+        self.draw_table(&mut table, focused);
+        if inactive {
+            // In the background, its headers gray, the cells as they are.
+            let mut headers = Pen::new(list_width, height - 2);
+            headers.language = self.language;
+            headers.set_dimmed(true);
+            self.draw_table(&mut headers, focused);
+            headers.clip(Rect {
+                x: 1,
+                y: 1,
+                width: list_width - 2,
+                height: HEADER_HEIGHT - 1,
+            });
+            table.append(headers, 0, 0);
+        }
+        frame.append(table, 1, 1);
+        if self.viewport.shows_scrollbar() {
+            // The corner over the scroll bar, a header of its own.
+            let mut corner = Pen::new(SCROLL_WIDTH, HEADER_HEIGHT);
+            corner.set_dimmed(inactive);
+            corner.rect(0, 0, SCROLL_WIDTH, HEADER_HEIGHT, GRAY_2);
+            corner.frame(0, 0, SCROLL_WIDTH, HEADER_HEIGHT, BLACK);
+            corner.bevel(1, 1, SCROLL_WIDTH - 2, HEADER_HEIGHT - 2, WHITE, GRAY_7);
+            frame.append(corner, list_width, 1);
+        }
+        if focused {
+            crate::widgets::draw_focus_ring(&mut frame, 0, self.theme.accent.dark);
+        }
+        paint_at_origin(&frame, bounds, window);
+    }
+
+    /// Draws the table in the pen's box: its headers, and its rows from the
+    /// first in view, as the original's DrawTable does.
+    fn draw_table(&self, pen: &mut Pen, focused: bool) {
+        let (width, height) = (pen.width, pen.height);
+        let language = self.language;
+        let accent = self.theme.accent;
+        let widths = &self.columns.widths;
+        let sorted_column = self
+            .columns
+            .sort
+            .map(|(column, _)| column)
+            .filter(|column| self.columns.options.get(*column).is_some_and(|c| !c.fixed));
+        pen.rect(1, 1, width - 2, height - 2, WHITE);
+        pen.frame(0, 0, width, height, BLACK);
+        let mut inner = Pen::new(width, height);
+        inner.language = language;
+        // The column the rows are sorted by, shaded all the way down.
+        let mut x = 1;
+        for (column, column_width) in widths.iter().enumerate() {
+            if sorted_column == Some(column) {
+                inner.rect(
+                    x,
+                    HEADER_HEIGHT,
+                    *column_width,
+                    height - 1 - HEADER_HEIGHT,
+                    GRAY_1,
+                );
+            }
+            x += column_width;
+        }
+        for (visible, row) in self.order.iter().skip(self.viewport.offset).enumerate() {
+            let y = HEADER_HEIGHT + visible as i32 * ROW_HEIGHT;
+            if y >= height - 1 {
+                break;
+            }
             let selected = self.selection.contains(row);
-            let mut x = 2;
-            for (column, width) in self.columns.widths.iter().enumerate() {
-                let width = (*width).min(self.viewport.content_width() - x).max(0);
-                if width == 0 {
-                    break;
+            let mut ink = BLACK;
+            if selected && focused {
+                inner.rect(1, y, width - 2, ROW_HEIGHT, accent.dark);
+                ink = WHITE;
+            } else if selected {
+                inner.rect(1, y, width - 2, ROW_HEIGHT, GRAY_4);
+            }
+            let mut x = 1;
+            for (column, &column_width) in widths.iter().enumerate() {
+                if !selected && sorted_column == Some(column) {
+                    inner.rect(x, y, column_width, ROW_HEIGHT, GRAY_1);
                 }
-                let sorted = self
-                    .columns
-                    .sort
-                    .is_some_and(|(sorted, _)| sorted == column);
-                let face = if selected {
-                    if focused {
-                        self.theme.accent.dark
-                    } else {
-                        GRAY_4
-                    }
-                } else if sorted {
-                    GRAY_1
-                } else {
-                    WHITE
-                };
-                pen.rect(x, y, width, ROW_HEIGHT, face);
-                pen.vline(x + width - 1, y, ROW_HEIGHT, GRAY_3);
+                let option = &self.columns.options[column];
                 let raw = self.rows[*row]
                     .get(column)
                     .map(String::as_str)
                     .unwrap_or("");
-                let option = &self.columns.options[column];
-                let has_icon = option.icon.as_ref().and_then(|icon| icon(*row)).is_some();
-                let icon_width = if has_icon { 20 } else { 0 };
-                let text = elide(raw, width - 10 - icon_width, self.language);
+                let mut text_x = x + CELL_PAD;
+                if let Some(icon) = &option.icon {
+                    if let Some(rows) = icon(*row) {
+                        draw_icon(
+                            &mut inner,
+                            x + 4,
+                            y + (ROW_HEIGHT - rows.len() as i32) / 2,
+                            &rows,
+                            accent,
+                            selected && focused,
+                        );
+                    }
+                    text_x = x + 4 + 16 + 4;
+                }
+                let text =
+                    Font::Small.truncate_in(raw, column_width - (text_x - x) - CELL_PAD, language);
                 let right = option.right
                     || (self.columns.automatic_alignment && raw.trim().parse::<f64>().is_ok());
-                let text_x = if right {
-                    x + width - 5 - Font::Small.measure_in(&text, self.language)
-                } else {
-                    x + 5 + icon_width
-                };
-                pen.text(
-                    text_x,
-                    y + 12,
-                    &text,
-                    Font::Small,
-                    if selected && focused { WHITE } else { BLACK },
-                );
-                x += width;
-            }
-        }
-        pen.set_dimmed(inactive);
-        let mut x = 2;
-        for (column, width) in self.columns.widths.iter().enumerate() {
-            let width = (*width).min(self.viewport.content_width() - x).max(0);
-            if width == 0 {
-                break;
-            }
-            let sorted = self.columns.sort.filter(|(sorted, _)| *sorted == column);
-            pen.rect(
-                x,
-                2,
-                width,
-                HEADER_HEIGHT,
-                if sorted.is_some() { GRAY_4 } else { GRAY_2 },
-            );
-            pen.bevel(x, 2, width, HEADER_HEIGHT - 1, WHITE, GRAY_7);
-            pen.hline(x, HEADER_HEIGHT + 1, width, BLACK);
-            let title = elide(
-                &self.columns.headers[column],
-                width - if sorted.is_some() { 22 } else { 10 },
-                self.language,
-            );
-            pen.text(x + 5, 14, &title, Font::Small, BLACK);
-            if let Some((_, descending)) = sorted {
-                for row in 0..3 {
-                    pen.hline(
-                        x + width - 10 + row,
-                        if descending { 8 + row } else { 10 - row },
-                        5 - row * 2,
-                        BLACK,
-                    );
+                if right {
+                    text_x = x + column_width - CELL_PAD - Font::Small.measure_in(&text, language);
+                }
+                let mut cell = Pen::new(width, height);
+                cell.language = language;
+                text_middle(&mut cell, text_x, y, ROW_HEIGHT, &text, Font::Small, ink);
+                cell.clip(Rect {
+                    x,
+                    y,
+                    width: column_width,
+                    height: ROW_HEIGHT,
+                });
+                inner.append(cell, 0, 0);
+                x += column_width;
+                if !selected {
+                    inner.vline(x - 1, y, ROW_HEIGHT, GRAY_3);
                 }
             }
-            x += width;
         }
-        pen.clip(Rect {
-            x: 2,
-            y: 2,
-            width: self.viewport.content_width() - 2,
-            height: self.viewport.height - 4,
+        // The headers.
+        let mut x = 1;
+        for (column, &column_width) in widths.iter().enumerate() {
+            let sorted = sorted_column == Some(column);
+            let header_height = HEADER_HEIGHT - 1;
+            let mut header = Pen::new(column_width, header_height);
+            header.language = language;
+            header.rect(
+                0,
+                0,
+                column_width,
+                header_height,
+                if sorted { GRAY_4 } else { GRAY_2 },
+            );
+            header.bevel(0, 0, column_width, header_height - 1, WHITE, GRAY_7);
+            header.hline(0, header_height - 1, column_width, BLACK);
+            header.vline(column_width - 1, 0, header_height, GRAY_7);
+            let title = Font::Small.truncate_in(
+                &self.columns.headers[column],
+                column_width - 2 * CELL_PAD - 8,
+                language,
+            );
+            text_middle(
+                &mut header,
+                CELL_PAD,
+                0,
+                header_height - 1,
+                &title,
+                Font::Small,
+                BLACK,
+            );
+            if sorted {
+                let descending = self.columns.sort.is_some_and(|(_, descending)| descending);
+                draw_bitmap(
+                    &mut header,
+                    column_width - CELL_PAD - 5,
+                    (header_height - 4) / 2,
+                    if descending { &SORT_DOWN } else { &SORT_UP },
+                    BLACK,
+                );
+            }
+            inner.append(header, x, 1);
+            x += column_width;
+        }
+        if x < width - 1 {
+            inner.rect(x, 1, width - 1 - x, HEADER_HEIGHT - 1, GRAY_2);
+            inner.hline(x, HEADER_HEIGHT - 1, width - 1 - x, BLACK);
+        }
+        inner.clip(Rect {
+            x: 1,
+            y: 1,
+            width: width - 2,
+            height: height - 2,
         });
-        frame.append(pen, 0, 0);
-        if self.viewport.shows_scrollbar() {
-            let x = self.viewport.content_width();
-            frame.set_dimmed(inactive);
-            frame.rect(x, 2, SCROLL_WIDTH, HEADER_HEIGHT, GRAY_2);
-            frame.bevel(x, 2, SCROLL_WIDTH, HEADER_HEIGHT - 1, WHITE, GRAY_7);
-            frame.hline(x, HEADER_HEIGHT + 1, SCROLL_WIDTH, BLACK);
-        }
-        paint_inside(&frame, bounds, window);
+        pen.append(inner, 0, 0);
     }
 }
 
@@ -953,6 +1056,7 @@ impl Render for Table {
         let paint = cx.entity();
         let scroll_entity = cx.entity();
         let mut x = 2;
+        let content_width = self.viewport.content_width();
         let headers = self
             .columns
             .headers
@@ -979,8 +1083,10 @@ impl Render for Table {
                     .absolute()
                     .left(px(left as f32))
                     .top(px(2.))
-                    .w(px(self.columns.widths[column] as f32))
-                    .h(px(HEADER_HEIGHT as f32))
+                    .w(px(
+                        self.columns.widths[column].min(content_width - left).max(0) as f32,
+                    ))
+                    .h(px((HEADER_HEIGHT - 1) as f32))
             })
             .collect::<Vec<_>>();
         let rows = self
@@ -997,15 +1103,12 @@ impl Render for Table {
                     .aria_row_index(visible + self.viewport.offset + 1)
                     .absolute()
                     .left(px(2.))
-                    .top(px((2 + HEADER_HEIGHT + visible as i32 * ROW_HEIGHT) as f32))
-                    .w(px(self.viewport.content_width() as f32))
+                    .top(px((1 + HEADER_HEIGHT + visible as i32 * ROW_HEIGHT) as f32))
+                    .w(px((content_width - 2) as f32))
                     .h(px(ROW_HEIGHT as f32))
+                    .overflow_hidden()
                     .flex()
                     .children(self.columns.headers.iter().enumerate().map(|(column, _)| {
-                        let image = self.columns.options[column]
-                            .icon
-                            .as_ref()
-                            .and_then(|icon| icon(*index));
                         div()
                             .id(column)
                             .role(Role::Cell)
@@ -1014,16 +1117,6 @@ impl Render for Table {
                             .w(px(self.columns.widths[column] as f32))
                             .h(px(ROW_HEIGHT as f32))
                             .flex_shrink_0()
-                            .relative()
-                            .when_some(image, |cell, image| {
-                                cell.child(
-                                    div()
-                                        .absolute()
-                                        .left(px(3.))
-                                        .top_0()
-                                        .child(img(image).size(px(16.))),
-                                )
-                            })
                     }))
             })
             .collect::<Vec<_>>();
@@ -1036,7 +1129,6 @@ impl Render for Table {
             .aria_column_count(self.columns.headers.len())
             .track_focus(&self.focus)
             .tab_stop(true)
-            .overflow_hidden()
             .w(px(self.viewport.width as f32))
             .h(px(self.viewport.height as f32))
             .flex_shrink_0()
@@ -1121,24 +1213,40 @@ impl Viewport {
             always_scrollbar: false,
         }
     }
+    /// The width of the framed rows, inside the box's ring, which shares
+    /// its right line with the scroll bar's left one.
     fn content_width(&self) -> i32 {
         self.width
             - 2
             - if self.shows_scrollbar() {
-                SCROLL_WIDTH
+                SCROLL_WIDTH - 1
             } else {
                 0
             }
     }
-    fn shows_scrollbar(&self) -> bool {
-        self.always_scrollbar || self.row_count > self.visible()
+    /// Whether the rows do not all show, so the scroll bar is active.
+    fn overflows(&self) -> bool {
+        self.row_count > self.visible()
     }
+    fn shows_scrollbar(&self) -> bool {
+        self.always_scrollbar || self.overflows()
+    }
+    /// The rows that may show, the last perhaps in part.
     fn painted_rows(&self) -> usize {
-        let height = (self.height - self.header - 4).max(1);
+        let height = (self.height - 4 - self.rows_top()).max(1);
         ((height + ROW_HEIGHT - 1) / ROW_HEIGHT) as usize
     }
+    /// The rows that show whole.
     fn visible(&self) -> usize {
-        ((self.height - self.header - 4) / ROW_HEIGHT).max(1) as usize
+        if self.header > 0 {
+            ((self.height - self.header - 3) / ROW_HEIGHT).max(1) as usize
+        } else {
+            ((self.height - 4) / ROW_HEIGHT).max(1) as usize
+        }
+    }
+    /// Where the first row starts, below the headers, from the box's top.
+    fn rows_top(&self) -> i32 {
+        if self.header > 0 { self.header + 1 } else { 2 }
     }
     fn max_offset(&self, count: usize) -> usize {
         count.saturating_sub(self.visible())
@@ -1165,17 +1273,17 @@ impl Viewport {
         })
     }
     fn row_at(&self, y: i32, count: usize) -> Option<usize> {
-        if y < self.header + 2 || y >= self.height - 2 {
+        if y < self.rows_top() || y >= self.height - 2 {
             return None;
         }
-        let row = ((y - self.header - 2) / ROW_HEIGHT) as usize + self.offset;
+        let row = ((y - self.rows_top()) / ROW_HEIGHT) as usize + self.offset;
         (row < count).then_some(row)
     }
     fn is_scrollbar(&self, point: Point<Pixels>) -> bool {
         self.shows_scrollbar()
             && self
                 .local(point)
-                .is_some_and(|(x, _)| x >= self.content_width())
+                .is_some_and(|(x, _)| x >= self.width - SCROLL_WIDTH)
     }
     fn scrollbar(
         &self,
@@ -1184,18 +1292,26 @@ impl Viewport {
         theme: Theme,
         on_change: impl Fn(f64, &mut Window, &mut App) + 'static,
     ) -> impl IntoElement {
-        let height = self.height - self.header - 4;
+        // Below the headers' corner, which overlaps its top line.
+        let top = 1 + (self.header - 1).max(0);
+        let visible = self.visible();
         div()
             .absolute()
-            .left(px(self.content_width() as f32))
-            .top(px((self.header + 2) as f32))
+            .left(px((self.width - 1 - SCROLL_WIDTH) as f32))
+            .top(px(top as f32))
             .child(
-                ScrollBar::new(id, self.offset as f64, self.visible() as f64, count as f64)
-                    .tab_stop(false)
-                    .length(height)
-                    .step(1.)
-                    .theme(theme)
-                    .on_change(on_change),
+                ScrollBar::new(
+                    id,
+                    self.offset as f64,
+                    visible as f64,
+                    count.max(visible) as f64,
+                )
+                .tab_stop(false)
+                .length(self.height - 1 - top)
+                .step(1.)
+                .inactive(!self.overflows())
+                .theme(theme)
+                .on_change(on_change),
             )
     }
     fn scroll(&mut self, event: &ScrollWheelEvent, count: usize) {
@@ -1207,33 +1323,33 @@ impl Viewport {
             .saturating_add_signed(-rows)
             .min(self.max_offset(count));
     }
-    fn draw_frame(&self, pen: &mut Pen, focused: bool, theme: Theme) {
-        pen.rect(0, 0, self.width, self.height, WHITE);
-        pen.bevel(0, 0, self.width, self.height, GRAY_7, WHITE);
-        pen.frame(1, 1, self.width - 2, self.height - 2, BLACK);
-        if focused {
-            pen.frame(0, 0, self.width, self.height, theme.accent.dark);
+}
+
+fn paint_at_origin(pen: &Pen, bounds: Bounds<Pixels>, window: &mut Window) {
+    pen.paint(
+        point(bounds.origin.x.round(), bounds.origin.y.round()),
+        window,
+    );
+}
+
+/// Draws a picture of '#' rows in one color, as the original's bitmaps.
+fn draw_bitmap(pen: &mut Pen, x: i32, y: i32, rows: &[&str], color: u32) {
+    for (dy, row) in rows.iter().enumerate() {
+        for (dx, pixel) in row.bytes().enumerate() {
+            if pixel == b'#' {
+                pen.dot(x + dx as i32, y + dy as i32, color);
+            }
         }
     }
 }
 
-fn paint_inside(pen: &Pen, bounds: Bounds<Pixels>, window: &mut Window) {
-    window.with_content_mask(Some(ContentMask { bounds }), |window| {
-        pen.paint(
-            point(bounds.origin.x.round(), bounds.origin.y.round()),
-            window,
-        )
-    });
+fn icon_width(rows: &[String]) -> i32 {
+    rows.iter().map(|row| row.len()).max().unwrap_or(0) as i32
 }
 
-fn draw_disclosure(pen: &mut Pen, x: i32, y: i32, open: bool) {
-    for row in 0..5 {
-        if open {
-            pen.hline(x + row, y + row + 2, 9 - row * 2, BLACK);
-        } else {
-            pen.vline(x + row + 2, y + row, 9 - row * 2, BLACK);
-        }
-    }
+fn draw_icon(pen: &mut Pen, x: i32, y: i32, rows: &[String], accent: Accent, inverted: bool) {
+    let rows = rows.iter().map(String::as_str).collect::<Vec<_>>();
+    crate::bitmap_icons::draw_bitmap_icon(pen, &rows, x, y, accent, inverted, false);
 }
 
 fn draw_file_icon(pen: &mut Pen, x: i32, y: i32, kind: NodeKind, ink: u32) {
@@ -1250,22 +1366,6 @@ fn draw_file_icon(pen: &mut Pen, x: i32, y: i32, kind: NodeKind, ink: u32) {
             pen.hline(x + 4, y + line, 5, GRAY_7);
         }
     }
-}
-
-fn elide(text: &str, width: i32, language: Language) -> String {
-    if Font::Small.measure_in(text, language) <= width {
-        return text.into();
-    }
-    let mut text = text.to_string();
-    while !text.is_empty()
-        && Font::Small.measure_in(&text, language) + Font::Small.measure("…") > width
-    {
-        text.pop();
-    }
-    if width >= Font::Small.measure("…") {
-        text.push('…');
-    }
-    text
 }
 
 fn selection_events(
@@ -1352,11 +1452,11 @@ mod tests {
         assert_eq!(viewport.content_width(), 198);
         viewport.clamp(6);
         assert!(viewport.shows_scrollbar());
-        assert_eq!(viewport.content_width(), 182);
+        assert_eq!(viewport.content_width(), 183);
         viewport.clamp(0);
         viewport.always_scrollbar = true;
         assert!(viewport.shows_scrollbar());
-        assert_eq!(viewport.content_width(), 182);
+        assert_eq!(viewport.content_width(), 183);
     }
 
     #[test]

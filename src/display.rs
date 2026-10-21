@@ -242,38 +242,41 @@ pub fn balloon_in(
     let height = lines.len() as i32 * 14 + 20;
     drawing(width as f32, height as f32, move |pen, _, _| {
         pen.language = language;
-        pen.round_frame(
-            Rect {
-                x: 1,
-                y: 9,
-                width: width - 1,
-                height: height - 9,
-            },
-            4,
-            GRAY_6,
-            Some(GRAY_6),
-        );
-        pen.round_frame(
-            Rect {
-                x: 0,
-                y: 8,
-                width: width - 1,
-                height: height - 9,
-            },
-            4,
-            BLACK,
-            Some(WHITE),
-        );
-        for y in 0..8 {
-            pen.hline(13, y, y, WHITE);
-            pen.dot(12, y, BLACK);
-            pen.dot(13 + y, y, BLACK);
-        }
-        pen.hline(13, 8, 8, WHITE);
+        draw_balloon(pen);
         for (index, line) in lines.iter().enumerate() {
             pen.text(10, 23 + index as i32 * 14, line, Font::Small, BLACK);
         }
     })
+}
+
+/// Draws a help balloon filling `pen`: a rounded white body with a shadow,
+/// and an eight-pixel tail rising from its top left.
+pub fn draw_balloon(pen: &mut Pen) {
+    let (width, height) = (pen.width, pen.height);
+    // The shadow: Gray9 at half over what is under it, with the body's
+    // rounded corners.
+    let (shadow_width, shadow_height) = (width - 1, height - 9);
+    for row in 0..shadow_height {
+        let inset = crate::paint::corner_inset(row, shadow_height, 4);
+        pen.translucent(1 + inset, 9 + row, shadow_width - 2 * inset, 1, GRAY_9, 128);
+    }
+    pen.round_frame(
+        Rect {
+            x: 0,
+            y: 8,
+            width: width - 1,
+            height: height - 9,
+        },
+        4,
+        BLACK,
+        Some(WHITE),
+    );
+    for y in 0..8 {
+        pen.hline(13, y, y, WHITE);
+        pen.dot(12, y, BLACK);
+        pen.dot(13 + y, y, BLACK);
+    }
+    pen.hline(13, 8, 8, WHITE);
 }
 
 #[track_caller]

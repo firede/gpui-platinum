@@ -22,6 +22,9 @@ pub struct DatePicker {
     open: bool,
     pressed: bool,
     auto_width: bool,
+    day_first: bool,
+    first_weekday: Option<u8>,
+    today: Option<Date>,
     style: FieldStyle,
     subscriptions: Vec<Subscription>,
 }
@@ -42,6 +45,9 @@ impl DatePicker {
             open: false,
             pressed: false,
             auto_width: true,
+            day_first: false,
+            first_weekday: None,
+            today: None,
             style: FieldStyle::new(160),
             subscriptions: Vec::new(),
         }
@@ -65,6 +71,23 @@ impl DatePicker {
     }
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.style.disabled = disabled;
+        self
+    }
+    /// Writes the day before the month, as British English does: 15 Oct
+    /// 2026. Languages that write the year first are not changed.
+    pub fn day_first(mut self, day_first: bool) -> Self {
+        self.day_first = day_first;
+        self
+    }
+    /// Starts the calendar's weeks on day, 0 for Sunday, in place of the
+    /// language's first day.
+    pub fn first_weekday(mut self, day: u8) -> Self {
+        self.first_weekday = Some(day % 7);
+        self
+    }
+    /// The day the calendar outlines as today.
+    pub fn today(mut self, today: Date) -> Self {
+        self.today = Some(today);
         self
     }
     pub fn value(&self) -> Date {
@@ -147,12 +170,19 @@ impl Render for DatePicker {
             self.calendar.update(cx, |calendar, cx| {
                 calendar.set_theme(self.style.theme, cx);
                 calendar.set_language(self.style.language, cx);
+                if let Some(day) = self.first_weekday {
+                    calendar.set_first_weekday(day, cx);
+                }
+                if let Some(today) = self.today {
+                    calendar.set_today(today, cx);
+                }
             });
             self.style.dirty = false;
         }
-        let text = format_date(self.value, self.style.language);
+        let day_first = self.day_first;
+        let text = format_date(self.value, self.style.language, day_first);
         let width = if self.auto_width {
-            date_picker_width(self.style.language)
+            date_picker_width(self.style.language, day_first)
         } else {
             self.style.width
         };
@@ -244,13 +274,13 @@ impl Render for DatePicker {
     }
 }
 
-fn date_picker_width(language: Language) -> i32 {
+fn date_picker_width(language: Language, day_first: bool) -> i32 {
     [
         Date::new(2000, 9, 30).unwrap(),
         Date::new(2000, 12, 30).unwrap(),
     ]
     .into_iter()
-    .map(|date| Font::Bold.measure_in(&format_date(date, language), language))
+    .map(|date| Font::Bold.measure_in(&format_date(date, language, day_first), language))
     .max()
     .unwrap_or(0)
         + 35
@@ -300,12 +330,20 @@ fn draw_date_button(pen: &mut Pen, text: &str, disabled: bool, pressed: bool) {
     pen.text(9, (pen.height - 9) / 2 + 9, &label, Font::Bold, ink);
 }
 
-fn format_date(date: Date, language: Language) -> String {
+fn format_date(date: Date, language: Language, day_first: bool) -> String {
     match language {
         Language::English => {
             let months = [
                 "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
             ];
+            if day_first {
+                // British English shortens September to four letters.
+                let month = match date.month {
+                    9 => "Sept",
+                    month => months[(month - 1) as usize],
+                };
+                return format!("{} {month} {}", date.day, date.year);
+            }
             format!(
                 "{} {}, {}",
                 months[(date.month - 1) as usize],
@@ -840,7 +878,7 @@ mod tests {
             image::load_from_memory(include_bytes!("../../tests/reference/datepicker-open.png"))
                 .unwrap()
                 .to_rgba8();
-        let width = date_picker_width(Language::English);
+        let width = date_picker_width(Language::English, false);
         let mut pen = Pen::new(width, 20);
         draw_date_button(&mut pen, "Oct 14, 2026", false, false);
         let mut actual =
@@ -936,8 +974,15 @@ mod tests {
     #[test]
     fn dates_use_the_selected_languages_order() {
         let date = Date::new(2026, 10, 15).unwrap();
-        assert_eq!(format_date(date, Language::English), "Oct 15, 2026");
-        assert_eq!(format_date(date, Language::Japanese), "2026年10月15日");
-        assert_eq!(format_date(date, Language::Korean), "2026년 10월 15일");
+        assert_eq!(format_date(date, Language::English, false), "Oct 15, 2026");
+        assert_eq!(format_date(date, Language::English, true), "15 Oct 2026");
+        assert_eq!(
+            format_date(date, Language::Japanese, false),
+            "2026年10月15日"
+        );
+        assert_eq!(
+            format_date(date, Language::Korean, false),
+            "2026년 10월 15일"
+        );
     }
 }

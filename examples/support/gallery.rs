@@ -300,29 +300,24 @@ impl Gallery {
                 vec![(*name).into(), moons.to_string(), radius.to_string()]
             })
             .collect();
-        let planet = bitmap_image(
-            &[
-                "....####....",
-                "..##++++##..",
-                ".#+ww+++++#.",
-                ".#+w++++++#.",
-                "#++++++++++#",
-                "#++++++++++#",
-                "#++++++++o+#",
-                "#+++++++oo+#",
-                ".#+++++ooo#.",
-                ".#++++oooo#.",
-                "..##oooo##..",
-                "....####....",
-            ],
-            ACCENTS[0],
-        );
+        const PLANET: [&str; 12] = [
+            "....####....",
+            "..##++++##..",
+            ".#+ww+++++#.",
+            ".#+w++++++#.",
+            "#++++++++++#",
+            "#++++++++++#",
+            "#++++++++o+#",
+            "#+++++++oo+#",
+            ".#+++++ooo#.",
+            ".#++++oooo#.",
+            "..##oooo##..",
+            "....####....",
+        ];
         let table = cx.new(|cx| {
             Table::with_columns(
                 vec![
-                    TableColumn::new("Planet")
-                        .width(150)
-                        .icon(move |_| Some(planet.clone().into())),
+                    TableColumn::new("Planet").width(150).icon(|_| Some(PLANET)),
                     TableColumn::new("Moons").width(120).right(true),
                     TableColumn::new("Radius (km)").width(160).right(true),
                 ],
@@ -473,7 +468,8 @@ impl Gallery {
             color: cx.new(|cx| ColorWell::new(ACCENTS[0].mid, cx).label("Highlight color")),
             sheet: cx.new(|cx| {
                 SheetView::new(model, cx)
-                    .size(456, 160)
+                    .size(456, 166)
+                    .formula_gap(6)
                     .dimensions(50, 10)
                     .label("Sales")
             }),
@@ -1245,21 +1241,18 @@ fn checked(value: bool) -> CheckState {
 }
 
 fn gallery_files() -> FileTree {
-    let folder = bitmap_image(
-        &[
-            "###.......",
-            "#..######.",
-            "#.......#.",
-            "#.......#.",
-            "#.......#.",
-            "#########.",
-        ],
-        ACCENTS[0],
-    );
-    let mut documents = TreeNode::new(1, "Documents", NodeKind::Folder).with_icon(folder.clone());
+    let folder = [
+        "###.......",
+        "#..######.",
+        "#.......#.",
+        "#.......#.",
+        "#.......#.",
+        "#########.",
+    ];
+    let mut documents = TreeNode::new(1, "Documents", NodeKind::Folder).with_icon(folder);
     documents.open = true;
     let letters = TreeNode::new(2, "Letters", NodeKind::Folder)
-        .with_icon(folder.clone())
+        .with_icon(folder)
         .with_children(vec![TreeNode::new(3, "To Ada", NodeKind::Document)]);
     documents.children = vec![
         letters,
@@ -1313,19 +1306,6 @@ fn gallery_icons() -> Vec<IconItem> {
         )])))
     })
     .into()
-}
-fn bitmap_image(rows: &[&str], accent: Accent) -> Arc<RenderImage> {
-    let width = rows.iter().map(|row| row.len()).max().unwrap_or(0);
-    let image = image::RgbaImage::from_fn(width as u32, rows.len() as u32, |x, y| {
-        match rows[y as usize].as_bytes().get(x as usize) {
-            Some(b'#') => rgba(BLACK),
-            Some(b'w') => rgba(WHITE),
-            Some(b'+') => rgba(accent.mid),
-            Some(b'o') => rgba(accent.dark),
-            _ => image::Rgba([0, 0, 0, 0]),
-        }
-    });
-    Arc::new(RenderImage::new(vec![image::Frame::new(image)]))
 }
 fn rgba(color: u32) -> image::Rgba<u8> {
     image::Rgba([

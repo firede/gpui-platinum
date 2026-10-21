@@ -972,8 +972,7 @@ fn windows() -> Vec<Scene> {
             press(app, window, 130., 19., command);
             release(app, window, 130., 19., command);
             hover(app, window, 130., 76.);
-        })
-        .pending(),
+        }),
         Scene::elements("well-balloon", 260., 80., |_, _| {
             div()
                 .flex()
@@ -1091,18 +1090,14 @@ pub fn scenes() -> Vec<Scene> {
     scenes.extend(groups());
     scenes.push(east_asian("eastasian", Language::SimplifiedChinese));
     scenes.push(east_asian("eastasian-ja", Language::Japanese));
-    // Pending on controls of the calendar and navigation families: the
-    // calendar's weekday names stand a pixel higher than the original's and
-    // its sunken edge fills two corners the original leaves; Pagination
-    // draws raised black-outlined arrows where the original has 22×22
-    // bevel buttons with the month arrows' icons, 8 from its title.
+    // Pending on Pagination alone: it draws raised black-outlined arrows
+    // where the original has 22×22 bevel buttons with the month arrows'
+    // icons, 8 from its title.
     scenes.push(languages("languages-zh-hans", Language::SimplifiedChinese).pending());
     scenes.push(languages("languages-ja", Language::Japanese).pending());
     scenes.extend(windows());
     scenes.push(inactive_window());
-    // Pending on the list box alone: focused, the original's wears the
-    // two-pixel focus ring outside its frame, where ours draws one line.
-    scenes.push(focus_states().pending());
+    scenes.push(focus_states());
     scenes
 }
 

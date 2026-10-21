@@ -48,7 +48,7 @@ pub use display::*;
 pub use extras::*;
 pub use font::{Font, Language};
 pub use forms::*;
-pub use list::{ListBox, ListEvent, ListItem};
+pub use list::{LIST_ROW_HEIGHT, ListBox, ListEvent, ListItem, draw_list_box};
 pub use locale::tr;
 pub use menu::{MENU_FLASH, MenuEvent, MenuItem, PopupMenu};
 pub use menu_bar::{ContextMenu, Menu, MenuBar, MenuChoice};

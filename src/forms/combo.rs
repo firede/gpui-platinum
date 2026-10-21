@@ -1,10 +1,10 @@
 use gpui::{
     Anchor, App, Context, Entity, EventEmitter, FocusHandle, Focusable, MouseButton, Role,
-    SharedString, Subscription, Window, anchored, deferred, div, point, prelude::*, px, rgb,
+    SharedString, Subscription, Window, anchored, deferred, div, point, prelude::*, px,
 };
 
 use super::FieldStyle;
-use crate::{Font, InputEvent, Language, TextField, Theme, paint::drawing, theme::*};
+use crate::{InputEvent, Language, MenuItem, TextField, Theme, paint::drawing, theme::*};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ComboChanged(pub String);
@@ -12,6 +12,7 @@ pub struct ComboChanged(pub String);
 /// An editable field whose suggestions match the beginning of its text.
 pub struct Combobox {
     field: Entity<TextField>,
+    menu_focus: FocusHandle,
     options: Vec<String>,
     matches: Vec<usize>,
     highlighted: Option<usize>,
@@ -35,10 +36,13 @@ impl Combobox {
         let field = cx.new(|cx| TextField::new(cx).size(140., 22.));
         let subscription = cx.subscribe(&field, |this, field, event, cx| {
             if *event == InputEvent::Changed {
+                // Typing leaves the menu to Down or the arrow button.
                 let text = field.read(cx).value().to_owned();
-                this.matches = matching_options(&this.options, &text);
-                this.highlighted = (!this.matches.is_empty()).then_some(0);
-                this.open = !this.matches.is_empty();
+                if this.open {
+                    this.matches = matching_options(&this.options, &text);
+                    this.highlighted = (!this.matches.is_empty()).then_some(0);
+                    this.open = !this.matches.is_empty();
+                }
                 cx.emit(ComboChanged(text));
                 cx.notify();
             } else if *event == InputEvent::Submitted
@@ -50,11 +54,13 @@ impl Combobox {
         });
         Self {
             field,
+            menu_focus: cx.focus_handle(),
             options: options.into_iter().map(Into::into).collect(),
             matches: Vec::new(),
             highlighted: None,
             open: false,
-            style: FieldStyle::new(160),
+            // A field of 140 and the arrow button of 20 over its edge.
+            style: FieldStyle::new(159),
             _subscription: subscription,
         }
     }
@@ -125,13 +131,27 @@ impl Combobox {
         cx.notify();
     }
 
-    fn open(&mut self, cx: &mut Context<Self>) {
+    /// Opens the menu of the choices that begin with the text, the first
+    /// highlighted. The menu keeps the keys while it is open, as the
+    /// original's menus do, and gives them back to the field as it closes.
+    fn open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.style.disabled {
             return;
         }
         self.matches = matching_options(&self.options, self.field.read(cx).value());
         self.open = !self.matches.is_empty();
         self.highlighted = self.open.then_some(0);
+        if self.open {
+            window.focus(&self.menu_focus, cx);
+        }
+        cx.notify();
+    }
+
+    fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open = false;
+        if self.menu_focus.is_focused(window) {
+            window.focus(&self.field.focus_handle(cx), cx);
+        }
         cx.notify();
     }
 
@@ -159,7 +179,7 @@ impl Render for Combobox {
         let width = self.style.width;
         let disabled = self.style.disabled;
         let open = self.open;
-        let accent = self.style.theme.accent.dark;
+        let accent = self.style.theme.accent;
         let language = self.style.language;
         let mut root = div()
             .id("combobox")
@@ -167,12 +187,22 @@ impl Render for Combobox {
             .aria_label(self.style.label.clone())
             .aria_value(self.field.read(cx).value().to_owned())
             .aria_expanded(open)
+            .track_focus(&self.menu_focus)
             .relative()
             .w(px(width as f32))
             .h(px(22.))
             .flex()
             .items_center()
             .flex_shrink_0()
+            // Down in the field, which the field binds, opens the menu.
+            .capture_action(
+                cx.listener(|this, _: &crate::text_input::Down, window, cx| {
+                    if !this.open && !this.style.disabled {
+                        this.open(window, cx);
+                        cx.stop_propagation();
+                    }
+                }),
+            )
             .capture_key_down(cx.listener(|this, event, window, cx| {
                 if this.style.disabled || super::modified(event) {
                     return;
@@ -180,7 +210,9 @@ impl Render for Combobox {
                 match event.keystroke.key.as_str() {
                     "down" | "up" => {
                         if !this.open {
-                            this.open(cx);
+                            if event.keystroke.key == "down" {
+                                this.open(window, cx);
+                            }
                         } else if !this.matches.is_empty() {
                             let current = this.highlighted.unwrap_or(0);
                             this.highlighted = Some(if event.keystroke.key == "up" {
@@ -195,12 +227,9 @@ impl Render for Combobox {
                             this.choose(index, window, cx);
                         }
                     }
-                    "escape" if this.open => {
-                        this.open = false;
-                    }
+                    "escape" if this.open => this.close(window, cx),
                     "tab" => {
-                        this.open = false;
-                        cx.notify();
+                        this.close(window, cx);
                         return;
                     }
                     _ => return,
@@ -225,12 +254,10 @@ impl Render for Combobox {
                             if this.style.disabled {
                                 return;
                             }
-                            window.focus(&this.field.focus_handle(cx), cx);
                             if this.open {
-                                this.open = false;
-                                cx.notify();
+                                this.close(window, cx);
                             } else {
-                                this.open(cx);
+                                this.open(window, cx);
                             }
                             cx.stop_propagation();
                         }),
@@ -254,77 +281,71 @@ impl Render for Combobox {
                     })),
             );
         if open && !disabled {
-            let start = self.highlighted.unwrap_or(0).saturating_sub(7);
+            // A menu of the choices under the field, over its bottom edge,
+            // the one the field holds checked.
+            let value = self.field.read(cx).value().to_owned();
+            let items: Vec<MenuItem> = self
+                .matches
+                .iter()
+                .map(|&index| {
+                    let title = self.options[index].clone();
+                    let checked = title == value;
+                    MenuItem::new(title).checked(checked)
+                })
+                .collect();
+            let menu_width = width.max(crate::menu_bar::menu_width(&items, language));
             let menu = div()
                 .id("suggestions")
                 .role(Role::ListBox)
                 .aria_label(super::word(language, "choices"))
-                .w(px(width as f32))
-                .p(px(1.))
-                .border_1()
-                .border_color(rgb(BLACK))
-                .bg(rgb(GRAY_1))
+                .relative()
+                .w(px(menu_width as f32))
+                .p(px(2.))
+                .child(crate::menu::menu_frame())
                 .occlude()
-                .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                    this.open = false;
-                    cx.notify();
-                }))
-                .children(self.matches.iter().enumerate().skip(start).take(8).map(
-                    |(position, &index)| {
-                        let label = self.options[index].clone();
-                        let selected = self.highlighted == Some(position);
-                        div()
-                            .id(position)
-                            .role(Role::ListBoxOption)
-                            .aria_label(label.clone())
-                            .aria_selected(selected)
-                            .w_full()
-                            .h(px(20.))
-                            .on_mouse_down(MouseButton::Left, |_, window, cx| {
-                                window.prevent_default();
+                .on_mouse_down_out(cx.listener(|this, _, window, cx| this.close(window, cx)))
+                .children(items.into_iter().enumerate().map(|(position, item)| {
+                    let selected = self.highlighted == Some(position);
+                    div()
+                        .id(position)
+                        .role(Role::ListBoxOption)
+                        .aria_label(item.title.clone())
+                        .aria_selected(selected)
+                        .w_full()
+                        .h(px(18.))
+                        .on_mouse_down(MouseButton::Left, |_, window, cx| {
+                            window.prevent_default();
+                            cx.stop_propagation();
+                        })
+                        .on_mouse_move(cx.listener(move |this, _, _, cx| {
+                            if this.highlighted != Some(position) {
+                                this.highlighted = Some(position);
+                                cx.notify();
+                            }
+                        }))
+                        .on_mouse_up(
+                            MouseButton::Left,
+                            cx.listener(move |this, _, window, cx| {
+                                this.choose(position, window, cx);
                                 cx.stop_propagation();
-                            })
-                            .on_mouse_move(cx.listener(move |this, _, _, cx| {
-                                if this.highlighted != Some(position) {
-                                    this.highlighted = Some(position);
-                                    cx.notify();
-                                }
-                            }))
-                            .on_mouse_up(
-                                MouseButton::Left,
-                                cx.listener(move |this, _, window, cx| {
-                                    this.choose(position, window, cx);
-                                    cx.stop_propagation();
-                                }),
-                            )
-                            .child(drawing((width - 4) as f32, 20., move |pen, _, _| {
-                                pen.language = language;
-                                pen.rect(
-                                    0,
-                                    0,
-                                    pen.width,
-                                    pen.height,
-                                    if selected { accent } else { GRAY_1 },
-                                );
-                                pen.text(
-                                    6,
-                                    14,
-                                    &label,
-                                    Font::Bold,
-                                    if selected { WHITE } else { BLACK },
-                                );
-                            }))
-                    },
-                ));
+                            }),
+                        )
+                        .child(drawing((menu_width - 4) as f32, 18., move |pen, _, _| {
+                            pen.language = language;
+                            crate::menu::draw_menu_item(pen, &item, selected, accent);
+                        }))
+                }));
             root = root.child(
-                deferred(
-                    anchored()
-                        .anchor(Anchor::TopLeft)
-                        .offset(point(px(0.), px(23.)))
-                        .snap_to_window_with_margin(px(4.))
-                        .child(menu),
-                )
-                .priority(3),
+                div().absolute().left_0().top_0().child(
+                    deferred(
+                        anchored()
+                            .anchor(Anchor::TopLeft)
+                            .offset(point(px(0.), px(21.)))
+                            .snap_to_window_with_margin(px(0.))
+                            .child(menu),
+                    )
+                    .priority(3),
+                ),
             );
         }
         root

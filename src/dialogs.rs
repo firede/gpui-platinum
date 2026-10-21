@@ -3,7 +3,7 @@
 mod alert;
 mod file;
 mod find;
-mod modal;
+pub(crate) mod modal;
 mod notifications;
 mod page_setup;
 

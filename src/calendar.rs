@@ -199,12 +199,9 @@ impl Render for CalendarView {
                     let focused = focused && !crate::window::content_is_inactive();
                     pen.set_dimmed(crate::window::content_is_inactive());
                     pen.language = language;
-                    pen.rect(0, 0, pen.width, pen.height, WHITE);
                     pen.bevel(0, 0, pen.width, pen.height, GRAY_7, WHITE);
                     pen.frame(1, 1, pen.width - 2, pen.height - 2, BLACK);
-                    if focused {
-                        pen.frame(0, 0, pen.width, pen.height, theme.accent.dark);
-                    }
+                    pen.rect(2, 2, pen.width - 4, pen.height - 4, WHITE);
                     pen.rect(2, 2, pen.width - 4, 20, GRAY_2);
                     pen.bevel(2, 2, pen.width - 4, 20, WHITE, GRAY_7);
                     pen.hline(2, 22, pen.width - 4, BLACK);
@@ -226,7 +223,8 @@ impl Render for CalendarView {
                         let x = GRID_LEFT
                             + column as i32 * DAY_WIDTH
                             + (DAY_WIDTH - Font::Small.measure_in(name, language)) / 2;
-                        pen.text(x, 33, name, Font::Small, GRAY_8);
+                        // Centered on the fourteen rows under the header.
+                        pen.text(x, GRID_TOP - 3, name, Font::Small, GRAY_8);
                     }
                     pen.hline(GRID_LEFT, GRID_TOP - 1, DAY_WIDTH * 7, GRAY_4);
                     for (index, date) in grid.iter().enumerate() {
@@ -260,6 +258,9 @@ impl Render for CalendarView {
                             Font::Small,
                             ink,
                         );
+                    }
+                    if focused {
+                        crate::widgets::draw_focus_ring(pen, 0, theme.accent.dark);
                     }
                 },
             ))

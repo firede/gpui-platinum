@@ -1,16 +1,18 @@
 //! An editable sheet with a formula bar and a rectangular selection.
 
 use gpui::{
-    AccessibleAction, App, Bounds, ClipboardItem, ContentMask, Context, Entity, EventEmitter,
-    FocusHandle, Focusable, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels,
-    Point, Role, ScrollWheelEvent, SharedString, Subscription, Window, canvas, div, point,
-    prelude::*, px,
+    AccessibleAction, App, Bounds, ClipboardItem, Context, Entity, EventEmitter, FocusHandle,
+    Focusable, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, Point, Role,
+    ScrollWheelEvent, SharedString, Subscription, Window, canvas, div, point, prelude::*, px,
 };
+
+use std::rc::Rc;
 
 use crate::{
     Font, InputEvent, Language, ScrollBar, TextField, Theme,
+    list::{text_centered, text_middle},
     models::{Cell, Sheet},
-    paint::{Pen, drawing},
+    paint::{Pen, Rect, drawing},
     theme::*,
     window::GROW_BOX_SIZE,
 };
@@ -42,6 +44,7 @@ pub struct SheetView {
     top: usize,
     left: usize,
     formula_bar: bool,
+    formula_gap: i32,
     fills_window: bool,
     cell_editing: bool,
     dragging: bool,
@@ -51,6 +54,8 @@ pub struct SheetView {
     language: Language,
     label: SharedString,
     configured: Option<(i32, Theme, Language)>,
+    /// The formula bar's width, from the last layout.
+    bar_width: Rc<std::cell::Cell<i32>>,
 }
 
 impl EventEmitter<SheetEvent> for SheetView {}
@@ -89,6 +94,7 @@ impl SheetView {
             top: 0,
             left: 0,
             formula_bar: true,
+            formula_gap: 0,
             fills_window: false,
             cell_editing: false,
             dragging: false,
@@ -98,6 +104,7 @@ impl SheetView {
             language: Language::English,
             label: "Sheet".into(),
             configured: None,
+            bar_width: Rc::default(),
         }
     }
 
@@ -181,6 +188,12 @@ impl SheetView {
         self.label = label.into();
         self
     }
+    /// The room between the formula bar and the sheet, as a column with a
+    /// gap leaves between them. The size given includes it.
+    pub fn formula_gap(mut self, gap: i32) -> Self {
+        self.formula_gap = gap.max(0);
+        self
+    }
     pub fn formula_bar(mut self, show: bool) -> Self {
         self.formula_bar = show;
         self
@@ -233,29 +246,34 @@ impl SheetView {
         cx.notify();
     }
 
+    /// The width of the sheet: its ring, cells and scroll bar.
     fn grid_width(&self) -> i32 {
         if self.fills_window {
-            // From under the window's line at the left to the scroll bar's
-            // outline, the bar's right one on the window's line.
-            self.width + 3 - SCROLLBAR + 2
+            // Its ring under the window's lines at either side, its outline
+            // on them.
+            self.width + 4
         } else {
-            self.width - SCROLLBAR
+            self.width
         }
     }
     fn grid_height(&self) -> i32 {
-        let formula = if self.formula_bar { FORMULA_HEIGHT } else { 0 };
+        let formula = if self.formula_bar {
+            FORMULA_HEIGHT + self.formula_gap
+        } else {
+            0
+        };
         if self.fills_window {
             // The outline on the resize corner's top edge.
-            self.height - formula - GROW_BOX_SIZE + 2
+            self.height - formula - (GROW_BOX_SIZE - 2)
         } else {
-            self.height - SCROLLBAR - formula
+            self.height - formula
         }
     }
     fn visible_cols(&self) -> usize {
-        ((self.grid_width() - ROW_HEADER - 4) / CELL_WIDTH).max(1) as usize
+        ((self.grid_width() - 4 - ROW_HEADER - SCROLLBAR) / CELL_WIDTH).max(1) as usize
     }
     fn visible_rows(&self) -> usize {
-        ((self.grid_height() - CELL_HEIGHT - 4) / CELL_HEIGHT).max(1) as usize
+        ((self.grid_height() - 4 - CELL_HEIGHT) / CELL_HEIGHT).max(1) as usize
     }
     fn reveal(&mut self) {
         if self.model.cursor.col < self.left {
@@ -464,22 +482,19 @@ impl SheetView {
         cx.notify();
     }
 
+    /// The cell under a point, the nearest one of the sheet's beyond its
+    /// edges; none over the headers or the scroll bar.
     fn cell_at(&self, point: Point<Pixels>) -> Option<Cell> {
         let bounds = self.grid_bounds?;
         let x = f32::from(point.x - bounds.left()) as i32 - ROW_HEADER - 2;
         let y = f32::from(point.y - bounds.top()) as i32 - CELL_HEIGHT - 2;
-        if x < 0
-            || y < 0
-            || x >= self.visible_cols() as i32 * CELL_WIDTH
-            || y >= self.visible_rows() as i32 * CELL_HEIGHT
-        {
+        if x < 0 || y < 0 || x + ROW_HEADER + 2 >= self.grid_width() - SCROLLBAR {
             return None;
         }
-        let cell = Cell::new(
-            self.left + (x / CELL_WIDTH) as usize,
-            self.top + (y / CELL_HEIGHT) as usize,
-        );
-        (cell.col < self.cols && cell.row < self.rows).then_some(cell)
+        Some(Cell::new(
+            (self.left + (x / CELL_WIDTH) as usize).min(self.cols - 1),
+            (self.top + (y / CELL_HEIGHT) as usize).min(self.rows - 1),
+        ))
     }
 
     fn mouse_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -498,118 +513,174 @@ impl SheetView {
         }
     }
 
+    fn focused(&self, window: &Window) -> bool {
+        (self.focus.is_focused(window) || self.cell_editing)
+            && !crate::window::content_is_inactive()
+    }
+
     fn paint(&self, bounds: Bounds<Pixels>, window: &mut Window) {
         let inactive = crate::window::content_is_inactive();
-        let focused = (self.focus.is_focused(window) || self.cell_editing) && !inactive;
-        let mut pen = Pen::new(self.grid_width(), self.grid_height());
-        pen.language = self.language;
-        pen.rect(0, 0, pen.width, pen.height, WHITE);
-        pen.bevel(0, 0, pen.width, pen.height, GRAY_7, WHITE);
-        pen.frame(1, 1, pen.width - 2, pen.height - 2, BLACK);
-        let (first, last) = self.model.selection_bounds();
-        for visible in 0..self.visible_rows().min(self.rows.saturating_sub(self.top)) {
-            let row = self.top + visible;
-            let y = 2 + CELL_HEIGHT + visible as i32 * CELL_HEIGHT;
-            pen.set_dimmed(inactive);
-            pen.rect(
-                2,
-                y,
-                ROW_HEADER,
-                CELL_HEIGHT,
-                if (first.row..=last.row).contains(&row) {
-                    GRAY_4
-                } else {
-                    GRAY_2
+        let focused = self.focused(window);
+        let (width, height) = (self.grid_width(), self.grid_height());
+        let mut pen = Pen::new(width, height);
+        pen.bevel(0, 0, width, height, GRAY_7, WHITE);
+        let cells_width = width - 2 - SCROLLBAR + 1;
+        let mut cells = Pen::new(cells_width, height - 2);
+        cells.language = self.language;
+        self.draw_sheet(&mut cells, focused, false);
+        if inactive {
+            // In the background, its headers gray, the cells as they are.
+            for clip in [
+                Rect {
+                    x: 1,
+                    y: 1,
+                    width: cells_width - 2,
+                    height: CELL_HEIGHT,
                 },
+                Rect {
+                    x: 1,
+                    y: 1,
+                    width: ROW_HEADER,
+                    height: height - 4,
+                },
+            ] {
+                let mut headers = Pen::new(cells_width, height - 2);
+                headers.language = self.language;
+                headers.set_dimmed(true);
+                self.draw_sheet(&mut headers, focused, true);
+                headers.clip(clip);
+                cells.append(headers, 0, 0);
+            }
+        }
+        pen.append(cells, 1, 1);
+        if focused && !self.fills_window {
+            crate::widgets::draw_focus_ring(&mut pen, 0, self.theme.accent.dark);
+        }
+        pen.paint(
+            point(bounds.origin.x.round(), bounds.origin.y.round()),
+            window,
+        );
+    }
+
+    /// Draws the cells from the first in view in the pen's box, which holds
+    /// their outline, as the original's DrawSheet does.
+    fn draw_sheet(&self, pen: &mut Pen, focused: bool, headers_only: bool) {
+        let (width, height) = (pen.width, pen.height);
+        let accent = self.theme.accent;
+        let language = self.language;
+        pen.rect(1, 1, width - 2, height - 2, WHITE);
+        pen.frame(0, 0, width, height, BLACK);
+        let (first, last) = self.model.selection_bounds();
+        let cursor = self.model.cursor;
+        let mut inner = Pen::new(width, height);
+        inner.language = language;
+        let header = |pen: &mut Pen, x: i32, y: i32, cell_width: i32, label: &str, on: bool| {
+            let mut header = Pen::new(cell_width, CELL_HEIGHT);
+            header.language = language;
+            header.rect(
+                0,
+                0,
+                cell_width,
+                CELL_HEIGHT,
+                if on { GRAY_4 } else { GRAY_2 },
             );
-            pen.bevel(2, y, ROW_HEADER, CELL_HEIGHT, WHITE, GRAY_7);
-            let number = (row + 1).to_string();
-            pen.text(
-                ROW_HEADER - Font::Small.measure(&number) - 2,
-                y + 13,
-                &number,
+            header.bevel(0, 0, cell_width - 1, CELL_HEIGHT - 1, WHITE, GRAY_7);
+            header.hline(0, CELL_HEIGHT - 1, cell_width, GRAY_9);
+            header.vline(cell_width - 1, 0, CELL_HEIGHT, GRAY_9);
+            text_centered(
+                &mut header,
+                0,
+                0,
+                cell_width - 1,
+                CELL_HEIGHT - 1,
+                label,
                 Font::Small,
                 BLACK,
             );
-            pen.set_dimmed(false);
-            for visible_col in 0..self.visible_cols().min(self.cols.saturating_sub(self.left)) {
-                let cell = Cell::new(self.left + visible_col, row);
-                let x = 2 + ROW_HEADER + visible_col as i32 * CELL_WIDTH;
-                if self.model.selected(cell) {
-                    pen.rect(
+            pen.append(header, x, y);
+        };
+        for row in self.top..self.rows {
+            let y = 1 + CELL_HEIGHT + (row - self.top) as i32 * CELL_HEIGHT;
+            if y >= height {
+                break;
+            }
+            for col in self.left..self.cols {
+                let x = 1 + ROW_HEADER + (col - self.left) as i32 * CELL_WIDTH;
+                if x >= width || headers_only {
+                    break;
+                }
+                let cell = Cell::new(col, row);
+                if self.model.selected(cell) && cell != cursor {
+                    inner.rect(
                         x,
                         y,
                         CELL_WIDTH,
                         CELL_HEIGHT,
-                        if focused {
-                            self.theme.accent.light
-                        } else {
-                            GRAY_3
-                        },
+                        if focused { accent.light } else { GRAY_3 },
                     );
                 }
-                pen.vline(x + CELL_WIDTH - 1, y, CELL_HEIGHT, GRAY_3);
-                pen.hline(x, y + CELL_HEIGHT - 1, CELL_WIDTH, GRAY_3);
-                let value = self.model.value(cell);
-                let text = clipped(&value, CELL_WIDTH - 8, self.language);
-                let x = if value.parse::<f64>().is_ok() {
-                    x + CELL_WIDTH - 4 - Font::Small.measure_in(&text, self.language)
+                inner.hline(x, y + CELL_HEIGHT - 1, CELL_WIDTH, GRAY_3);
+                inner.vline(x + CELL_WIDTH - 1, y, CELL_HEIGHT, GRAY_3);
+                let editing = self.model.editing.as_ref().filter(|_| cell == cursor);
+                let value = editing.cloned().unwrap_or_else(|| self.model.value(cell));
+                if value.is_empty() || (editing.is_some() && self.cell_editing) {
+                    continue;
+                }
+                let fit = Font::Small.truncate_in(&value, CELL_WIDTH - 8, language);
+                let text_x = if editing.is_none() && value.parse::<f64>().is_ok() {
+                    x + CELL_WIDTH - 4 - Font::Small.measure_in(&fit, language)
                 } else {
                     x + 4
                 };
-                pen.text(x, y + 13, &text, Font::Small, BLACK);
+                text_middle(
+                    &mut inner,
+                    text_x,
+                    y,
+                    CELL_HEIGHT - 1,
+                    &fit,
+                    Font::Small,
+                    BLACK,
+                );
             }
+            header(
+                &mut inner,
+                1,
+                y,
+                ROW_HEADER,
+                &(row + 1).to_string(),
+                (first.row..=last.row).contains(&row),
+            );
         }
-        pen.set_dimmed(inactive);
-        pen.rect(2, 2, ROW_HEADER, CELL_HEIGHT, GRAY_2);
-        pen.bevel(2, 2, ROW_HEADER, CELL_HEIGHT, WHITE, GRAY_7);
-        for visible in 0..self.visible_cols().min(self.cols.saturating_sub(self.left)) {
-            let col = self.left + visible;
-            let x = 2 + ROW_HEADER + visible as i32 * CELL_WIDTH;
-            pen.rect(
+        for col in self.left..self.cols {
+            let x = 1 + ROW_HEADER + (col - self.left) as i32 * CELL_WIDTH;
+            if x >= width {
+                break;
+            }
+            header(
+                &mut inner,
                 x,
-                2,
+                1,
                 CELL_WIDTH,
-                CELL_HEIGHT,
-                if (first.col..=last.col).contains(&col) {
-                    GRAY_4
-                } else {
-                    GRAY_2
-                },
-            );
-            pen.bevel(x, 2, CELL_WIDTH, CELL_HEIGHT, WHITE, GRAY_7);
-            let title = Cell::column_name(col);
-            pen.text(
-                x + (CELL_WIDTH - Font::Small.measure(&title)) / 2,
-                15,
-                &title,
-                Font::Small,
-                BLACK,
+                &Cell::column_name(col),
+                (first.col..=last.col).contains(&col),
             );
         }
-        pen.set_dimmed(false);
-        let cell = self.model.cursor;
-        if cell.col >= self.left
-            && cell.col < self.left + self.visible_cols()
-            && cell.row >= self.top
-            && cell.row < self.top + self.visible_rows()
-        {
-            let x = 2 + ROW_HEADER + (cell.col - self.left) as i32 * CELL_WIDTH;
-            let y = 2 + CELL_HEIGHT + (cell.row - self.top) as i32 * CELL_HEIGHT;
-            let ink = if focused {
-                self.theme.accent.dark
-            } else {
-                BLACK
-            };
-            pen.frame(x, y, CELL_WIDTH, CELL_HEIGHT, ink);
-            pen.frame(x + 1, y + 1, CELL_WIDTH - 2, CELL_HEIGHT - 2, ink);
+        header(&mut inner, 1, 1, ROW_HEADER, "", false);
+        // The cursor: a frame two pixels wide.
+        if !headers_only && cursor.row >= self.top && cursor.col >= self.left {
+            let x = 1 + ROW_HEADER + (cursor.col - self.left) as i32 * CELL_WIDTH;
+            let y = 1 + CELL_HEIGHT + (cursor.row - self.top) as i32 * CELL_HEIGHT;
+            let ink = if focused { accent.dark } else { BLACK };
+            inner.frame(x - 1, y - 1, CELL_WIDTH + 1, CELL_HEIGHT + 1, ink);
+            inner.frame(x, y, CELL_WIDTH - 1, CELL_HEIGHT - 1, ink);
         }
-        window.with_content_mask(Some(ContentMask { bounds }), |window| {
-            pen.paint(
-                point(bounds.origin.x.round(), bounds.origin.y.round()),
-                window,
-            )
+        inner.clip(Rect {
+            x: 1,
+            y: 1,
+            width: width - 2,
+            height: height - 2,
         });
+        pen.append(inner, 0, 0);
     }
 }
 
@@ -638,7 +709,12 @@ impl Render for SheetView {
         let theme = self.theme;
         let language = self.language;
         let fills = self.fills_window;
-        let formula_width = self.width - 62;
+        // The field takes what the bar leaves it.
+        let bar = match self.bar_width.get() {
+            0 => self.width,
+            width => width,
+        };
+        let formula_width = bar - 12 - 44 - 6;
         if self.configured != Some((formula_width, theme, language)) {
             self.formula.update(cx, |field, cx| {
                 field.set_size(formula_width as f32, 22., cx);
@@ -654,7 +730,7 @@ impl Render for SheetView {
         let layout = cx.entity();
         let paint = cx.entity();
         let vertical = cx.entity();
-        let horizontal = cx.entity();
+
         let cursor = self.model.cursor;
         let reference = cursor.to_string();
         let mut accessible_rows = Vec::new();
@@ -797,26 +873,81 @@ impl Render for SheetView {
                             as f32))
                         .child(self.editor.clone()),
                 )
-            });
+            })
+            .child(
+                div()
+                    .absolute()
+                    .top(px(1.))
+                    .left(px((self.grid_width() - 1 - SCROLLBAR) as f32))
+                    .child(
+                        ScrollBar::new(
+                            "sheet-vertical",
+                            self.top as f64,
+                            self.visible_rows() as f64,
+                            self.rows as f64,
+                        )
+                        .tab_stop(false)
+                        .step(1.)
+                        .length(self.grid_height() - 2)
+                        .theme(theme)
+                        .label("Rows")
+                        .on_change(move |value, _, cx| {
+                            vertical.update(cx, |this, cx| {
+                                this.top = value.round() as usize;
+                                cx.notify();
+                            })
+                        }),
+                    ),
+            );
+        let bar_width = self.bar_width.clone();
+        let measured = self.bar_width.get();
         div()
             .id("platinum-sheet")
             .flex()
             .flex_col()
             .flex_shrink_0()
-            .w(px(self.width as f32))
-            .h(px(self.height as f32))
+            .min_w(px(self.width as f32))
+            .when(fills, |root| root.w(px(self.width as f32)))
             .capture_key_down(cx.listener(Self::capture_key))
             .on_key_down(cx.listener(Self::key_down))
             .when(self.formula_bar, |root| {
+                // The bar spans what holds the sheet, as the original's.
                 root.child(
                     div()
+                        .relative()
                         .flex()
                         .items_center()
                         .gap(px(6.))
                         .px(px(6.))
                         .h(px(FORMULA_HEIGHT as f32))
                         .flex_shrink_0()
-                        .bg(gpui::rgb(GRAY_2))
+                        .child(
+                            canvas(
+                                move |bounds, window, _| {
+                                    let width = f32::from(bounds.size.width).round() as i32;
+                                    if bar_width.replace(width) != width && width != measured {
+                                        window.refresh();
+                                    }
+                                },
+                                |bounds, _, window, _| {
+                                    let mut pen = Pen::new(
+                                        f32::from(bounds.size.width).round() as i32,
+                                        f32::from(bounds.size.height).round() as i32,
+                                    );
+                                    pen.rect(0, 0, pen.width, pen.height, GRAY_2);
+                                    pen.hline(0, pen.height - 2, pen.width, GRAY_7);
+                                    pen.hline(0, pen.height - 1, pen.width, WHITE);
+                                    pen.paint(
+                                        point(bounds.origin.x.round(), bounds.origin.y.round()),
+                                        window,
+                                    );
+                                },
+                            )
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .size_full(),
+                        )
                         .child(drawing(44., 22., move |pen, _, _| {
                             pen.rect(0, 0, 44, 22, GRAY_2);
                             pen.bevel(0, 0, 44, 22, WHITE, GRAY_7);
@@ -830,95 +961,8 @@ impl Render for SheetView {
                     .flex()
                     .flex_shrink_0()
                     .when(fills, |row| row.ml(px(-2.)))
-                    .child(grid)
-                    .child(
-                        div().when(fills, |bar| bar.ml(px(-2.)).mt(px(1.))).child(
-                            ScrollBar::new(
-                                "sheet-vertical",
-                                self.top as f64 * CELL_HEIGHT as f64,
-                                self.visible_rows() as f64 * CELL_HEIGHT as f64,
-                                self.rows as f64 * CELL_HEIGHT as f64,
-                            )
-                            .tab_stop(false)
-                            .step(CELL_HEIGHT as f64)
-                            .length(self.grid_height() - if fills { 2 } else { 0 })
-                            .theme(theme)
-                            .label("Rows")
-                            .on_change(move |value, _, cx| {
-                                vertical.update(cx, |this, cx| {
-                                    this.top = (value / CELL_HEIGHT as f64).round() as usize;
-                                    cx.notify();
-                                })
-                            }),
-                        ),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_shrink_0()
-                    .h(px(SCROLLBAR as f32))
-                    .when(fills, |row| row.ml(px(-1.)).mt(px(-2.)))
-                    .child(if fills {
-                        // On the window's lines and the grid's outline.
-                        drawing((ROW_HEADER + 1) as f32, SCROLLBAR as f32, |pen, _, _| {
-                            pen.rect(0, 0, pen.width, pen.height, GRAY_2);
-                            pen.hline(0, 0, pen.width, BLACK);
-                            pen.hline(0, pen.height - 1, pen.width, BLACK);
-                            pen.vline(0, 0, pen.height, BLACK);
-                        })
-                        .into_any_element()
-                    } else {
-                        div()
-                            .w(px(ROW_HEADER as f32))
-                            .h_full()
-                            .bg(gpui::rgb(GRAY_2))
-                            .into_any_element()
-                    })
-                    .child(
-                        ScrollBar::new(
-                            "sheet-horizontal",
-                            self.left as f64 * CELL_WIDTH as f64,
-                            self.visible_cols() as f64 * CELL_WIDTH as f64,
-                            self.cols as f64 * CELL_WIDTH as f64,
-                        )
-                        .tab_stop(false)
-                        .horizontal()
-                        .step(CELL_WIDTH as f64)
-                        .length(if fills {
-                            // To the resize corner's edge.
-                            self.width - GROW_BOX_SIZE + 1 - ROW_HEADER
-                        } else {
-                            self.grid_width() - ROW_HEADER
-                        })
-                        .theme(theme)
-                        .label("Columns")
-                        .on_change(move |value, _, cx| {
-                            horizontal.update(cx, |this, cx| {
-                                this.left = (value / CELL_WIDTH as f64).round() as usize;
-                                cx.notify();
-                            })
-                        }),
-                    ),
+                    .when(self.formula_bar, |row| row.mt(px(self.formula_gap as f32)))
+                    .child(grid),
             )
     }
-}
-
-fn clipped(text: &str, width: i32, language: Language) -> String {
-    if Font::Small.measure_in(text, language) <= width {
-        return text.into();
-    }
-    let mut value = String::new();
-    for ch in text.chars() {
-        if Font::Small.measure_in(&value, language)
-            + Font::Small.measure_in(&ch.to_string(), language)
-            + Font::Small.measure("…")
-            > width
-        {
-            break;
-        }
-        value.push(ch);
-    }
-    value.push('…');
-    value
 }

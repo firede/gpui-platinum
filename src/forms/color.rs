@@ -1,10 +1,15 @@
 use gpui::{
-    App, Context, EventEmitter, FocusHandle, Focusable, MouseButton, Role, SharedString, Window,
-    anchored, deferred, div, point, prelude::*, px, rgb,
+    App, Context, EventEmitter, FocusHandle, Focusable, Role, SharedString, Window, div,
+    prelude::*, px,
 };
 
 use super::FieldStyle;
-use crate::{Font, Language, Slider, Theme, button, paint::drawing, theme::*};
+use crate::{
+    Font, Language, Slider, Theme, button,
+    dialogs::modal::{ModalState, ModalView, modal},
+    paint::drawing,
+    theme::*,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ColorChanged(pub u32);
@@ -12,12 +17,12 @@ pub struct ColorChanged(pub u32);
 /// A color swatch opening a palette and RGB picker. Only OK commits the color.
 pub struct ColorWell {
     focus: FocusHandle,
-    dialog_focus: FocusHandle,
     palette_focus: FocusHandle,
+    buttons: [FocusHandle; 2],
     value: u32,
     draft: u32,
     palette_index: usize,
-    open: bool,
+    modal: ModalState,
     style: FieldStyle,
 }
 
@@ -32,12 +37,12 @@ impl ColorWell {
     pub fn new(color: u32, cx: &mut Context<Self>) -> Self {
         Self {
             focus: cx.focus_handle().tab_stop(true),
-            dialog_focus: cx.focus_handle(),
             palette_focus: cx.focus_handle().tab_stop(true),
+            buttons: [cx.focus_handle(), cx.focus_handle()],
             value: color & 0xffffff,
             draft: color & 0xffffff,
             palette_index: 0,
-            open: false,
+            modal: ModalState::new(300., cx),
             style: FieldStyle::new(44),
         }
     }
@@ -67,7 +72,7 @@ impl ColorWell {
     pub fn set_disabled(&mut self, disabled: bool, cx: &mut Context<Self>) {
         self.style.disabled = disabled;
         if disabled {
-            self.open = false;
+            self.modal.open = false;
         }
         cx.notify();
     }
@@ -93,8 +98,14 @@ impl ColorWell {
             .iter()
             .position(|color| *color == self.value)
             .unwrap_or(0);
-        self.open = true;
-        window.focus(&self.palette_focus, cx);
+        self.modal.theme = self.style.theme;
+        self.modal.language = self.style.language;
+        self.modal.stops = vec![
+            self.palette_focus.clone(),
+            self.buttons[0].clone(),
+            self.buttons[1].clone(),
+        ];
+        self.modal.show(Some(&self.palette_focus), window, cx);
         cx.notify();
     }
 
@@ -103,9 +114,17 @@ impl ColorWell {
             self.value = self.draft;
             cx.emit(ColorChanged(self.value));
         }
-        self.open = false;
+        self.modal.close(window, cx);
         window.focus(&self.focus, cx);
         cx.notify();
+    }
+
+    fn accept(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.finish(true, window, cx);
+    }
+
+    fn cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.finish(false, window, cx);
     }
 
     fn choose_swatch(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -128,7 +147,7 @@ impl Render for ColorWell {
         };
         let shown = self.value;
         let disabled = self.style.disabled;
-        let open = self.open;
+        let open = self.modal.open;
         let focus_visible = self.focus.is_focused(window) && window.last_input_was_keyboard();
         let theme = self.style.theme;
         let mut root = div()
@@ -143,7 +162,7 @@ impl Render for ColorWell {
             .when(!disabled, |element| element.track_focus(&self.focus))
             .on_click(cx.listener(|this, _, window, cx| this.open(window, cx)))
             .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
-                if matches!(event.keystroke.key.as_str(), "space" | "enter") && !this.open {
+                if matches!(event.keystroke.key.as_str(), "space" | "enter") && !this.modal.open {
                     this.open(window, cx);
                     cx.stop_propagation();
                 }
@@ -221,38 +240,27 @@ impl Render for ColorWell {
                     pen.rect(3, 3, 54, 22, draft);
                     pen.rect(3, 25, 54, 22, shown);
                 }));
+            // The picker is a dialog of the well's name: the palette and the
+            // new color over the old, sliders of red, green and blue, and
+            // Cancel and OK.
             let mut dialog = div()
-                .id("color-picker")
-                .role(Role::Dialog)
-                .aria_label(title.clone())
-                .track_focus(&self.dialog_focus)
-                .tab_group()
-                .relative()
                 .flex()
                 .flex_col()
                 .gap(px(8.))
-                .w(px(310.))
-                .p(px(12.))
-                .bg(rgb(GRAY_2))
-                .border_2()
-                .border_color(rgb(BLACK))
-                .occlude()
                 .capture_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
-                    match event.keystroke.key.as_str() {
-                        "escape" => this.finish(false, window, cx),
-                        "enter" => this.finish(true, window, cx),
-                        "tab" => trap_tab(
-                            &this.dialog_focus,
-                            event.keystroke.modifiers.shift,
-                            window,
-                            cx,
-                        ),
-                        _ => return,
+                    if event.keystroke.key == "enter" {
+                        this.finish(true, window, cx);
+                        cx.stop_propagation();
                     }
-                    cx.stop_propagation();
                 }))
-                .child(super::form_label(title.to_string(), language))
-                .child(div().flex().gap(px(12.)).child(grid).child(preview));
+                .child(
+                    div()
+                        .flex()
+                        .items_start()
+                        .gap(px(12.))
+                        .child(grid)
+                        .child(preview),
+                );
             for (index, key) in ["red", "green", "blue"].iter().enumerate() {
                 let channel = ((draft >> (16 - 8 * index)) & 255) as f64;
                 let name = super::word(language, key);
@@ -281,82 +289,50 @@ impl Render for ColorWell {
                                         .ok();
                                 }),
                         )
-                        .child(drawing(24., 18., move |pen, _, _| {
-                            pen.text(0, 13, &format!("{}", channel as u8), Font::Small, BLACK)
-                        })),
+                        // A line of the text's own height, centered on the row.
+                        .child(drawing(
+                            24.,
+                            Font::Small.line_height() as f32,
+                            move |pen, _, _| {
+                                let text = format!("{}", channel as u8);
+                                pen.text(0, Font::Small.ascent(), &text, Font::Small, BLACK)
+                            },
+                        )),
                 );
             }
             dialog = dialog.child(
                 div()
                     .flex()
                     .justify_end()
+                    .items_center()
                     .gap(px(10.))
                     .child(
                         button("cancel", super::word(language, "cancel"))
+                            .focus_handle(&self.buttons[0])
+                            .theme(theme)
                             .language(language)
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.finish(false, window, cx)),
-                            ),
+                            .on_click(cx.listener(|this, _, window, cx| this.cancel(window, cx))),
                     )
                     .child(
                         button("ok", super::word(language, "ok"))
-                            .language(language)
+                            .focus_handle(&self.buttons[1])
                             .default_button()
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.finish(true, window, cx)),
-                            ),
+                            .theme(theme)
+                            .language(language)
+                            .on_click(cx.listener(|this, _, window, cx| this.accept(window, cx))),
                     ),
             );
-            let viewport = window.viewport_size();
-            let x = (f32::from(viewport.width) - 310.) / 2.;
-            let y = (f32::from(viewport.height) - 260.) / 2.;
-            let backdrop = div()
-                .id("color-modal")
-                .w(viewport.width)
-                .h(viewport.height)
-                .relative()
-                .occlude()
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .child(
-                    div()
-                        .absolute()
-                        .left(px(x.max(4.)))
-                        .top(px(y.max(4.)))
-                        .child(dialog),
-                );
-            root = root.child(
-                deferred(anchored().position(point(px(0.), px(0.))).child(backdrop)).priority(20),
-            );
+            root = root.child(modal(
+                &mut self.modal,
+                ModalView::new(title, true, dialog),
+                window,
+                cx,
+                |this| &mut this.modal,
+                Self::accept,
+                Self::cancel,
+            ));
         }
         root
-    }
-}
-
-fn trap_tab(container: &FocusHandle, backwards: bool, window: &mut Window, cx: &mut App) {
-    if backwards {
-        window.focus_prev(cx);
-    } else {
-        window.focus_next(cx);
-    }
-    if container.contains_focused(window, cx) {
-        return;
-    }
-    window.focus(container, cx);
-    window.focus_next(cx);
-    if !backwards {
-        return;
-    }
-    let first = window.focused(cx);
-    let mut last = first.clone();
-    for _ in 0..64 {
-        window.focus_next(cx);
-        if !container.contains_focused(window, cx) || window.focused(cx) == first {
-            break;
-        }
-        last = window.focused(cx);
-    }
-    if let Some(last) = last {
-        window.focus(&last, cx);
     }
 }
 

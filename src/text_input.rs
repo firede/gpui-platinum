@@ -1119,53 +1119,19 @@ fn paint_text(
 
 fn paint_styled_text(
     pen: &mut crate::paint::Pen,
-    mut x: i32,
+    x: i32,
     baseline: i32,
     text: &str,
     language: Language,
     color: u32,
     style: TextStyle,
 ) {
-    let font = style.font();
-    let scale = style.scale.clamp(1, 4) as i32;
-    for grapheme in text.graphemes(true) {
-        if grapheme == "\t" {
-            x += font.glyph_or_replacement(' ', language).advance * 4 * scale;
-            continue;
-        }
-        if !font.has_bitmap_grapheme(grapheme, language)
-            && let Some(advance) = pen.system_text(
-                (x, baseline),
-                grapheme,
-                font,
-                color,
-                scale as u8,
-                style.italic,
-            )
-        {
-            x += advance;
-            continue;
-        }
-        for ch in grapheme.chars() {
-            let glyph = font.glyph_or_replacement(ch, language);
-            let east_asian = matches!(ch as u32, 0x1100..=0x11ff | 0x2e80..=0xa4cf | 0xac00..=0xd7af | 0xf900..=0xfaff | 0xfe30..=0xffef | 0x20000..=0x3134f);
-            glyph.for_each_run(|dx, dy, width| {
-                let slant = if style.italic && !east_asian {
-                    (-dy + 1).div_euclid(2)
-                } else {
-                    0
-                };
-                pen.rect(
-                    x + (dx + slant) * scale,
-                    baseline + dy * scale,
-                    width * scale,
-                    scale,
-                    color,
-                );
-            });
-            x += glyph.advance * scale;
-        }
-    }
+    // Each cell is one grapheme; the field underlines whole cells itself.
+    let style = TextStyle {
+        underline: false,
+        ..style
+    };
+    pen.styled_text_in(x, baseline, text, Font::Small, color, style, language);
 }
 
 fn line_index(lines: &[Line], offset: usize, preceding: bool) -> usize {
@@ -1226,17 +1192,13 @@ fn layout_document_lines(
         }
         let visible = if password { "•" } else { grapheme };
         let font = style.font();
-        let scale = style.scale.clamp(1, 4) as i32;
-        let mut advance = if visible == "\t" {
-            font.advance(" ", language) * 4
-        } else {
-            font.advance(visible, language)
-        };
+        let scale = i32::from(style.scale.clamp(1, 4));
+        let mut advance = font.styled_advance(visible, scale, style.italic, language);
         let next_style = rich.and_then(|rich| rich.styles.get(character)).copied();
         if style.italic && next_style.is_none_or(|next| !next.italic || next.scale != style.scale) {
-            advance += Font::Small.ascent() / 2;
+            advance += font.italic_slant() * scale;
         }
-        let width = (advance * scale) as f32;
+        let width = advance as f32;
         let trailing_space = grapheme.chars().all(char::is_whitespace)
             && line
                 .cells

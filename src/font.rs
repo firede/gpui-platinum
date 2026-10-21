@@ -9,6 +9,8 @@ use std::{
 };
 use unicode_segmentation::UnicodeSegmentation;
 
+use crate::rich_text::TextStyle;
+
 thread_local! {
     static SYSTEM_TEXT: RefCell<Option<Arc<gpui::WindowTextSystem>>> = const { RefCell::new(None) };
 }
@@ -75,6 +77,73 @@ impl Font {
             .map(|grapheme| self.advance(grapheme, language))
             .sum();
         (advance - 1).max(0)
+    }
+
+    /// The width of one line in a style, as [`Pen::text_styled`] draws it:
+    /// in the bold face, at the style's scale, with the room italic takes
+    /// after the run, and without the tracking after the last glyph, as
+    /// [`Font::measure`]. An empty line measures nothing.
+    ///
+    /// [`Pen::text_styled`]: crate::paint::Pen::text_styled
+    pub fn measure_styled(self, text: &str, style: TextStyle) -> i32 {
+        self.measure_styled_in(text, style, Language::English)
+    }
+
+    /// The width of one styled line using the language's East Asian letterforms.
+    pub fn measure_styled_in(self, text: &str, style: TextStyle, language: Language) -> i32 {
+        let font = self.styled(style);
+        let scale = i32::from(style.scale.clamp(1, 4));
+        let advance: i32 = text
+            .graphemes(true)
+            .map(|grapheme| font.styled_advance(grapheme, scale, style.italic, language))
+            .sum();
+        if advance == 0 {
+            return 0;
+        }
+        let slant = if style.italic {
+            font.italic_slant() * scale
+        } else {
+            0
+        };
+        advance + slant - scale
+    }
+
+    /// The face that draws a style: the bold face for bold text.
+    pub fn styled(self, style: TextStyle) -> Self {
+        match (self, style.bold) {
+            (Self::Sans, true) => Self::Bold,
+            (Self::Small, true) => Self::SmallBold,
+            (font, _) => font,
+        }
+    }
+
+    /// The room italic text takes beyond its glyphs' advances at the end of
+    /// each run: how far its top row leans right.
+    pub fn italic_slant(self) -> i32 {
+        self.ascent() / 2
+    }
+
+    /// Advances one grapheme drawn at a scale, with a tab as four spaces and
+    /// unsupported graphemes in the platform's font at that size.
+    pub(crate) fn styled_advance(
+        self,
+        grapheme: &str,
+        scale: i32,
+        italic: bool,
+        language: Language,
+    ) -> i32 {
+        if grapheme == "\t" {
+            return self.glyph_or_replacement(' ', language).advance * 4 * scale;
+        }
+        if !self.has_bitmap_grapheme(grapheme, language)
+            && let Some(line) = self.system_line(grapheme, scale as u8, italic)
+        {
+            return f32::from(line.width).ceil() as i32 + scale;
+        }
+        grapheme
+            .chars()
+            .map(|ch| self.glyph_or_replacement(ch, language).advance * scale)
+            .sum()
     }
 
     /// Cuts a line at a grapheme boundary and appends an ellipsis when needed.

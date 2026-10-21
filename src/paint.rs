@@ -1,5 +1,6 @@
 //! Drawing on whole pixels of the Platinum grid.
 
+use crate::rich_text::TextStyle;
 use crate::theme::*;
 use crate::{Font, Language};
 use gpui::{
@@ -202,6 +203,86 @@ impl Pen {
                 x += glyph.advance;
             }
         }
+    }
+
+    /// Draws a line in a style and returns the x after it: in the bold face;
+    /// italic slanted right, each pair of rows a pixel right of the pair
+    /// below, with the slant's room added after the run and East Asian
+    /// characters upright; underlined a pixel under the baseline; and each
+    /// pixel of all that at the style's scale. [`Font::measure_styled`]
+    /// measures what it draws.
+    pub fn text_styled(
+        &mut self,
+        x: i32,
+        baseline: i32,
+        text: &str,
+        font: Font,
+        color: u32,
+        style: TextStyle,
+    ) -> i32 {
+        let language = self.language;
+        self.styled_text_in(x, baseline, text, font, color, style, language)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn styled_text_in(
+        &mut self,
+        start: i32,
+        baseline: i32,
+        text: &str,
+        font: Font,
+        color: u32,
+        style: TextStyle,
+        language: Language,
+    ) -> i32 {
+        let font = font.styled(style);
+        let scale = i32::from(style.scale.clamp(1, 4));
+        let mut x = start;
+        for grapheme in text.graphemes(true) {
+            if grapheme == "\t" {
+                x += font.styled_advance(grapheme, scale, style.italic, language);
+                continue;
+            }
+            if !font.has_bitmap_grapheme(grapheme, language)
+                && let Some(advance) = self.system_text(
+                    (x, baseline),
+                    grapheme,
+                    font,
+                    color,
+                    scale as u8,
+                    style.italic,
+                )
+            {
+                x += advance;
+                continue;
+            }
+            for ch in grapheme.chars() {
+                let glyph = font.glyph_or_replacement(ch, language);
+                let east_asian = matches!(ch as u32, 0x1100..=0x11ff | 0x2e80..=0xa4cf | 0xac00..=0xd7af | 0xf900..=0xfaff | 0xfe30..=0xffef | 0x20000..=0x3134f);
+                glyph.for_each_run(|dx, dy, width| {
+                    let slant = if style.italic && !east_asian {
+                        (-dy + 1).div_euclid(2)
+                    } else {
+                        0
+                    };
+                    self.rect(
+                        x + (dx + slant) * scale,
+                        baseline + dy * scale,
+                        width * scale,
+                        scale,
+                        color,
+                    );
+                });
+                x += glyph.advance * scale;
+            }
+        }
+        if style.italic {
+            x += font.italic_slant() * scale;
+        }
+        if style.underline {
+            self.rect(start, baseline + scale, x - start - scale, scale, color);
+        }
+        x
     }
 
     /// Records a shaped platform fallback at the same baseline as bitmap text.

@@ -8,7 +8,8 @@ use gpui::{
     div, point, prelude::*, px, rgb,
 };
 use gpui_platinum::{
-    ListBox, SheetView, Table, TableColumn, TextField, Theme, TreeView, draw_list_box,
+    ListBox, RichTextArea, SheetView, Table, TableColumn, TextField, Theme, TreeView,
+    draw_list_box,
     models::{Cell, FileTree, NodeKind, Sheet, TreeNode},
     paint::{Pen, drawing},
     text_input,
@@ -414,6 +415,86 @@ pub fn scenes() -> Vec<Scene> {
             }
         }),
     );
+    // Bold and underlined text typed at the end, then "Plain" made italic
+    // and its line centered from the format bar.
+    let rich = slot::<RichTextArea>();
+    scenes.push(
+        stretched("richtext", 280., 150., 8., &rich, |cx| {
+            RichTextArea::new(cx)
+                .with_text("Plain ")
+                .size(260., 122.)
+                .show_size_menu(false)
+        })
+        .prepare({
+            move |app, window| {
+                click(app, window, 242., 48.);
+                keys(
+                    app,
+                    window,
+                    "cmd-down cmd-b b o l d cmd-b space a n d space cmd-u u n d e r l i n e d",
+                );
+                keys(
+                    app,
+                    window,
+                    "cmd-up shift-right shift-right shift-right shift-right shift-right",
+                );
+                click(app, window, 50., 23.); // Italic
+                click(app, window, 138., 23.); // Align Center
+            }
+        }),
+    );
+
+    // The title centered, and the last paragraph aligned right.
+    let rich = slot::<RichTextArea>();
+    scenes.push(
+        stretched("richtext-paragraphs", 220., 150., 8., &rich, |cx| {
+            RichTextArea::new(cx)
+                .with_text("Title\nThe first paragraph runs on, wrapping.\nThe end")
+                .size(200., 122.)
+                .show_size_menu(false)
+        })
+        .prepare(|app, window| {
+            click(app, window, 28., 48.); // in the title
+            click(app, window, 138., 23.); // Align Center
+            click(app, window, 28., 48.);
+            keys(app, window, "cmd-down");
+            click(app, window, 164., 23.); // Align Right
+        }),
+    );
+
+    // A bold heading twice the size, and a line under it with italic.
+    let rich = slot::<RichTextArea>();
+    scenes.push(
+        stretched("richtext-sizes", 240., 130., 8., &rich, |cx| {
+            RichTextArea::new(cx)
+                .size(220., 110.)
+                .show_format_bar(false)
+                .show_size_menu(false)
+        })
+        .prepare(|app, window| {
+            click(app, window, 28., 16.);
+            keys(
+                app,
+                window,
+                "cmd-shift-. cmd-b M e n u cmd-shift-, cmd-b space f o r space t o d a y",
+            );
+            keys(app, window, "enter S o u p , space cmd-i b r e a d");
+            // On the second line, under the taller first.
+            click(app, window, 12., 54.);
+        }),
+    );
+
+    // The first line of each paragraph further in, wrapping sooner.
+    let area = slot::<TextField>();
+    scenes.push(hosted("first-line-indent", 180., 90., 8., &area, |cx| {
+        TextField::new(cx)
+            .multiline(true)
+            .with_text("A first paragraph long enough to wrap.\nA second one.")
+            .indent(24.)
+            .size(160., 70.)
+            .label("Text")
+    }));
+
     // The original's tests have no East Asian faces: lines fit the Latin.
     scenes.into_iter().map(latin_lines).collect()
 }

@@ -241,7 +241,7 @@ impl Gallery {
         })
         .detach();
         let rich = cx.new(|cx| {
-            let mut rich = RichTextArea::new(cx).size(452., 124.).show_size_menu(false);
+            let mut rich = RichTextArea::new(cx).size(452., 118.).show_size_menu(false);
             rich.set_runs(
                 &[
                     Run {

@@ -354,6 +354,13 @@ impl TextField {
         self
     }
 
+    /// Starts the first line of each paragraph of a text area further in,
+    /// in bitmap pixels, wrapping it sooner.
+    pub fn indent(mut self, first: f32) -> Self {
+        self.first_indent = first.max(0.);
+        self
+    }
+
     pub fn size(mut self, width: f32, height: f32) -> Self {
         self.width = width.max(24.);
         self.height = height.max(if self.borderless { 18. } else { 22. });
@@ -822,7 +829,12 @@ impl TextField {
         let width = f32::from(bounds.size.width)
             - self.document_left
             - INSET
-            - if self.multiline { SCROLLBAR_WIDTH } else { 0. };
+            - if self.multiline { SCROLLBAR_WIDTH } else { 0. }
+            - if self.multiline && !self.document {
+                2.
+            } else {
+                0.
+            };
         self.lines = layout_document_lines(
             &self.buffer.text,
             self.language,
@@ -1101,7 +1113,7 @@ impl TextField {
                     selection_color,
                 );
             }
-            for cell in &line.cells {
+            for (index, cell) in line.cells.iter().enumerate() {
                 let visible = if self.password {
                     "•"
                 } else {
@@ -1117,11 +1129,17 @@ impl TextField {
                     cell.style,
                 );
                 if cell.style.underline {
+                    // A run's line stops short of the tracking after its
+                    // last glyph.
                     let scale = cell.style.scale.clamp(1, 4) as i32;
+                    let run_ends = line
+                        .cells
+                        .get(index + 1)
+                        .is_none_or(|next| next.style != cell.style);
                     text.rect(
                         left + (line.offset_x + cell.x).round() as i32,
                         y + line.baseline as i32 + scale,
-                        cell.width as i32,
+                        cell.width as i32 - if run_ends { scale } else { 0 },
                         scale,
                         ink,
                     );

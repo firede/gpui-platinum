@@ -409,16 +409,21 @@ impl Render for SizeMenu {
     }
 }
 
+/// The height of the format bar, a toolbar's, the text right below it.
+const FORMAT_BAR_HEIGHT: f32 = 32.;
+
 /// A format bar and a native rich text editor.
 pub struct RichTextArea {
     editor: Entity<TextField>,
     size_menu: Entity<SizeMenu>,
+    bar_focus: FocusHandle,
     value: String,
     initial_text: Option<String>,
     initial_runs: Option<Vec<Run>>,
     width: f32,
     height: f32,
     show_size_menu: bool,
+    show_format_bar: bool,
     theme: Theme,
     language: Language,
     configure: bool,
@@ -440,12 +445,14 @@ impl RichTextArea {
         Self {
             editor,
             size_menu,
+            bar_focus: cx.focus_handle(),
             value: String::new(),
             initial_text: None,
             initial_runs: None,
             width: 360.,
             height: 210.,
             show_size_menu: true,
+            show_format_bar: true,
             theme: Theme::default(),
             language: Language::English,
             configure: true,
@@ -467,13 +474,31 @@ impl RichTextArea {
         self
     }
 
+    /// The size of the format bar and the text below it together.
     pub fn size(mut self, width: f32, height: f32) -> Self {
-        self.width = width.max(288.);
-        self.height = height.max(80.);
+        self.width = width;
+        self.height = height.max(self.bar_height() + 40.);
         self
     }
 
     /// Shows the optional point-size control beside the format buttons.
+    /// Shows the format bar above the text, as it is unless hidden: the
+    /// shortcuts style the text without it.
+    pub fn show_format_bar(mut self, show: bool) -> Self {
+        self.show_format_bar = show;
+        self.configure = true;
+        self
+    }
+
+    /// The height of the format bar, or nothing when it is hidden.
+    fn bar_height(&self) -> f32 {
+        if self.show_format_bar {
+            FORMAT_BAR_HEIGHT
+        } else {
+            0.
+        }
+    }
+
     pub fn show_size_menu(mut self, show: bool) -> Self {
         self.show_size_menu = show;
         self
@@ -545,8 +570,8 @@ impl RichTextArea {
     }
 
     pub fn set_size(&mut self, width: f32, height: f32, cx: &mut Context<Self>) {
-        self.width = width.max(288.);
-        self.height = height.max(80.);
+        self.width = width;
+        self.height = height.max(self.bar_height() + 40.);
         self.configure = true;
         cx.notify();
     }
@@ -562,8 +587,10 @@ impl RichTextArea {
         cx.notify();
     }
 
-    fn focus_editor(&self, window: &mut Window, cx: &mut App) {
-        window.focus(&self.editor.read(cx).focus_handle(cx), cx);
+    /// A click on a button of the bar takes the focus to the bar, as the
+    /// original's buttons take it, the text's selection going gray.
+    fn focus_bar(&self, window: &mut Window, cx: &mut App) {
+        window.focus(&self.bar_focus, cx);
     }
 }
 
@@ -588,7 +615,7 @@ impl Render for RichTextArea {
         if self.configure {
             self.configure = false;
             self.editor.update(cx, |editor, cx| {
-                editor.set_size(self.width, self.height - 38., cx);
+                editor.set_size(self.width, self.height - self.bar_height(), cx);
                 editor.set_theme(self.theme, cx);
                 editor.set_language(self.language, cx);
                 editor.set_label(crate::locale::desk(self.language, "document"), cx);
@@ -620,7 +647,7 @@ impl Render for RichTextArea {
                 self.language,
                 cx.listener(move |this, _, window, cx| {
                     this.toggle(attribute, cx);
-                    this.focus_editor(window, cx);
+                    this.focus_bar(window, cx);
                 }),
             ));
         }
@@ -638,14 +665,15 @@ impl Render for RichTextArea {
                 self.language,
                 cx.listener(move |this, _, window, cx| {
                     this.set_alignment(alignment, cx);
-                    this.focus_editor(window, cx);
+                    this.focus_bar(window, cx);
                 }),
             ));
         }
         let bar = div()
             .relative()
             .w_full()
-            .h(px(32.))
+            .h(px(FORMAT_BAR_HEIGHT))
+            .track_focus(&self.bar_focus)
             .flex_shrink_0()
             .child(bar)
             .when(self.show_size_menu, |bar| {
@@ -660,10 +688,9 @@ impl Render for RichTextArea {
         div()
             .flex()
             .flex_col()
-            .gap(px(6.))
-            .w(px(self.width))
+            .min_w(px(self.width))
             .h(px(self.height))
-            .child(bar)
+            .when(self.show_format_bar, |area| area.child(bar))
             .child(self.editor.clone())
     }
 }

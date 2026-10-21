@@ -8,9 +8,9 @@ use gpui::{
     div, point, prelude::*, px, rgb,
 };
 use gpui_platinum::{
-    Breadcrumbs, ColumnView, DocumentTabs, Font, IconItem, IconView, ListBox, Pagination,
-    PathPopup, PlatinumWindow, PlatinumWindowOptions, RichTextArea, Ruler, RulerState, ScrollView,
-    SheetView, Split, Table, TableColumn, TextField, Theme, TreeView, draw_list_box,
+    Breadcrumbs, ColumnView, DocumentTabs, FindReplace, Font, IconItem, IconView, ListBox,
+    Pagination, PathPopup, PlatinumWindow, PlatinumWindowOptions, RichTextArea, Ruler, RulerState,
+    ScrollView, SheetView, Split, Table, TableColumn, TextField, Theme, TreeView, draw_list_box,
     models::{Cell, FileTree, NodeKind, Sheet, TreeNode},
     paint::{Pen, drawing},
     theme::{BLACK, GRAY_2, GRAY_5},
@@ -580,7 +580,7 @@ pub fn scenes() -> Vec<Scene> {
                         ..Default::default()
                     })
             });
-            Desk(vec![frame.into(), tools.into()])
+            Desk(GRAY_5, vec![frame.into(), tools.into()])
         })
         .prepare(|app, window| {
             // Beta's icon, in the second cell of the first row.
@@ -590,6 +590,19 @@ pub fn scenes() -> Vec<Scene> {
             click(app, window, 16. + 42., 29. + 50.);
         }),
     );
+
+    // The dialog open over "cat", to be replaced with "dog", one found.
+    scenes.push(Scene::new("find-replace", 400., 260., |window, cx| {
+        let text = cx.new(|cx| TextField::new(cx).with_text("The cat sat. A Cat, a cattle."));
+        let find = cx.new(|cx| FindReplace::new(text, cx));
+        find.update(cx, |find, cx| {
+            find.set_query("cat", cx);
+            find.set_replacement("dog", cx);
+            find.set_note("1 found", cx);
+            find.show(window, cx);
+        });
+        Desk(GRAY_2, vec![find.into()])
+    }));
 
     // Panes stacked, the first 40 tall.
     scenes.push(Scene::new("split-vertical", 180., 140., |_, _| {
@@ -703,16 +716,16 @@ impl Render for Elements {
 
 /// Views in a column, padded and 10 apart, then a card, an empty state and
 /// a status bar, as the original's paths-and-pages scene lays them.
-/// Windows on the desk's Gray5, the last in front.
-struct Desk(Vec<gpui::AnyView>);
+/// Views over each other on a color, the last in front.
+struct Desk(u32, Vec<gpui::AnyView>);
 
 impl Render for Desk {
     fn render(&mut self, _: &mut gpui::Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
         div()
             .relative()
             .size_full()
-            .bg(rgb(GRAY_5))
-            .children(self.0.clone())
+            .bg(rgb(self.0))
+            .children(self.1.clone())
     }
 }
 

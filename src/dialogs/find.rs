@@ -119,14 +119,14 @@ pub struct FindReplace {
 impl EventEmitter<FindEvent> for FindReplace {}
 impl FindReplace {
     pub fn new(target: Entity<TextField>, cx: &mut Context<Self>) -> Self {
-        let query = cx.new(|cx| TextField::new(cx).label("Find").size(290., 22.));
-        let replacement = cx.new(|cx| TextField::new(cx).label("Replace").size(290., 22.));
+        let query = cx.new(|cx| TextField::new(cx).label("Find").size(240., 22.));
+        let replacement = cx.new(|cx| TextField::new(cx).label("Replace").size(240., 22.));
         let subscriptions = vec![
             cx.observe(&query, |_, _, cx| cx.notify()),
             cx.observe(&replacement, |_, _, cx| cx.notify()),
         ];
         Self {
-            modal: ModalState::new(410., cx),
+            modal: ModalState::new(380., cx),
             target,
             query,
             replacement,
@@ -186,8 +186,8 @@ impl FindReplace {
         let focus = self.query.focus_handle(cx);
         self.modal.stops = vec![focus.clone(), self.replacement.focus_handle(cx)];
         self.modal.stops.extend(self.focus.iter().cloned());
-        self.query
-            .update(cx, |field, cx| field.select(0, field.value().len(), cx));
+        // The caret at the start of the query, as the original leaves it.
+        self.query.update(cx, |field, cx| field.select(0, 0, cx));
         self.modal.show(Some(&focus), window, cx);
         cx.notify();
     }
@@ -279,7 +279,7 @@ impl Render for FindReplace {
                     .gap(px(6.))
                     .child(
                         div()
-                            .w(px(72.))
+                            .w(px(62.))
                             .child(text(tr(lang, key), Font::Bold, lang)),
                     )
                     .child(field.clone()),
@@ -289,7 +289,7 @@ impl Render for FindReplace {
             div()
                 .flex()
                 .gap(px(14.))
-                .pl(px(78.))
+                .pl(px(68.))
                 .child(
                     checkbox(
                         "match-case",
@@ -332,16 +332,20 @@ impl Render for FindReplace {
                 div()
                     .id("find-note")
                     .role(gpui::Role::Status)
-                    .pl(px(78.))
-                    .child(text(self.note.clone(), Font::Small, lang)),
+                    .pl(px(68.))
+                    .child(crate::text_in_language(
+                        self.note.clone(),
+                        Font::Small,
+                        crate::theme::GRAY_9,
+                        lang,
+                    )),
             );
         }
         content = content.child(
             div()
                 .flex()
                 .items_center()
-                .justify_between()
-                .gap(px(8.))
+                .gap(px(10.))
                 .child(
                     button("cancel", tr(lang, "cancel"))
                         .focus_handle(&self.focus[2])
@@ -349,6 +353,7 @@ impl Render for FindReplace {
                         .language(lang)
                         .on_click(cx.listener(|this, _, window, cx| this.close(window, cx))),
                 )
+                .child(div().flex_1())
                 .child(
                     button("replace-all", tr(lang, "replaceAll"))
                         .focus_handle(&self.focus[3])

@@ -428,6 +428,7 @@ pub struct RichTextArea {
     theme: Theme,
     language: Language,
     configure: bool,
+    this: gpui::WeakEntity<Self>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -458,6 +459,7 @@ impl RichTextArea {
             theme: Theme::default(),
             language: Language::English,
             configure: true,
+            this: cx.weak_entity(),
             _subscriptions: vec![observer, events],
         }
     }
@@ -598,6 +600,62 @@ impl RichTextArea {
         cx.notify();
     }
 
+    /// Adds the format bar's buttons to a toolbar of one's own, as the
+    /// original's FormatItems does: bold, italic and underline, then the
+    /// three alignments, each lit when the selection has it.
+    pub fn format_items(&self, mut bar: crate::Toolbar, cx: &App) -> crate::Toolbar {
+        let state = self.format_state(cx);
+        let area = self.this.clone();
+        for (attribute, label, enabled) in [
+            (StyleAttribute::Bold, "bold", state.style.bold),
+            (StyleAttribute::Italic, "italic", state.style.italic),
+            (
+                StyleAttribute::Underline,
+                "underline",
+                state.style.underline,
+            ),
+        ] {
+            let area = area.clone();
+            bar = bar.item(format_button(
+                label,
+                FormatIcon::Style(attribute),
+                enabled,
+                self.theme,
+                self.language,
+                move |_, window, cx| {
+                    area.update(cx, |this, cx| {
+                        this.toggle(attribute, cx);
+                        this.focus_bar(window, cx);
+                    })
+                    .ok();
+                },
+            ));
+        }
+        bar = bar.separator();
+        for (alignment, label) in [
+            (Alignment::Left, "alignLeft"),
+            (Alignment::Center, "alignCenter"),
+            (Alignment::Right, "alignRight"),
+        ] {
+            let area = area.clone();
+            bar = bar.item(format_button(
+                label,
+                FormatIcon::Align(alignment),
+                state.alignment == alignment,
+                self.theme,
+                self.language,
+                move |_, window, cx| {
+                    area.update(cx, |this, cx| {
+                        this.set_alignment(alignment, cx);
+                        this.focus_bar(window, cx);
+                    })
+                    .ok();
+                },
+            ));
+        }
+        bar
+    }
+
     /// A click on a button of the bar takes the focus to the bar, as the
     /// original's buttons take it, the text's selection going gray.
     fn focus_bar(&self, window: &mut Window, cx: &mut App) {
@@ -636,50 +694,11 @@ impl Render for RichTextArea {
                 menu.set_language(self.language, cx);
             });
         }
-        let state = self.format_state(cx);
-        let mut bar = crate::Toolbar::new()
+        let bar = crate::Toolbar::new()
             .id("format-bar")
             .theme(self.theme)
             .language(self.language);
-        for (attribute, label, enabled) in [
-            (StyleAttribute::Bold, "bold", state.style.bold),
-            (StyleAttribute::Italic, "italic", state.style.italic),
-            (
-                StyleAttribute::Underline,
-                "underline",
-                state.style.underline,
-            ),
-        ] {
-            bar = bar.item(format_button(
-                label,
-                FormatIcon::Style(attribute),
-                enabled,
-                self.theme,
-                self.language,
-                cx.listener(move |this, _, window, cx| {
-                    this.toggle(attribute, cx);
-                    this.focus_bar(window, cx);
-                }),
-            ));
-        }
-        bar = bar.separator();
-        for (alignment, label) in [
-            (Alignment::Left, "alignLeft"),
-            (Alignment::Center, "alignCenter"),
-            (Alignment::Right, "alignRight"),
-        ] {
-            bar = bar.item(format_button(
-                label,
-                FormatIcon::Align(alignment),
-                state.alignment == alignment,
-                self.theme,
-                self.language,
-                cx.listener(move |this, _, window, cx| {
-                    this.set_alignment(alignment, cx);
-                    this.focus_bar(window, cx);
-                }),
-            ));
-        }
+        let bar = self.format_items(bar, cx);
         let bar = div()
             .relative()
             .w_full()

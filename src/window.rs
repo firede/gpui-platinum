@@ -518,6 +518,15 @@ impl Render for PlatinumWindow {
             }
             root = root.child(content);
             if !options.no_grow {
+                // The resize corner again over the content, as classic apps
+                // drew it after their own: whatever the content draws there.
+                root = root.child(div().absolute().right(px(side)).bottom(px(side)).child(
+                    crate::paint::drawing(
+                        GROW_BOX_SIZE as f32,
+                        GROW_BOX_SIZE as f32,
+                        move |pen, _, _| draw_grow_box(pen, options.active),
+                    ),
+                ));
                 root = root.child(
                     div()
                         .id("resize")
@@ -760,14 +769,21 @@ pub fn draw_window_frame(
     });
     pen.append(title_pen, 0, 0);
     if !collapsed && !options.no_grow {
-        let mut grow = Pen::new(GROW_BOX_SIZE, GROW_BOX_SIZE);
-        draw_grow_box(&mut grow, options.active);
-        pen.append(
-            grow,
-            width - side - GROW_BOX_SIZE + 1,
-            height - side - GROW_BOX_SIZE + 1,
-        );
+        draw_window_grow_box(pen, options);
     }
+}
+
+/// Draws the resize corner of a window filling `pen`, in the bottom right of
+/// its content.
+fn draw_window_grow_box(pen: &mut Pen, options: PlatinumWindowOptions) {
+    let side = options.frame_width();
+    let mut grow = Pen::new(GROW_BOX_SIZE, GROW_BOX_SIZE);
+    draw_grow_box(&mut grow, options.active);
+    pen.append(
+        grow,
+        pen.width - side - GROW_BOX_SIZE,
+        pen.height - side - GROW_BOX_SIZE,
+    );
 }
 
 pub fn draw_title_box(pen: &mut Pen, part: WindowPart, pressed: bool) {
@@ -797,11 +813,13 @@ pub fn draw_grow_box(pen: &mut Pen, active: bool) {
     pen.hline(0, 0, side, BLACK);
     pen.vline(0, 0, side, BLACK);
     if active {
+        // Three ridges across the corner, from the bottom left up to the
+        // right, inside the window's lines at its right and bottom.
         for index in 0..3 {
             let offset = 4 + 3 * index;
             for pixel in 0..offset {
-                pen.dot(side - offset + pixel, side - 2 - pixel, GRAY_7);
-                pen.dot(side - offset + pixel + 1, side - 2 - pixel, WHITE);
+                pen.dot(side - offset + pixel - 1, side - 2 - pixel, GRAY_7);
+                pen.dot(side - offset + pixel, side - 2 - pixel, WHITE);
             }
         }
     }

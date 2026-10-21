@@ -465,6 +465,25 @@ impl Desktop {
         }
         this
     }
+    /// The desk a link to the web page shows: the calculator alone, at 42,
+    /// behind a window of the page's own (site.rs).
+    pub fn for_share(cx: &mut Context<Self>) -> Self {
+        let mut this = Self::new(Language::English, false, cx);
+        this.fixed_time = DateTime::parse_from_rfc3339("2026-10-14T09:41:00Z").ok();
+        let id = this.launch(Launch::Accessory(AppKind::Calculator), cx);
+        this.active = None;
+        let entry = this.windows.iter().find(|entry| entry.id == id).unwrap();
+        entry.frame.update(cx, |frame, cx| {
+            frame.state.x = 262.;
+            frame.state.y = 76.;
+            frame.set_active(false, cx);
+        });
+        if let Content::Accessory(view) = &entry.content {
+            view.update(cx, |view, cx| view.calculate(&["6", "×", "7", "="], cx));
+        }
+        this.refresh_menus(cx);
+        this
+    }
     fn front(&self) -> Option<&DeskWindow> {
         self.active
             .and_then(|id| self.windows.iter().find(|window| window.id == id))

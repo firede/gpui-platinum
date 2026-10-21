@@ -17,6 +17,8 @@ mod documents;
 mod file_apps;
 #[path = "support/menu_icons.rs"]
 mod menu_icons;
+#[path = "support/site.rs"]
+mod site;
 
 fn argument_value<'a>(arguments: &'a [String], name: &str) -> Option<&'a str> {
     capture::argument(arguments, &format!("--{name}"))
@@ -25,6 +27,10 @@ fn argument_value<'a>(arguments: &'a [String], name: &str) -> Option<&'a str> {
 
 fn main() {
     let arguments: Vec<_> = std::env::args().collect();
+    if let Some(dir) = argument_value(&arguments, "site") {
+        site::write(std::path::Path::new(dir)).expect("write the web page's pictures");
+        return;
+    }
     let language = argument_value(&arguments, "lang")
         .map(|tag| match tag {
             "zh-Hans" => Language::SimplifiedChinese,

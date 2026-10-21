@@ -461,7 +461,7 @@ impl Gallery {
             }),
             icons: cx.new(|cx| {
                 IconView::new(gallery_icons(), cx)
-                    .size(206, 130)
+                    .size(206, 140)
                     .selected(1)
                     .label("Icons")
             }),
@@ -1004,7 +1004,7 @@ impl Gallery {
                 text_in(format!("{}. {name}", index + 1), Font::Small, BLACK)
             })),
         )
-        .size(144, 130)
+        .size(144, 140)
         .theme(self.theme);
         row(12)
             .p(px(12.))
@@ -1021,7 +1021,7 @@ impl Gallery {
                         group_box("Split and scroll view", 482).child(
                             div()
                                 .relative()
-                                .h(px(130.))
+                                .h(px(140.))
                                 .w_full()
                                 .bg(rgb(GRAY_5))
                                 .overflow_hidden()
@@ -1036,7 +1036,7 @@ impl Gallery {
                                         )),
                                         scroll,
                                     )
-                                    .size(300, 130)
+                                    .size(300, 140)
                                     .theme(self.theme)
                                     .on_change(
                                         move |value, _, cx| {

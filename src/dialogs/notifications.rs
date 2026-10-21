@@ -310,11 +310,15 @@ fn notification_text(
         |_, _, _| (),
         move |bounds, _, window, _| {
             let width = f32::from(bounds.size.width).round() as i32;
-            let mut pen = Pen::new(width, Font::Small.line_height());
+            let height = f32::from(bounds.size.height).round() as i32;
+            let mut pen = Pen::new(width, height);
             pen.language = language;
+            // The capitals on the band's middle, as the other controls
+            // center their text.
+            let cap = Font::Small.cap_height();
             pen.text(
                 0,
-                Font::Small.ascent(),
+                (height - cap) / 2 + cap,
                 &Font::Small.truncate_in(&value, width, language),
                 Font::Small,
                 BLACK,
@@ -322,7 +326,8 @@ fn notification_text(
             pen.paint(bounds.origin, window);
         },
     )
-    .h(px(Font::Small.line_height() as f32))
+    .self_stretch()
+    .min_h(px(Font::Small.line_height() as f32))
     .when_some(width, |element, width| {
         element.w(px(width as f32)).flex_shrink_0()
     })

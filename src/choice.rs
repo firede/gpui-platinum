@@ -90,8 +90,8 @@ impl Kind {
         match self {
             Self::Radio if !vertical => 14,
             Self::Radio => 2,
-            Self::Tabs => 0,
-            Self::Segments => -1,
+            // Each tab over the side of the one before.
+            Self::Tabs | Self::Segments => -1,
         }
     }
 }
@@ -601,7 +601,7 @@ fn key_target(items: &[ChoiceItem], current: usize, key: &str) -> Option<usize> 
     }
 }
 
-fn draw_tab(pen: &mut Pen, label: &str, selected: bool, disabled: bool, pressed: bool) {
+pub(crate) fn draw_tab(pen: &mut Pen, label: &str, selected: bool, disabled: bool, pressed: bool) {
     let inactive = crate::window::content_is_inactive();
     let (width, height) = (pen.width, pen.height);
     let face = if pressed {
@@ -663,6 +663,25 @@ fn draw_segment(pen: &mut Pen, label: &str, selected: bool, disabled: bool, pres
             BLACK
         },
     );
+}
+
+/// Draws the raised pane of a tab control filling `pen`, open under the
+/// selected tab, `gap_width` wide from `gap_x`.
+pub fn draw_tab_pane(pen: &mut Pen, gap_x: i32, gap_width: i32) {
+    let (width, height) = (pen.width, pen.height);
+    pen.rect(0, 0, width, height, GRAY_2);
+    pen.frame(0, 0, width, height, BLACK);
+    pen.hline(1, 1, width - 3, WHITE);
+    pen.vline(1, 1, height - 3, WHITE);
+    pen.hline(2, height - 2, width - 3, GRAY_7);
+    pen.vline(width - 2, 2, height - 3, GRAY_7);
+    if gap_width > 0 {
+        pen.hline(gap_x + 1, 0, gap_width - 2, GRAY_2);
+        pen.hline(gap_x + 2, 1, gap_width - 4, GRAY_2);
+        pen.dot(gap_x + 1, 0, WHITE);
+        pen.dot(gap_x + gap_width - 2, 0, GRAY_7);
+        pen.dot(gap_x + gap_width - 2, 1, GRAY_7);
+    }
 }
 
 #[cfg(test)]
@@ -768,14 +787,19 @@ mod tests {
             image::load_from_memory(include_bytes!("../tests/reference/group-tabs.png"))
                 .unwrap()
                 .to_rgba8();
-        let mut x = 166;
-        for (index, label) in ["General", "Views", "Labels"].iter().enumerate() {
+        // Each tab over the side of the one before, which shows through the
+        // cut corners of the next.
+        let labels = ["General", "Views", "Labels"];
+        let widths = labels.map(|label| Font::Bold.measure(label) + 24);
+        let mut strip = Pen::new(widths.iter().sum::<i32>() - 2, 24);
+        let mut x = 0;
+        for (index, label) in labels.iter().enumerate() {
             let selected = index == 1;
-            let width = Font::Bold.measure(label) + 24;
-            let mut pen = Pen::new(width, if selected { 24 } else { 22 });
+            let mut pen = Pen::new(widths[index], if selected { 24 } else { 22 });
             draw_tab(&mut pen, label, selected, false, false);
-            assert_original_crop(&pen, &reference, x, if selected { 8 } else { 10 });
-            x += width as u32;
+            strip.append(pen, x, if selected { 0 } else { 2 });
+            x += widths[index] - 1;
         }
+        assert_original_crop(&strip, &reference, 166, 8);
     }
 }

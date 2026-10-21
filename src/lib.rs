@@ -41,7 +41,7 @@ pub mod window;
 
 pub use bitmap_icons::*;
 pub use calendar::{CalendarView, DateChanged, DateChosen};
-pub use choice::{ChoiceGroup, ChoiceItem};
+pub use choice::{ChoiceGroup, ChoiceItem, draw_tab_pane};
 pub use collections::{Table, TableColumn, TableEvent, TreeEvent, TreeView};
 pub use dialogs::*;
 pub use display::*;

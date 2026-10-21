@@ -215,7 +215,8 @@ impl Render for Combobox {
                     .role(Role::Button)
                     .aria_label(super::word(language, "choices"))
                     .w(px(20.))
-                    .h(px(22.))
+                    // On the field's outline, inside its ring.
+                    .h(px(20.))
                     .ml(px(-1.))
                     .flex_shrink_0()
                     .on_mouse_down(
@@ -234,12 +235,12 @@ impl Render for Combobox {
                             cx.stop_propagation();
                         }),
                     )
-                    .child(drawing(20., 22., move |pen, _, _| {
+                    .child(drawing(20., 20., move |pen, _, _| {
                         crate::draw_bevel_button(pen, disabled, open, false);
                         for row in 0..4 {
                             pen.hline(
                                 6 + row,
-                                9 + row,
+                                8 + row,
                                 7 - row * 2,
                                 if disabled {
                                     GRAY_6

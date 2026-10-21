@@ -137,9 +137,10 @@ impl DocumentTabs {
             self.offset = 0;
             return;
         }
-        let left = (0..self.selected)
-            .map(|index| self.tab_width(index))
-            .sum::<i32>();
+        let left = 4
+            + (0..self.selected)
+                .map(|index| self.tab_width(index) - 1)
+                .sum::<i32>();
         let right = left + self.tab_width(self.selected);
         if left < self.offset {
             self.offset = left;
@@ -148,8 +149,9 @@ impl DocumentTabs {
             self.offset = right - self.width;
         }
         let total = (0..self.titles.len())
-            .map(|index| self.tab_width(index))
-            .sum::<i32>();
+            .map(|index| self.tab_width(index) - 1)
+            .sum::<i32>()
+            + 9;
         self.offset = self.offset.clamp(0, (total - self.width).max(0));
     }
     fn key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
@@ -197,7 +199,7 @@ impl Render for DocumentTabs {
         let focused = self.focus.is_focused(window) && window.last_input_was_keyboard();
         let width = self.width;
         let height = self.height;
-        let mut left = -self.offset;
+        let mut left = 4 - self.offset;
         let mut tabs = Vec::new();
         let mut selected_bounds = (0, 0);
         for (index, title) in self.titles.iter().enumerate() {
@@ -205,7 +207,8 @@ impl Render for DocumentTabs {
             let tab_width = self.tab_width(index);
             let selected = index == self.selected;
             let x = left;
-            left += tab_width;
+            // Each tab over the side of the one before.
+            left += tab_width - 1;
             if selected {
                 selected_bounds = (x, tab_width);
             }
@@ -219,7 +222,7 @@ impl Render for DocumentTabs {
                     .left(px(x as f32))
                     .top(px(if selected { 0. } else { 2. }))
                     .w(px(tab_width as f32))
-                    .h(px(if selected { 25. } else { 22. }))
+                    .h(px(if selected { 24. } else { 22. }))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, _, window, cx| {
@@ -239,12 +242,12 @@ impl Render for DocumentTabs {
                     )
                     .child(drawing(
                         tab_width as f32,
-                        if selected { 25. } else { 22. },
+                        if selected { 24. } else { 22. },
                         move |pen, _, _| {
                             pen.language = language;
-                            draw_tab(pen, &title, selected);
+                            crate::choice::draw_tab(pen, &title, selected, false, false);
                             if focused && selected {
-                                pen.hline(9, 19, tab_width - 18, theme.accent.dark);
+                                pen.rect(5, pen.height - 5, pen.width - 10, 2, theme.accent.dark);
                             }
                         },
                     )),
@@ -252,10 +255,10 @@ impl Render for DocumentTabs {
         }
         let mut body = div()
             .absolute()
-            .left(px(4.))
-            .top(px(28.))
-            .w(px((width - 8) as f32))
-            .h(px((height - 32).max(0) as f32))
+            .left(px(10.))
+            .top(px(33.))
+            .w(px((width - 20).max(0) as f32))
+            .h(px((height - 43).max(0) as f32))
             .overflow_hidden();
         if !self.titles.is_empty()
             && let Some(render) = self.content.clone()
@@ -275,23 +278,17 @@ impl Render for DocumentTabs {
             .on_key_down(cx.listener(Self::key_down))
             .child(drawing(width as f32, height as f32, move |pen, _, _| {
                 pen.language = language;
-                pen.rect(0, 24, width, height - 24, GRAY_2);
-                pen.frame(0, 24, width, height - 24, BLACK);
-                pen.bevel(1, 25, width - 2, height - 26, WHITE, GRAY_7);
-                if !empty {
-                    let (left, tab_width) = selected_bounds;
-                    pen.hline(
-                        left.max(1),
-                        24,
-                        (left + tab_width - 1).min(width - 1) - left.max(1),
-                        GRAY_2,
-                    );
-                }
+                // The pane under the tabs' bottom edge, open under the
+                // selected one.
+                let (gap_x, gap_width) = if empty { (0, 0) } else { selected_bounds };
+                let mut pane = Pen::new(width, height - 23);
+                crate::draw_tab_pane(&mut pane, gap_x, gap_width);
+                pen.append(pane, 0, 23);
                 if empty {
                     let title = crate::tr(language, "noDocuments");
                     pen.text(
                         (width - Font::Bold.measure_in(&title, language)) / 2,
-                        (height + 24) / 2 + 5,
+                        (height + 23) / 2 + 5,
                         &title,
                         Font::Bold,
                         GRAY_8,
@@ -304,7 +301,7 @@ impl Render for DocumentTabs {
                     .left_0()
                     .top_0()
                     .w_full()
-                    .h(px(25.))
+                    .h(px(24.))
                     .overflow_hidden()
                     .children(tabs),
             )
@@ -348,28 +345,4 @@ impl Render for DocumentTabs {
         }
         root
     }
-}
-fn draw_tab(pen: &mut Pen, title: &str, selected: bool) {
-    let width = pen.width;
-    let height = pen.height;
-    let face = if selected { GRAY_2 } else { GRAY_4 };
-    pen.rect(1, 3, width - 2, height - 3, face);
-    pen.rect(3, 1, width - 6, 2, face);
-    pen.hline(3, 0, width - 6, BLACK);
-    pen.hline(2, 1, 1, BLACK);
-    pen.hline(width - 3, 1, 1, BLACK);
-    pen.dot(1, 2, BLACK);
-    pen.dot(width - 2, 2, BLACK);
-    pen.vline(0, 3, height - 3, BLACK);
-    pen.vline(width - 1, 3, height - 3, BLACK);
-    pen.hline(3, 1, width - 6, WHITE);
-    pen.vline(1, 3, height - 3, WHITE);
-    pen.vline(width - 2, 3, height - 3, GRAY_7);
-    pen.text(
-        (width - Font::Bold.measure_in(title, pen.language)) / 2,
-        16,
-        title,
-        Font::Bold,
-        BLACK,
-    );
 }

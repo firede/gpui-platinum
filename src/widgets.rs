@@ -335,7 +335,9 @@ impl Control {
                         0
                     }
                     + 16,
-                22.max(icon_height + 10),
+                // Three pixels round the content, as round an icon button's
+                // icon, and at least as tall as a label alone makes it.
+                22.max(icon_height + 6),
             ),
             ControlKind::Checkbox(_) | ControlKind::Radio(_) | ControlKind::Disclosure(_) => (
                 if label_width > 0 {
@@ -706,17 +708,17 @@ pub fn tab(id: impl Into<ElementId>, label: impl Into<SharedString>, selected: b
 }
 
 #[track_caller]
-pub fn label(text: impl Into<SharedString>) -> impl IntoElement {
+pub fn label(text: impl Into<SharedString>) -> TextIn {
     text_in(text, Font::Bold, BLACK)
 }
 
 #[track_caller]
-pub fn text_in(text: impl Into<SharedString>, font: Font, color: u32) -> impl IntoElement {
+pub fn text_in(text: impl Into<SharedString>, font: Font, color: u32) -> TextIn {
     text_in_language(text, font, color, Language::English)
 }
 
 #[track_caller]
-pub fn label_in(text: impl Into<SharedString>, language: Language) -> impl IntoElement {
+pub fn label_in(text: impl Into<SharedString>, language: Language) -> TextIn {
     text_in_language(text, Font::Bold, BLACK, language)
 }
 
@@ -726,25 +728,67 @@ pub fn text_in_language(
     font: Font,
     color: u32,
     language: Language,
-) -> impl IntoElement {
+) -> TextIn {
     let text = text.into();
-    let width = font.measure_in(&text, language).max(1);
-    div()
-        .id(ElementId::NamedChild(
+    TextIn {
+        id: ElementId::NamedChild(
             std::sync::Arc::new(ElementId::from(std::panic::Location::caller())),
             text.clone(),
-        ))
-        .role(Role::Label)
-        .aria_label(text.clone())
-        .flex_shrink_0()
-        .child(drawing(
-            width as f32,
-            font.line_height() as f32,
-            move |pen, _, _| {
+        ),
+        text,
+        font,
+        color,
+        language,
+        height: None,
+    }
+}
+
+/// A line of text sized to it. Made taller, as tall as a control beside it,
+/// it centers its capitals on its middle, as the control centers its own text.
+#[derive(IntoElement)]
+pub struct TextIn {
+    id: ElementId,
+    text: SharedString,
+    font: Font,
+    color: u32,
+    language: Language,
+    height: Option<i32>,
+}
+
+impl TextIn {
+    pub fn height(mut self, height: i32) -> Self {
+        self.height = Some(height);
+        self
+    }
+}
+
+impl RenderOnce for TextIn {
+    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+        let TextIn {
+            id,
+            text,
+            font,
+            color,
+            language,
+            height,
+        } = self;
+        let width = font.measure_in(&text, language).max(1);
+        let height = height.unwrap_or(0).max(font.line_height());
+        div()
+            .id(id)
+            .role(Role::Label)
+            .aria_label(text.clone())
+            .flex_shrink_0()
+            .child(drawing(width as f32, height as f32, move |pen, _, _| {
                 pen.language = language;
-                pen.text(0, font.ascent(), &text, font, color)
-            },
-        ))
+                let baseline = if height > font.line_height() {
+                    (height - font.cap_height()) / 2 + font.cap_height()
+                } else {
+                    font.ascent()
+                };
+                pen.text(0, baseline, &text, font, color)
+            }))
+    }
 }
 
 pub fn separator(width: i32) -> impl IntoElement {

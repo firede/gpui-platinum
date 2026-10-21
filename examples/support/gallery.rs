@@ -763,7 +763,7 @@ impl Gallery {
             );
         let gap_x = 8 + ["General", "Sharing", "Memory"][..self.tab]
             .iter()
-            .map(|title| Font::Bold.measure(title) + 24)
+            .map(|title| Font::Bold.measure(title) + 24 - 1)
             .sum::<i32>();
         let gap_width = Font::Bold.measure(["General", "Sharing", "Memory"][self.tab]) + 24;
         let tabs = div()
@@ -773,11 +773,7 @@ impl Gallery {
             .flex_shrink_0()
             .child(drawing(232., 84., move |pen, _, _| {
                 paint_at(pen, 0, 23, 232, 61, |pane| {
-                    pane.rect(0, 0, 232, 61, GRAY_2);
-                    pane.frame(0, 0, 232, 61, BLACK);
-                    pane.bevel(1, 1, 230, 59, WHITE, GRAY_7);
-                    pane.hline(gap_x + 1, 0, gap_width - 2, GRAY_2);
-                    pane.hline(gap_x + 2, 1, gap_width - 4, GRAY_2);
+                    draw_tab_pane(pane, gap_x, gap_width)
                 });
             }))
             .child(
@@ -923,8 +919,16 @@ impl Gallery {
         let middle = column(232)
             .child(
                 group_box("Numbers and search", 232)
-                    .child(row(8).child(label("Copies:")).child(self.copies.clone()))
-                    .child(row(8).child(label("Level:")).child(self.stepper.clone()))
+                    .child(
+                        row(8)
+                            .child(label("Copies:").height(22))
+                            .child(self.copies.clone()),
+                    )
+                    .child(
+                        row(8)
+                            .child(label("Level:").height(23))
+                            .child(self.stepper.clone()),
+                    )
                     .child(self.query.clone()),
             )
             .child(

@@ -1287,12 +1287,12 @@ impl Controls {
                 )
                 .into_any_element(),
             "Stepper, NumberField" => column
-                .child(row().child(self.stepper.clone()).child(text_in_language(
-                    self.steps.to_string(),
-                    Font::Small,
-                    BLACK,
-                    self.language,
-                )))
+                .child(
+                    row().child(self.stepper.clone()).child(
+                        text_in_language(self.steps.to_string(), Font::Small, BLACK, self.language)
+                            .height(23),
+                    ),
+                )
                 .child(self.number.clone())
                 .into_any_element(),
             "SearchField" => column.child(self.search.clone()).into_any_element(),

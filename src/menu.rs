@@ -140,8 +140,9 @@ pub struct PopupMenu {
     flash: Option<Task<()>>,
     blink_off: bool,
     disabled: bool,
-    width: i32,
+    width: Option<i32>,
     label: SharedString,
+    caption: SharedString,
     theme: Theme,
     language: Language,
 }
@@ -169,8 +170,9 @@ impl PopupMenu {
             flash: None,
             blink_off: false,
             disabled: false,
-            width: 180,
+            width: None,
             label: "Pop-up menu".into(),
+            caption: "".into(),
             theme: Theme::default(),
             language: Language::English,
         }
@@ -180,9 +182,19 @@ impl PopupMenu {
         self.has_selection = true;
         self
     }
+    /// Makes the button width wide; otherwise it fits the widest item.
     pub fn width(mut self, width: i32) -> Self {
-        self.width = width;
+        self.width = Some(width);
         self
+    }
+    /// Shows text before the button, naming it, as "Sort by:".
+    pub fn caption(mut self, caption: impl Into<SharedString>) -> Self {
+        self.caption = caption.into();
+        self
+    }
+    pub fn set_caption(&mut self, caption: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.caption = caption.into();
+        cx.notify();
     }
     pub fn label(mut self, label: impl Into<SharedString>) -> Self {
         self.label = label.into();
@@ -375,9 +387,30 @@ impl PopupMenu {
     }
 }
 
+impl PopupMenu {
+    /// The button's width: as set, or room for the widest item's title.
+    fn button_width(&self) -> i32 {
+        self.width.unwrap_or_else(|| {
+            let widest = self
+                .items
+                .iter()
+                .filter(|item| !item.separator)
+                .map(|item| Font::Bold.measure_in(&item.title, self.language))
+                .max()
+                .unwrap_or(0);
+            POPUP_TEXT_LEFT + widest + 8 + POPUP_ARROW_BOX
+        })
+    }
+}
+
+const POPUP_TEXT_LEFT: i32 = 9;
+const POPUP_ARROW_BOX: i32 = 18;
+const POPUP_CAPTION_GAP: i32 = 6;
+
 impl Render for PopupMenu {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let width = self.width;
+        let width = self.button_width();
+        let menu_width = width.max(crate::menu_bar::menu_width(&self.items, self.language));
         let current = if self.has_selection {
             self.items
                 .get(self.selected)
@@ -414,7 +447,7 @@ impl Render for PopupMenu {
                     }
                     window.focus(&this.focus, cx);
                     this.open = !this.open;
-                    this.highlighted = None;
+                    this.highlighted = (this.open && this.has_selection).then_some(this.selected);
                     this.press = this.open.then(|| MenuPress::new(event.position, cx));
                     cx.notify();
                     cx.stop_propagation();
@@ -445,7 +478,7 @@ impl Render for PopupMenu {
                 .id("menu")
                 .role(Role::Menu)
                 .relative()
-                .w(px(width as f32))
+                .w(px(menu_width as f32))
                 .p(px(2.))
                 .child(menu_frame())
                 .occlude()
@@ -504,7 +537,7 @@ impl Render for PopupMenu {
                             }),
                         )
                         .child(drawing(
-                            (width - 4) as f32,
+                            (menu_width - 4) as f32,
                             if separator { 8. } else { 18. },
                             move |pen, _, _| {
                                 pen.language = language;
@@ -525,7 +558,26 @@ impl Render for PopupMenu {
                 ),
             );
         }
-        root
+        let caption = self.caption.clone();
+        if caption.is_empty() {
+            return root.into_any_element();
+        }
+        let caption_width = Font::Bold.measure_in(&caption, language) + POPUP_CAPTION_GAP;
+        div()
+            .flex()
+            .flex_shrink_0()
+            .child(drawing(caption_width as f32, 20., move |pen, _, _| {
+                pen.language = language;
+                let ink = if disabled || crate::window::content_is_inactive() {
+                    GRAY_8
+                } else {
+                    BLACK
+                };
+                let cap = Font::Bold.cap_height();
+                pen.text(0, (pen.height - cap) / 2 + cap, &caption, Font::Bold, ink);
+            }))
+            .child(root)
+            .into_any_element()
     }
 }
 
@@ -539,11 +591,35 @@ pub(crate) fn menu_frame() -> impl IntoElement {
             );
             draw_menu_frame(&mut pen);
             pen.paint(bounds.origin, window);
+            paint_menu_shadow(bounds, window);
         },
     )
     .absolute()
     .inset_0()
     .size_full()
+}
+
+/// Shades a pixel along the right and bottom of a menu panel, Gray9 at
+/// 60% over what is under it.
+pub(crate) fn paint_menu_shadow(bounds: Bounds<Pixels>, window: &mut Window) {
+    // Gray9 premultiplied by the alpha in whole steps, as the original
+    // blends it: 0x66 × 153 / 255 is 61.
+    let shadow = Rgba {
+        r: 61. / 153.,
+        g: 61. / 153.,
+        b: 61. / 153.,
+        a: 153. / 255.,
+    };
+    let (width, height) = (bounds.size.width, bounds.size.height);
+    for (x, y, w, h) in [
+        (px(2.), height, width - px(1.), px(1.)),
+        (width, px(2.), px(1.), height - px(1.)),
+    ] {
+        window.paint_quad(fill(
+            Bounds::new(bounds.origin + point(x, y), size(w, h)),
+            shadow,
+        ));
+    }
 }
 
 /// Draws the frame shared by pop-up, context and menu bar panels.

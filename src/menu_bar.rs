@@ -107,7 +107,7 @@ impl MenuBar {
         cx: &mut Context<Self>,
     ) {
         self.position = Some(position);
-        self.show(index, window, cx);
+        self.show(index, false, window, cx);
     }
     pub fn language(mut self, language: Language) -> Self {
         self.language = language;
@@ -146,7 +146,9 @@ impl MenuBar {
         }
         cx.notify();
     }
-    fn show(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+    /// Opens menu index: from the keyboard with its first item highlighted,
+    /// from the pointer with none until the pointer is over one.
+    fn show(&mut self, index: usize, keyboard: bool, window: &mut Window, cx: &mut Context<Self>) {
         if self
             .menus
             .get(index)
@@ -161,6 +163,7 @@ impl MenuBar {
         self.closed_submenu = None;
         self.press = None;
         self.path = first_enabled(&self.menus[index].items)
+            .filter(|_| keyboard)
             .into_iter()
             .collect();
         window.focus(&self.focus, cx);
@@ -312,7 +315,7 @@ impl MenuBar {
         let key = event.keystroke.key.as_str();
         let Some(menu) = self.open else {
             if matches!(key, "down" | "space" | "enter") {
-                self.show(0, window, cx);
+                self.show(0, true, window, cx);
                 cx.stop_propagation();
             }
             return;
@@ -325,7 +328,12 @@ impl MenuBar {
                     self.path.pop();
                     self.closed_submenu = Some(self.path.clone());
                 } else if !self.context && !self.menus.is_empty() {
-                    self.show((menu + self.menus.len() - 1) % self.menus.len(), window, cx);
+                    self.show(
+                        (menu + self.menus.len() - 1) % self.menus.len(),
+                        true,
+                        window,
+                        cx,
+                    );
                 }
             }
             "right" => {
@@ -334,7 +342,7 @@ impl MenuBar {
                 {
                     self.choose(self.path.clone(), window, cx);
                 } else if !self.context && !self.menus.is_empty() {
-                    self.show((menu + 1) % self.menus.len(), window, cx);
+                    self.show((menu + 1) % self.menus.len(), true, window, cx);
                 }
             }
             "up" | "down" | "home" | "end" => {
@@ -496,6 +504,8 @@ impl Render for MenuBar {
                     },
                 )
                 .absolute()
+                .left_0()
+                .top_0()
                 .size_full(),
             );
             root = root.h(px(20.)).pl(px(10.)).bg(rgb(GRAY_2)).tab_stop(true);
@@ -534,7 +544,7 @@ impl Render for MenuBar {
                                 // A press into a menu left open goes on
                                 // as a click.
                                 let opening = this.open.is_none();
-                                this.show(index, window, cx);
+                                this.show(index, false, window, cx);
                                 if opening {
                                     this.press(event.position, cx);
                                 }
@@ -548,7 +558,7 @@ impl Render for MenuBar {
                                 if this.open.is_some() && this.open != Some(index) {
                                     // The press goes on into the menu it moved to.
                                     let press = this.press.take();
-                                    this.show(index, window, cx);
+                                    this.show(index, false, window, cx);
                                     this.press = press;
                                 }
                                 if let Some(press) = &mut this.press {
@@ -561,7 +571,7 @@ impl Render for MenuBar {
                                 if this.open == Some(index) {
                                     this.close(window, cx);
                                 } else {
-                                    this.show(index, window, cx);
+                                    this.show(index, true, window, cx);
                                 }
                             });
                         })
@@ -730,8 +740,8 @@ impl ContextMenu {
         cx: &mut Context<Self>,
     ) {
         self.menu.update(cx, |menu, cx| {
+            menu.show(0, position.is_none(), window, cx);
             menu.position = position;
-            menu.show(0, window, cx);
         });
     }
 }
@@ -823,21 +833,25 @@ fn shortcut_path(items: &[MenuItem], key: &str) -> Option<Vec<usize>> {
     }
     None
 }
-fn menu_width(items: &[MenuItem], language: Language) -> i32 {
-    items
-        .iter()
-        .map(|item| {
-            30 + Font::Bold.measure_in(&item.title, language)
-                + item
-                    .key
-                    .as_ref()
-                    .map_or(if item.submenu.is_empty() { 0 } else { 20 }, |key| {
-                        20 + Font::Bold.measure_in(&format!("⌘{}", key.to_uppercase()), language)
-                    })
-        })
+/// The width of a menu panel: room for the longest title, and apart from
+/// it for the longest shortcut or a submenu's arrow, so that the shortcuts
+/// line up.
+pub(crate) fn menu_width(items: &[MenuItem], language: Language) -> i32 {
+    let entries = || items.iter().filter(|item| !item.separator);
+    let title = entries()
+        .map(|item| Font::Bold.measure_in(&item.title, language))
         .max()
-        .unwrap_or(80)
-        + 4
+        .unwrap_or(0);
+    let key = entries()
+        .filter_map(|item| item.key.as_ref())
+        .map(|key| Font::Bold.measure_in(&format!("⌘{}", key.to_uppercase()), language))
+        .max();
+    let room = match key {
+        Some(key) => 20 + key,
+        None if entries().any(|item| !item.submenu.is_empty()) => 20,
+        None => 0,
+    };
+    30 + title + room + 4
 }
 
 fn next_enabled(items: &[MenuItem], current: Option<usize>, key: &str) -> Option<usize> {

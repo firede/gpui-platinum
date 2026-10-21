@@ -43,6 +43,8 @@ impl Menu {
     }
 }
 
+/// An item chosen from a menu, by its path; a title with no items, as a
+/// clock, is chosen with an empty path.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MenuChoice {
     pub menu: usize,
@@ -541,6 +543,15 @@ impl Render for MenuBar {
                                     this.close(window, cx);
                                     return;
                                 }
+                                // A title with no items, as a clock, is
+                                // chosen as it is pressed.
+                                if this.menus[index].items.is_empty() {
+                                    cx.emit(MenuChoice {
+                                        menu: index,
+                                        path: Vec::new(),
+                                    });
+                                    return;
+                                }
                                 // A press into a menu left open goes on
                                 // as a click.
                                 let opening = this.open.is_none();
@@ -568,7 +579,12 @@ impl Render for MenuBar {
                         ))
                         .on_a11y_action(AccessibleAction::Click, move |_, window, cx| {
                             accessible.update(cx, |this, cx| {
-                                if this.open == Some(index) {
+                                if this.menus[index].items.is_empty() {
+                                    cx.emit(MenuChoice {
+                                        menu: index,
+                                        path: Vec::new(),
+                                    });
+                                } else if this.open == Some(index) {
                                     this.close(window, cx);
                                 } else {
                                     this.show(index, true, window, cx);

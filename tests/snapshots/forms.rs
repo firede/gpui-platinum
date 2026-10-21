@@ -7,8 +7,9 @@ use gpui::{
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, PlatformInput, div, point, prelude::*, px,
 };
 use gpui_platinum::{
-    CalendarView, Combobox, DatePicker, Font, Language, Menu, MenuBar, MenuItem, PopupMenu,
-    TimeField, menu::draw_popup_button, models::Date, paint::drawing,
+    CalendarView, ColorWell, Combobox, DatePicker, Font, FontChoice, FontPicker, Language, Menu,
+    MenuBar, MenuItem, PageSetup, PageSetupState, PopupMenu, TimeField, menu::draw_popup_button,
+    models::Date, paint::drawing, theme::ACCENTS,
 };
 
 pub fn scenes() -> Vec<Scene> {
@@ -28,6 +29,9 @@ pub fn scenes() -> Vec<Scene> {
             0,
             12,
         ),
+        colorpicker(),
+        pagesetup(),
+        fontpicker(),
     ]
 }
 
@@ -399,5 +403,55 @@ fn region(name: &'static str, language: Language, first_weekday: u8, hours: u8) 
         });
         let side = cx.new(|_| Stack::column(0., 10., vec![picker.into(), field.into()]).inner());
         Stack::row(10., 12., vec![calendar.into(), side.into()])
+    })
+}
+
+/// "Highlight", Lavender's mid color, its picker open and the red of the
+/// palette's third row chosen.
+fn colorpicker() -> Scene {
+    Scene::new("colorpicker", 340., 300., |_, cx| {
+        let well = cx.new(|cx| ColorWell::new(ACCENTS[0].mid, cx).label("Highlight"));
+        Stack::column(10., 0., vec![well.into()])
+    })
+    .prepare(|app, window| {
+        click(app, window, 32., 21.);
+        keys(app, window, &["down", "down"]);
+    })
+}
+
+fn font_picker(cx: &mut gpui::Context<Stack>, bold: bool) -> gpui::Entity<FontPicker> {
+    cx.new(|cx| {
+        // As wide as the column it is in, as the original stretches it.
+        let mut picker = FontPicker::new(cx)
+            .families(["Sans", "Serif", "Mono"])
+            .width(400);
+        picker.set_choice(
+            FontChoice {
+                family: "Serif".into(),
+                size: 12.,
+                bold,
+                italic: true,
+                underline: true,
+            },
+            cx,
+        );
+        picker
+    })
+}
+
+fn pagesetup() -> Scene {
+    Scene::new("pagesetup", 420., 420., |window, cx| {
+        let picker = font_picker(cx, false);
+        let page = cx.new(|cx| PageSetup::new(PageSetupState::default(), cx));
+        page.update(cx, |page, cx| page.show(window, cx));
+        Stack::column(10., 0., vec![picker.into(), page.into()])
+    })
+}
+
+/// The picker once Bold is checked, the page setup closed.
+fn fontpicker() -> Scene {
+    Scene::new("fontpicker", 420., 420., |_, cx| {
+        let picker = font_picker(cx, true);
+        Stack::column(10., 0., vec![picker.into()])
     })
 }

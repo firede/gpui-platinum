@@ -5,8 +5,8 @@ use gpui::{
 
 use super::{FieldStyle, NumberChanged, NumberField};
 use crate::{
-    CheckState, Font, Language, ListBox, ListEvent, Theme, checkbox,
-    paint::{Pen, drawing},
+    CheckState, Font, Language, ListBox, ListEvent, TextStyle, Theme, checkbox,
+    paint::{Pen, Rect, drawing},
     theme::BLACK,
 };
 
@@ -323,22 +323,33 @@ impl Render for FontPicker {
 fn draw_sample(pen: &mut Pen, choice: &FontChoice, language: Language) {
     pen.set_dimmed(crate::window::content_is_inactive());
     pen.sunken();
-    let font = if choice.bold {
-        Font::SmallBold
-    } else {
-        Font::Small
-    };
+    let font = Font::Small;
     let scale = ((choice.size + 6.) / 12.).floor().clamp(1., 24.) as i32;
-    let text = format!(
-        "{} {} {}",
-        if scale == 1 {
-            format!("{} —", super::word(language, "sampleText"))
-        } else {
-            "Aa".into()
-        },
-        choice.family,
-        choice.size
-    );
+    let name = format!("{} {}", choice.family, choice.size);
+    if scale == 1 {
+        // The sample sentence in the style chosen, inside the well.
+        let mut sample = Pen::new(pen.width, pen.height);
+        sample.language = language;
+        let style = TextStyle {
+            bold: choice.bold,
+            italic: choice.italic,
+            underline: choice.underline,
+            scale: 1,
+        };
+        let text = format!("{} — {name}", super::word(language, "sampleText"));
+        let baseline = (pen.height - font.line_height()) / 2 + font.ascent();
+        sample.text_styled(8, baseline, &text, font, BLACK, style);
+        sample.clip(Rect {
+            x: 3,
+            y: 3,
+            width: pen.width - 6,
+            height: pen.height - 6,
+        });
+        pen.append(sample, 0, 0);
+        return;
+    }
+    // Larger, "Aa" and the size, in plain pixels as large as the size.
+    let text = format!("Aa {name}");
     let baseline = (pen.height - font.line_height() * scale) / 2 + font.ascent() * scale;
     let mut x = 8;
     for character in text.chars() {
@@ -347,10 +358,9 @@ fn draw_sample(pen: &mut Pen, choice: &FontChoice, language: Language) {
         }
         let glyph = font.glyph_or_replacement(character, language);
         glyph.for_each_run(|dx, dy, width| {
-            let slant = if choice.italic { (-dy).max(0) / 4 } else { 0 };
             clipped_rect(
                 pen,
-                x + (dx + slant) * scale,
+                x + dx * scale,
                 baseline + dy * scale,
                 width * scale,
                 scale,

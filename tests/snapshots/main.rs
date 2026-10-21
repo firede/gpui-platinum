@@ -60,6 +60,8 @@ pub struct Scene {
     pub pending: bool,
     /// Run in the open window before it is drawn: focus, clicks, keys.
     pub prepare: Option<Prepare>,
+    /// Drawn as the original draws once its app gives it East Asian faces.
+    pub east_asian: bool,
 }
 
 impl Scene {
@@ -77,6 +79,7 @@ impl Scene {
             view: Box::new(move |window, cx| cx.new(|cx| view(window, cx)).into()),
             pending: false,
             prepare: None,
+            east_asian: false,
         }
     }
 
@@ -100,6 +103,13 @@ impl Scene {
 
     pub fn pending(mut self) -> Self {
         self.pending = true;
+        self
+    }
+
+    /// Draws the scene as the original does after `SetEastAsian`: its lines
+    /// of text make room for East Asian glyphs, even in English.
+    pub fn east_asian(mut self) -> Self {
+        self.east_asian = true;
         self
     }
 
@@ -200,9 +210,9 @@ fn draw(platform: &std::rc::Rc<dyn gpui::Platform>, scene: Scene) -> RgbaImage {
         gpui_platform::current_headless_renderer,
     );
     app.update(gpui_platinum::init);
-    // The original's golden tests and gallery run without East Asian faces,
-    // their lines fitting the Latin face alone; its desktop has them.
-    gpui_platinum::text_input::set_east_asian_line_room(scene.name.starts_with("desktop"));
+    // Most of the original's golden tests, and its gallery, run without
+    // East Asian faces, their lines fitting the Latin face alone.
+    gpui_platinum::text_input::set_east_asian_line_room(scene.east_asian);
     let view = scene.view;
     let window = app
         .open_window(

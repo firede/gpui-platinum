@@ -194,6 +194,8 @@ Controls expose GPUI/AccessKit roles, labels and relevant states. Tables and she
 
 The regular and bold Latin bitmap faces are bundled with four regional CJK faces. System-font fallback handles missing bitmap characters after `init`. Date/time controls use the selected language's built-in order and hour cycle, with explicit overrides where the control offers them.
 
+Lines of text are as tall as the glyphs they may hold: after `init`, an English text field's lines also make room for the regional glyphs, which stand two pixels above a capital, as the original's do once an app gives it East Asian faces with `SetEastAsian`. `text_input::set_east_asian_line_room(false)` fits English lines to the Latin face alone, as the original's are without them; the setting is process-wide, and lines in the other languages always make room.
+
 `paint::Pen` draws logical-pixel fills and text, and `drawing` embeds a pen callback in GPUI. `draw_*` functions are useful for a custom control or appearance fixture; they do not create focus, input handling or accessibility nodes. A custom interactive control must add those separately.
 
 ## Examples

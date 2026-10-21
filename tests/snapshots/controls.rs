@@ -724,6 +724,7 @@ fn east_asian(name: &'static str, language: Language) -> Scene {
                 );
             }))
     })
+    .east_asian()
 }
 
 /// The controls whose words and dates follow the language, on 15 October
@@ -761,6 +762,7 @@ fn languages(name: &'static str, language: Language) -> Scene {
             },
         )
     })
+    .east_asian()
 }
 
 /// A control of each kind in a window in the background, beside a small

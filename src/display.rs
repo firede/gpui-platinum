@@ -279,51 +279,60 @@ pub fn draw_balloon(pen: &mut Pen) {
     pen.hline(13, 8, 8, WHITE);
 }
 
-#[track_caller]
-pub fn card(title: impl Into<SharedString>, width: i32) -> Div {
-    card_in(title, width, Language::English)
-}
-
-#[track_caller]
-pub fn card_in(title: impl Into<SharedString>, width: i32, language: Language) -> Div {
+/// A raised panel that groups what it is given, in a column: a black
+/// outline round a raised Gray2 face, as a panel of a control panel, its
+/// content inset 10 and 6 apart. Add the content with `.child`.
+pub fn card() -> Div {
     div()
-        .w(px(width as f32))
-        .p(px(12.))
-        .bg(rgb(WHITE))
-        .border_1()
-        .border_color(rgb(GRAY_7))
+        .relative()
         .flex()
         .flex_col()
-        .gap(px(8.))
-        .child(crate::label_in(title, language))
+        .p(px(10.))
+        .gap(px(6.))
+        .child(
+            canvas(
+                |_, _, _| (),
+                |bounds, _, window, _| {
+                    let (width, height) = (
+                        f32::from(bounds.size.width).round() as i32,
+                        f32::from(bounds.size.height).round() as i32,
+                    );
+                    let mut pen = Pen::new(width, height);
+                    pen.rect(0, 0, width, height, GRAY_2);
+                    pen.frame(0, 0, width, height, BLACK);
+                    pen.bevel(1, 1, width - 2, height - 2, WHITE, GRAY_7);
+                    pen.paint(
+                        point(bounds.origin.x.round(), bounds.origin.y.round()),
+                        window,
+                    );
+                },
+            )
+            .absolute()
+            .inset_0()
+            .size_full(),
+        )
+}
+
+/// What a list or a window shows while it has nothing to show: one line of
+/// gray text, centered in the room it is given.
+#[track_caller]
+pub fn empty_state(text: impl Into<SharedString>) -> impl IntoElement {
+    empty_state_in(text, Language::English)
 }
 
 #[track_caller]
-pub fn empty_state(
-    title: impl Into<SharedString>,
-    body: impl Into<SharedString>,
-    width: i32,
-) -> impl IntoElement {
-    empty_state_in(title, body, width, Language::English)
-}
-
-#[track_caller]
-pub fn empty_state_in(
-    title: impl Into<SharedString>,
-    body: impl Into<SharedString>,
-    width: i32,
-    language: Language,
-) -> impl IntoElement {
-    let title = title.into();
+pub fn empty_state_in(text: impl Into<SharedString>, language: Language) -> impl IntoElement {
+    let text = text.into();
     div()
-        .w(px(width as f32))
-        .py(px(20.))
+        .id(ElementId::from(std::panic::Location::caller()))
+        .role(Role::Group)
+        .aria_label(text.clone())
+        .size_full()
         .flex()
         .flex_col()
         .items_center()
-        .gap(px(10.))
-        .child(crate::label_in(title, language))
-        .child(paragraph_in(body, Font::Small, width - 32, language))
+        .justify_center()
+        .child(text_in_language(text, Font::Small, GRAY_8, language))
 }
 
 #[track_caller]

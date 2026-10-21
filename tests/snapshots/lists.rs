@@ -514,26 +514,17 @@ pub fn scenes() -> Vec<Scene> {
 
     // The path as a pop-up and as breadcrumbs, the third of five pages, a
     // card, an empty state and a status bar.
-    scenes.push(
-        Scene::new("paths-pages", 340., 300., |_, cx| {
-            let path: Vec<String> = ["Platinum Disk", "Documents", "Letters"]
-                .map(String::from)
-                .into();
-            let popup = cx.new(|cx| PathPopup::new(path.clone(), cx));
-            let crumbs = cx.new(|cx| Breadcrumbs::new(path, cx));
-            let pages = cx.new(|cx| Pagination::new(3, 5, cx));
-            Column {
-                views: vec![popup.into(), crumbs.into(), pages.into()],
-            }
-        })
-        // The path pop-up, the breadcrumbs and the pages match. The rest is
-        // display.rs's: the original's Card is a gray box of what it holds in a
-        // black frame with a raised bevel, where `card` is a white one with a
-        // bold title; its EmptyState is one line of gray small text centered in
-        // the room, where `empty_state` has a bold title over a paragraph; the
-        // status bar below them falls where they leave it.
-        .pending(),
-    );
+    scenes.push(Scene::new("paths-pages", 340., 300., |_, cx| {
+        let path: Vec<String> = ["Platinum Disk", "Documents", "Letters"]
+            .map(String::from)
+            .into();
+        let popup = cx.new(|cx| PathPopup::new(path.clone(), cx));
+        let crumbs = cx.new(|cx| Breadcrumbs::new(path, cx));
+        let pages = cx.new(|cx| Pagination::new(3, 5, cx));
+        Column {
+            views: vec![popup.into(), crumbs.into(), pages.into()],
+        }
+    }));
 
     // Panes stacked, the first 40 tall.
     scenes.push(Scene::new("split-vertical", 180., 140., |_, _| {
@@ -662,12 +653,12 @@ impl Render for Column {
             .p(px(10.))
             .gap(px(10.))
             .children(self.views.clone())
-            .child(gpui_platinum::card("A card of controls", 120))
+            .child(gpui_platinum::card().child(text_in("A card of controls")))
             .child(
                 div()
                     .w(px(300.))
                     .h(px(70.))
-                    .child(gpui_platinum::empty_state("No documents", "", 300)),
+                    .child(gpui_platinum::empty_state("No documents")),
             )
             .child(gpui_platinum::status_bar(
                 ["3 items", "1.2 MB available"],

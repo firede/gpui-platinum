@@ -174,7 +174,7 @@ The containing window should pass keyboard equivalents to `MenuBar::dispatch_sho
 
 `OpenDialog` and `SaveDialog` operate on an `Entity<models::FileTree>`. They browse an application's model and emit an open/save result. The owner performs the document operation. Use GPUI's platform APIs separately when a native filesystem picker is needed.
 
-`Banner` and `Toasts` provide retained notifications. `Balloon` attaches delayed help to an element. Display helpers such as `status_bar`, `placard`, `badge`, `card` and `empty_state` compose directly with GPUI layout.
+`Banner` and `Toasts` provide retained notifications. `Balloon` attaches delayed help to an element. Display helpers such as `status_bar`, `placard`, `badge`, `card` and `empty_state` compose directly with GPUI layout. `card()` is a raised panel, a column whose content is added with `.child`; `empty_state(text)` centers one line of gray text in the room its parent gives it.
 
 ## Focus, input and accessibility
 

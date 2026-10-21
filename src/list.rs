@@ -466,6 +466,53 @@ pub(crate) fn text_centered(
 
 const ROW_ARROW: [&str; 7] = ["#...", "##..", "###.", "####", "###.", "##..", "#..."];
 
+/// Draws a list box filling the pen: its sunken bevel round the rows from
+/// `top`, in the room the scroll bar leaves when `with_bar`, with an arrow
+/// at the right of each row `arrows` marks.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn draw_list_frame(
+    pen: &mut Pen,
+    items: &[ListItem],
+    icons: &[Vec<String>],
+    arrows: &[bool],
+    top: usize,
+    selected: Option<usize>,
+    focused: bool,
+    disabled: bool,
+    accent: crate::Accent,
+    with_bar: bool,
+) {
+    let language = pen.language;
+    let list_width = pen.width - 2 - if with_bar { SCROLL_BAR_WIDTH - 1 } else { 0 };
+    pen.bevel(0, 0, pen.width, pen.height, GRAY_7, WHITE);
+    let inner_height = pen.height - 2;
+    let mut list = Pen::new(list_width, inner_height);
+    draw_list_rows(
+        &mut list, items, icons, top, selected, focused, disabled, accent, language,
+    );
+    for (index, &arrow) in arrows.iter().enumerate().skip(top) {
+        let y = 1 + (index - top) as i32 * LIST_ROW_HEIGHT;
+        if !arrow || y + LIST_ROW_HEIGHT > inner_height - 1 {
+            continue;
+        }
+        let ink = if selected == Some(index) && focused {
+            WHITE
+        } else {
+            BLACK
+        };
+        for (dy, row) in ROW_ARROW.iter().enumerate() {
+            let ink_width = row.bytes().filter(|&b| b == b'#').count() as i32;
+            list.hline(
+                list_width - 11,
+                y + (LIST_ROW_HEIGHT - 7) / 2 + dy as i32,
+                ink_width,
+                ink,
+            );
+        }
+    }
+    pen.append(list, 1, 1);
+}
+
 impl Render for ListBox {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focused = self.focus.is_focused(window) && !self.disabled;
@@ -568,34 +615,10 @@ impl Render for ListBox {
                     let inactive = crate::window::content_is_inactive();
                     let focused = focused && !inactive;
                     pen.language = language;
-                    pen.bevel(0, 0, pen.width, pen.height, GRAY_7, WHITE);
-                    let inner_height = pen.height - 2;
-                    let mut list = Pen::new(list_width, inner_height);
-                    draw_list_rows(
-                        &mut list, &items, &icons, top, selected, focused, disabled, accent,
-                        language,
+                    draw_list_frame(
+                        pen, &items, &icons, &arrows, top, selected, focused, disabled, accent,
+                        with_bar,
                     );
-                    for (index, &arrow) in arrows.iter().enumerate().skip(top) {
-                        let y = 1 + (index - top) as i32 * LIST_ROW_HEIGHT;
-                        if !arrow || y + LIST_ROW_HEIGHT > inner_height - 1 {
-                            continue;
-                        }
-                        let ink = if selected == Some(index) && focused {
-                            WHITE
-                        } else {
-                            BLACK
-                        };
-                        for (dy, row) in ROW_ARROW.iter().enumerate() {
-                            let ink_width = row.bytes().filter(|&b| b == b'#').count() as i32;
-                            list.hline(
-                                list_width - 11,
-                                y + (LIST_ROW_HEIGHT - 7) / 2 + dy as i32,
-                                ink_width,
-                                ink,
-                            );
-                        }
-                    }
-                    pen.append(list, 1, 1);
                     if focused && ring {
                         crate::widgets::draw_focus_ring(pen, 0, accent.dark);
                     }

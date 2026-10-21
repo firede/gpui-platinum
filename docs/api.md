@@ -156,7 +156,7 @@ Click selects one row; Shift extends a range; Command/Control toggles individual
 
 ### Icons and other navigation
 
-`IconItem::new(title, IconKind)` uses the bundled artwork. `.image(source)` or `IconItem::from_image` accepts a custom `ImageSource`, drawn in a 32-pixel square. `IconView` scrolls, selects and activates items; its events also support the desktop example's drag/drop behavior.
+`IconItem::new(title, IconKind)` uses the bundled artwork. `.image(source)` or `IconItem::from_image` accepts a custom `ImageSource`, drawn in a 32-pixel square. A 32×32 `RenderImage` whose pixels are each opaque or clear is drawn pixel for pixel and, when chosen, darkened by half, as the original does; `.selected_image` supplies a chosen look of its own. `IconView` scrolls, selects and activates items; its events also support the desktop example's drag/drop behavior.
 
 `DocumentTabs` manages document selection and close events. `PathPopup`, `Breadcrumbs` and `Pagination` emit path/page changes. `Ruler` emits indentation changes; `Split` reports a divider position: the first pane's width in pixels, or with `.percent()` the percentage of the room it takes, so that both panes grow and shrink with the split. A split too small for the first pane's width shrinks the pane, the second keeping its least, and leaves the width for when it grows again. `ScrollView` wraps GPUI scroll state.
 
@@ -174,7 +174,7 @@ The containing window should pass keyboard equivalents to `MenuBar::dispatch_sho
 
 `OpenDialog` and `SaveDialog` operate on an `Entity<models::FileTree>`. They browse an application's model and emit an open/save result. The owner performs the document operation. Use GPUI's platform APIs separately when a native filesystem picker is needed.
 
-`Banner` and `Toasts` provide retained notifications. `Balloon` attaches delayed help to an element. Display helpers such as `status_bar`, `placard`, `badge`, `card` and `empty_state` compose directly with GPUI layout.
+`Banner` and `Toasts` provide retained notifications. `Balloon` attaches delayed help to an element. Display helpers such as `status_bar`, `placard`, `badge`, `card` and `empty_state` compose directly with GPUI layout. `card()` is a raised panel, a column whose content is added with `.child`; `empty_state(text)` centers one line of gray text in the room its parent gives it.
 
 ## Focus, input and accessibility
 
@@ -193,6 +193,8 @@ Controls expose GPUI/AccessKit roles, labels and relevant states. Tables and she
 `Font::truncate` and `Font::truncate_in` return text shortened with an ellipsis to fit a logical-pixel width, with the latter measuring the selected language's regional glyphs.
 
 The regular and bold Latin bitmap faces are bundled with four regional CJK faces. System-font fallback handles missing bitmap characters after `init`. Date/time controls use the selected language's built-in order and hour cycle, with explicit overrides where the control offers them.
+
+Lines of text are as tall as the glyphs they may hold: after `init`, an English text field's lines also make room for the regional glyphs, which stand two pixels above a capital, as the original's do once an app gives it East Asian faces with `SetEastAsian`. `text_input::set_east_asian_line_room(false)` fits English lines to the Latin face alone, as the original's are without them; the setting is process-wide, and lines in the other languages always make room.
 
 `paint::Pen` draws logical-pixel fills and text, and `drawing` embeds a pen callback in GPUI. `draw_*` functions are useful for a custom control or appearance fixture; they do not create focus, input handling or accessibility nodes. A custom interactive control must add those separately.
 

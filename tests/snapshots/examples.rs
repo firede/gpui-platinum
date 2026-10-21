@@ -31,6 +31,7 @@ pub fn scenes() -> Vec<Scene> {
             Scene::new(name, 900., 620., move |_, cx| {
                 Desktop::new(language, true, cx)
             })
+            .east_asian()
             .pending(),
         );
     }

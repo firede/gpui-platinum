@@ -1,7 +1,8 @@
 use gpui::{
     App, Context, EventEmitter, FocusHandle, Focusable, ImageSource, KeyDownEvent, MouseButton,
-    Role, SharedString, Window, div, img, prelude::*, px,
+    RenderImage, Role, SharedString, Window, div, img, prelude::*, px,
 };
+use std::sync::Arc;
 
 use crate::{
     Font, Language, ScrollBar, Theme,
@@ -452,8 +453,11 @@ impl Render for IconView {
             .relative()
             .p(px(inset as f32))
             // Filling a window, the room under its scroll bar shows the
-            // window's own face, as the corner's.
-            .when(!self.fills_window(), |view| view.bg(gpui::rgb(WHITE)))
+            // window's own face, as the corner's; framed, the corners of
+            // the frame's bevel show what is under the view.
+            .when(!self.frame && !self.fills_window(), |view| {
+                view.bg(gpui::rgb(WHITE))
+            })
             .on_key_down(cx.listener(Self::key_down))
             .on_drag_move::<IconDrag>(cx.listener(
                 |this, event: &gpui::DragMoveEvent<IconDrag>, _, cx| {
@@ -531,13 +535,15 @@ impl Render for IconView {
                                 let kind = item.kind;
                                 let selected =
                                     self.selected == Some(index) || self.drag_hover == Some(index);
-                                let image = if selected {
-                                    item.selected_image.as_ref().or(item.image.as_ref())
-                                } else {
-                                    item.image.as_ref()
-                                }
-                                .cloned();
+                                // Chosen, the image darkened by half, as the
+                                // original tints it, unless it has its own.
+                                let (image, dark) = match &item.selected_image {
+                                    Some(image) if selected => (Some(image.clone()), false),
+                                    _ => (item.image.clone(), selected),
+                                };
                                 let custom_image = image.is_some();
+                                let pixels = image.as_ref().and_then(pixel_image);
+                                let image = image.filter(|_| pixels.is_none());
                                 div()
                                     .id(index)
                                     .role(Role::ListBoxOption)
@@ -598,7 +604,9 @@ impl Render for IconView {
                                     })
                                     .child(drawing(84., 64., move |pen, _, _| {
                                         pen.language = language;
-                                        if !custom_image {
+                                        if let Some(pixels) = &pixels {
+                                            draw_pixel_image(pen, 26, 4, pixels, dark);
+                                        } else if !custom_image {
                                             draw_icon(pen, 26, 4, kind, selected);
                                         }
                                         let name = fit_title(&title, 80, language);
@@ -607,7 +615,7 @@ impl Render for IconView {
                                             (84 - width) / 2 - 2,
                                             38,
                                             width + 4,
-                                            13,
+                                            Font::Small.line_height() + 1,
                                             if selected {
                                                 if focused && !crate::window::content_is_inactive()
                                                 {
@@ -621,7 +629,7 @@ impl Render for IconView {
                                         );
                                         pen.text(
                                             (84 - width) / 2,
-                                            48,
+                                            39 + Font::Small.ascent(),
                                             &name,
                                             Font::Small,
                                             if selected { WHITE } else { BLACK },
@@ -666,6 +674,42 @@ impl Render for IconView {
                         ),
                 )
             })
+    }
+}
+
+/// An image of 32 by 32 pixels, each opaque or clear, which can be drawn
+/// pixel for pixel, as the original draws its icons, where GPUI would
+/// scale and smooth it.
+fn pixel_image(image: &ImageSource) -> Option<Arc<RenderImage>> {
+    let ImageSource::Render(image) = image else {
+        return None;
+    };
+    let size = image.size(0);
+    let whole = |bytes: &[u8]| bytes.chunks(4).all(|pixel| matches!(pixel[3], 0 | 255));
+    (size.width.0 == 32 && size.height.0 == 32 && image.as_bytes(0).is_some_and(whole))
+        .then(|| image.clone())
+}
+
+/// Draws an image `pixel_image` gave at x, y, darkened by half when
+/// `dark`.
+fn draw_pixel_image(pen: &mut Pen, x: i32, y: i32, image: &RenderImage, dark: bool) {
+    let Some(bytes) = image.as_bytes(0) else {
+        return;
+    };
+    let channel = |value: u8| {
+        if dark {
+            (value as u32 * 128 + 127) / 255
+        } else {
+            value as u32
+        }
+    };
+    for (index, pixel) in bytes.chunks(4).enumerate() {
+        if pixel[3] == 0 {
+            continue;
+        }
+        // Blue, green, red and alpha, as GPUI holds them.
+        let color = channel(pixel[2]) << 16 | channel(pixel[1]) << 8 | channel(pixel[0]);
+        pen.dot(x + index as i32 % 32, y + index as i32 / 32, color);
     }
 }
 

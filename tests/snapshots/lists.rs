@@ -8,11 +8,12 @@ use gpui::{
     div, point, prelude::*, px, rgb,
 };
 use gpui_platinum::{
-    Breadcrumbs, Font, ListBox, Pagination, PathPopup, RichTextArea, Ruler, RulerState, ScrollView,
-    SheetView, Split, Table, TableColumn, TextField, Theme, TreeView, draw_list_box,
+    Breadcrumbs, ColumnView, DocumentTabs, FindReplace, Font, IconItem, IconView, ListBox,
+    Pagination, PathPopup, PlatinumWindow, PlatinumWindowOptions, RichTextArea, Ruler, RulerState,
+    ScrollView, SheetView, Split, Table, TableColumn, TextField, Theme, TreeView, draw_list_box,
     models::{Cell, FileTree, NodeKind, Sheet, TreeNode},
     paint::{Pen, drawing},
-    theme::{BLACK, GRAY_2},
+    theme::{BLACK, GRAY_2, GRAY_5},
 };
 use std::{cell::RefCell, rc::Rc};
 
@@ -514,26 +515,94 @@ pub fn scenes() -> Vec<Scene> {
 
     // The path as a pop-up and as breadcrumbs, the third of five pages, a
     // card, an empty state and a status bar.
+    scenes.push(Scene::new("paths-pages", 340., 300., |_, cx| {
+        let path: Vec<String> = ["Platinum Disk", "Documents", "Letters"]
+            .map(String::from)
+            .into();
+        let popup = cx.new(|cx| PathPopup::new(path.clone(), cx));
+        let crumbs = cx.new(|cx| Breadcrumbs::new(path, cx));
+        let pages = cx.new(|cx| Pagination::new(3, 5, cx));
+        Column {
+            views: vec![popup.into(), crumbs.into(), pages.into()],
+        }
+    }));
+
+    // A click on Documents, then Right into Letters and Right into To Ada.
+    let columns = slot::<ColumnView>();
     scenes.push(
-        Scene::new("paths-pages", 340., 300., |_, cx| {
-            let path: Vec<String> = ["Platinum Disk", "Documents", "Letters"]
-                .map(String::from)
-                .into();
-            let popup = cx.new(|cx| PathPopup::new(path.clone(), cx));
-            let crumbs = cx.new(|cx| Breadcrumbs::new(path, cx));
-            let pages = cx.new(|cx| Pagination::new(3, 5, cx));
-            Column {
-                views: vec![popup.into(), crumbs.into(), pages.into()],
-            }
+        hosted("columnview", 450., 130., 10., &columns, |cx| {
+            ColumnView::new(sample_tree(), cx).size(420, 100)
         })
-        // The path pop-up, the breadcrumbs and the pages match. The rest is
-        // display.rs's: the original's Card is a gray box of what it holds in a
-        // black frame with a raised bevel, where `card` is a white one with a
-        // bold title; its EmptyState is one line of gray small text centered in
-        // the room, where `empty_state` has a bold title over a paragraph; the
-        // status bar below them falls where they leave it.
-        .pending(),
+        .prepare(|app, window| {
+            // Documents, the first row: 10 + 2 + 8.
+            click(app, window, 80., 20.);
+            keys(app, window, "right right");
+        }),
     );
+
+    // Notes chosen of three documents, its pane showing its text.
+    scenes.push(Scene::new("document-tabs", 340., 120., |_, cx| {
+        let tabs = cx.new(|cx| {
+            let docs = ["Letter", "Notes", "Budget"];
+            DocumentTabs::new(docs.map(String::from).into(), cx)
+                .size(320, 90)
+                .selected(1)
+                .content(move |index, _, _| {
+                    gpui_platinum::text_in(
+                        format!("The text of {}", docs[index]),
+                        Font::Small,
+                        BLACK,
+                    )
+                    .into_any_element()
+                })
+        });
+        Host(tabs.into(), 10., false)
+    }));
+
+    // Four icons in a window, Beta clicked, Right to Gamma, which scrolls
+    // into view, and Gamma clicked; a utility window in front.
+    scenes.push(
+        Scene::new("iconview-utility", 320., 180., |_, cx| {
+            let items = ["Alpha", "Beta", "Gamma", "Delta"].map(test_icon).into();
+            let icons = cx.new(|cx| IconView::new(items, cx).size(268, 95).label("Icons"));
+            let frame = cx.new(|cx| {
+                PlatinumWindow::new("Icons", cx)
+                    .position(10., 10.)
+                    .size(280., 120.)
+                    .content(icons)
+            });
+            let tools = cx.new(|cx| {
+                PlatinumWindow::new("Tools", cx)
+                    .position(220., 100.)
+                    .size(90., 60.)
+                    .options(PlatinumWindowOptions {
+                        utility: true,
+                        ..Default::default()
+                    })
+            });
+            Desk(GRAY_5, vec![frame.into(), tools.into()])
+        })
+        .prepare(|app, window| {
+            // Beta's icon, in the second cell of the first row.
+            click(app, window, 16. + 84. + 42., 29. + 20.);
+            keys(app, window, "right");
+            // Gamma's, scrolled up to the bottom of the view.
+            click(app, window, 16. + 42., 29. + 50.);
+        }),
+    );
+
+    // The dialog open over "cat", to be replaced with "dog", one found.
+    scenes.push(Scene::new("find-replace", 400., 260., |window, cx| {
+        let text = cx.new(|cx| TextField::new(cx).with_text("The cat sat. A Cat, a cattle."));
+        let find = cx.new(|cx| FindReplace::new(text, cx));
+        find.update(cx, |find, cx| {
+            find.set_query("cat", cx);
+            find.set_replacement("dog", cx);
+            find.set_note("1 found", cx);
+            find.show(window, cx);
+        });
+        Desk(GRAY_2, vec![find.into()])
+    }));
 
     // Panes stacked, the first 40 tall.
     scenes.push(Scene::new("split-vertical", 180., 140., |_, _| {
@@ -647,6 +716,35 @@ impl Render for Elements {
 
 /// Views in a column, padded and 10 apart, then a card, an empty state and
 /// a status bar, as the original's paths-and-pages scene lays them.
+/// Views over each other on a color, the last in front.
+struct Desk(u32, Vec<gpui::AnyView>);
+
+impl Render for Desk {
+    fn render(&mut self, _: &mut gpui::Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+        div()
+            .relative()
+            .size_full()
+            .bg(rgb(self.0))
+            .children(self.1.clone())
+    }
+}
+
+/// The original's icon of its tests: a lavender square in a black outline.
+fn test_icon(title: &'static str) -> IconItem {
+    let image = image::RgbaImage::from_fn(32, 32, |x, y| {
+        if !(6..26).contains(&x) || !(4..28).contains(&y) {
+            image::Rgba([0, 0, 0, 0])
+        } else if x == 6 || x == 25 || y == 4 || y == 27 {
+            image::Rgba([0, 0, 0, 255])
+        } else {
+            // Blue, green and red, as GPUI's images hold them.
+            image::Rgba([0xdd, 0x88, 0x99, 255])
+        }
+    });
+    let image = gpui::RenderImage::new(vec![image::Frame::new(image)]);
+    IconItem::from_image(title, std::sync::Arc::new(image))
+}
+
 struct Column {
     views: Vec<gpui::AnyView>,
 }
@@ -662,12 +760,12 @@ impl Render for Column {
             .p(px(10.))
             .gap(px(10.))
             .children(self.views.clone())
-            .child(gpui_platinum::card("A card of controls", 120))
+            .child(gpui_platinum::card().child(text_in("A card of controls")))
             .child(
                 div()
                     .w(px(300.))
                     .h(px(70.))
-                    .child(gpui_platinum::empty_state("No documents", "", 300)),
+                    .child(gpui_platinum::empty_state("No documents")),
             )
             .child(gpui_platinum::status_bar(
                 ["3 items", "1.2 MB available"],

@@ -3,16 +3,17 @@ use gpui::{
     div, prelude::*, px,
 };
 
-use super::icons::fit_title;
 use crate::{
-    Font, Language, ScrollBar, Theme,
+    LIST_ROW_HEIGHT, Language, ListItem, ScrollBar, Theme,
+    list::draw_list_frame,
     models::{FileTree, TreeNode},
     paint::drawing,
     theme::*,
 };
 
+/// The width of each column, its list box's.
 const COLUMN_WIDTH: i32 = 140;
-const ROW_HEIGHT: i32 = 16;
+const SCROLL_BAR_WIDTH: i32 = 16;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ColumnEvent {
@@ -20,12 +21,20 @@ pub enum ColumnEvent {
     Activated(usize),
 }
 
+/// A browser of a tree in columns: a list box of the roots and, right of
+/// it, one of the children of the item chosen in each column, each 140
+/// wide and lying over the next one's edge, with a horizontal scroll bar
+/// under them. With the keyboard focus, one ring runs round all the
+/// columns, inside them, and the chosen row of the column the keys move in
+/// is in the accent.
 pub struct ColumnView {
     focus: FocusHandle,
     model: FileTree,
     path: Vec<usize>,
     active_column: usize,
-    offsets: Vec<i32>,
+    /// The first row in view in each column; the wheel moves it by
+    /// fractions.
+    tops: Vec<f64>,
     horizontal: i32,
     width: i32,
     height: i32,
@@ -50,7 +59,7 @@ impl ColumnView {
             model,
             path: Vec::new(),
             active_column: 0,
-            offsets: vec![0],
+            tops: vec![0.],
             horizontal: 0,
             width: 420,
             height: 160,
@@ -105,15 +114,7 @@ impl ColumnView {
         self.active_column = self.path.len().saturating_sub(1);
         self.clamp_scroll_offsets();
         for column in 0..self.path.len() {
-            if let Some(row) = self
-                .rows(column)
-                .iter()
-                .position(|node| node.id == self.path[column])
-            {
-                let top = row as i32 * ROW_HEIGHT;
-                let bottom = top + ROW_HEIGHT - self.lists_height();
-                self.offsets[column] = self.offsets[column].min(top).max(bottom.max(0));
-            }
+            self.reveal(column);
         }
         self.horizontal = self.max_horizontal();
         cx.notify();
@@ -144,10 +145,14 @@ impl ColumnView {
         self.language = language;
         cx.notify();
     }
-    /// The height of the lists above the horizontal scroll bar, which lies
-    /// over their bottom line, or, filling a window, over the window's.
+    /// The height of the lists, the horizontal scroll bar lying over their
+    /// bottom line, or, filling a window, over the window's too.
     fn lists_height(&self) -> i32 {
-        self.height - if self.scroll_bar_room > 0 { 14 } else { 16 }
+        self.height - if self.scroll_bar_room > 0 { 14 } else { 15 }
+    }
+    /// The rows that show whole in a column's list.
+    fn page(&self) -> usize {
+        ((self.lists_height() - 4) / LIST_ROW_HEIGHT).max(1) as usize
     }
     fn rows(&self, column: usize) -> &[TreeNode] {
         if column == 0 {
@@ -175,15 +180,32 @@ impl ColumnView {
     fn content_width(&self) -> i32 {
         self.columns() as i32 * (COLUMN_WIDTH - 1) + 1
     }
-    fn max_vertical(&self, column: usize) -> i32 {
-        (self.rows(column).len() as i32 * ROW_HEIGHT - self.lists_height()).max(0)
+    fn max_top(&self, column: usize) -> f64 {
+        self.rows(column).len().saturating_sub(self.page()) as f64
     }
     fn clamp_scroll_offsets(&mut self) {
-        self.offsets.resize(self.columns(), 0);
-        for column in 0..self.offsets.len() {
-            self.offsets[column] = self.offsets[column].clamp(0, self.max_vertical(column));
+        self.tops.resize(self.columns(), 0.);
+        for column in 0..self.tops.len() {
+            self.tops[column] = self.tops[column].clamp(0., self.max_top(column));
         }
         self.horizontal = self.horizontal.clamp(0, self.max_horizontal());
+    }
+    /// Scrolls the fewest rows that bring the column's chosen row into view.
+    fn reveal(&mut self, column: usize) {
+        let Some(index) = self
+            .path
+            .get(column)
+            .and_then(|id| self.rows(column).iter().position(|node| node.id == *id))
+        else {
+            return;
+        };
+        let page = self.page();
+        let top = &mut self.tops[column];
+        if (index as f64) < *top {
+            *top = index as f64;
+        } else if index as f64 >= *top + page as f64 {
+            *top = (index + 1 - page) as f64;
+        }
     }
     fn select(&mut self, column: usize, id: usize, cx: &mut Context<Self>) {
         if !self.rows(column).iter().any(|node| node.id == id) {
@@ -195,15 +217,7 @@ impl ColumnView {
         self.model.selected = Some(id);
         self.clamp_scroll_offsets();
         self.horizontal = self.max_horizontal();
-        if let Some(index) = self.rows(column).iter().position(|node| node.id == id) {
-            let top = index as i32 * ROW_HEIGHT;
-            if top < self.offsets[column] {
-                self.offsets[column] = top;
-            }
-            if top + ROW_HEIGHT > self.offsets[column] + self.lists_height() {
-                self.offsets[column] = top + ROW_HEIGHT - self.lists_height();
-            }
-        }
+        self.reveal(column);
         cx.emit(ColumnEvent::Selected(id));
         cx.notify();
     }
@@ -219,7 +233,7 @@ impl ColumnView {
                 if rows.is_empty() {
                     return;
                 }
-                let page = (self.lists_height() / ROW_HEIGHT).max(1) as usize;
+                let page = self.page().saturating_sub(1).max(1);
                 let at = current.unwrap_or(0);
                 let next = match event.keystroke.key.as_str() {
                     "up" => at.saturating_sub(1),
@@ -252,148 +266,153 @@ impl ColumnView {
         }
         cx.stop_propagation();
     }
+    /// A column: a list box of its rows, the row chosen in it highlighted
+    /// in the accent while the keys move in it, in gray otherwise.
+    fn column(
+        &self,
+        column: usize,
+        keys: bool,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let height = self.lists_height();
+        let page = self.page();
+        let (theme, language) = (self.theme, self.language);
+        let rows = self.rows(column);
+        let count = rows.len();
+        let scrolls = count > page;
+        let with_bar = scrolls || self.always_scrollbar;
+        let top = self.tops.get(column).copied().unwrap_or(0.);
+        let first = top as usize;
+        let selected = self.path.get(column).copied();
+        let chosen = selected.and_then(|id| rows.iter().position(|node| node.id == id));
+        let items: Vec<ListItem> = rows
+            .iter()
+            .map(|node| ListItem::from(node.title.clone()))
+            .collect();
+        let arrows: Vec<bool> = rows.iter().map(|node| !node.children.is_empty()).collect();
+        let list_width = COLUMN_WIDTH - 2 - if with_bar { SCROLL_BAR_WIDTH - 1 } else { 0 };
+        let scroll_entity = cx.entity();
+        div()
+            .id(column)
+            .relative()
+            .w(px(COLUMN_WIDTH as f32))
+            .h(px(height as f32))
+            .flex_shrink_0()
+            .mr(px(-1.))
+            .on_scroll_wheel(
+                cx.listener(move |this, event: &gpui::ScrollWheelEvent, _, cx| {
+                    let delta = f32::from(event.delta.pixel_delta(px(16.)).y) as f64;
+                    let max = this.max_top(column);
+                    if let Some(top) = this.tops.get_mut(column) {
+                        *top = (*top - delta / LIST_ROW_HEIGHT as f64).clamp(0., max);
+                    }
+                    cx.notify();
+                    cx.stop_propagation();
+                }),
+            )
+            .child(drawing(
+                COLUMN_WIDTH as f32,
+                height as f32,
+                move |pen, _, _| {
+                    pen.language = language;
+                    let keys = keys && !crate::window::content_is_inactive();
+                    draw_list_frame(
+                        pen,
+                        &items,
+                        &[],
+                        &arrows,
+                        first,
+                        chosen,
+                        keys,
+                        false,
+                        theme.accent,
+                        with_bar,
+                    );
+                },
+            ))
+            .children(
+                rows.iter()
+                    .enumerate()
+                    .skip(first)
+                    .take(page)
+                    .map(|(index, node)| {
+                        let id = node.id;
+                        div()
+                            .id(("row", id))
+                            .role(Role::ListBoxOption)
+                            .aria_label(node.title.clone())
+                            .aria_selected(selected == Some(id))
+                            .absolute()
+                            .left(px(1.))
+                            .top(px((2 + (index - first) as i32 * LIST_ROW_HEIGHT) as f32))
+                            .w(px((list_width - 2) as f32))
+                            .h(px(LIST_ROW_HEIGHT as f32))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(
+                                    move |this, event: &gpui::MouseDownEvent, window, cx| {
+                                        window.focus(&this.focus, cx);
+                                        this.select(column, id, cx);
+                                        if event.click_count == 2 {
+                                            cx.emit(ColumnEvent::Activated(id));
+                                        }
+                                        cx.stop_propagation();
+                                    },
+                                ),
+                            )
+                    }),
+            )
+            .when(with_bar, |element| {
+                element.child(
+                    div()
+                        .absolute()
+                        .top(px(1.))
+                        .left(px((COLUMN_WIDTH - 1 - SCROLL_BAR_WIDTH) as f32))
+                        .child(
+                            ScrollBar::new(
+                                ("column-scroll", column),
+                                top,
+                                page as f64,
+                                count.max(page) as f64,
+                            )
+                            .tab_stop(false)
+                            .step(1.)
+                            .length(height - 2)
+                            .theme(theme)
+                            .inactive(!scrolls)
+                            .on_change(move |value, _, cx| {
+                                scroll_entity.update(cx, |this, cx| {
+                                    if let Some(top) = this.tops.get_mut(column) {
+                                        *top = value;
+                                        cx.notify();
+                                    }
+                                });
+                            }),
+                        ),
+                )
+            })
+    }
 }
 impl Render for ColumnView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.clamp_scroll_offsets();
         let height = self.lists_height();
-        let theme = self.theme;
-        let language = self.language;
+        let (width, theme, language) = (self.width, self.theme, self.language);
         let focused = self.focus.is_focused(window);
         let horizontal_entity = cx.entity();
-        let mut columns = Vec::new();
-        for column in 0..self.columns() {
-            let rows = self.rows(column);
-            let content = rows.len() as i32 * ROW_HEIGHT;
-            let scrolls = self.always_scrollbar || content > height;
-            let content_width = COLUMN_WIDTH - 1 - if scrolls { 16 } else { 0 };
-            let offset = *self.offsets.get(column).unwrap_or(&0);
-            let selected = self.path.get(column).copied();
-            let scroll_entity = cx.entity();
-            let row_elements = rows.iter().enumerate().filter_map(|(row, node)| {
-                let top = row as i32 * ROW_HEIGHT - offset;
-                if top + ROW_HEIGHT <= 0 || top >= height {
-                    return None;
-                }
-                let id = node.id;
-                let title = node.title.clone();
-                let has_children = !node.children.is_empty();
-                let is_selected = selected == Some(id);
-                Some(
-                    div()
-                        .id(id)
-                        .role(Role::ListBoxOption)
-                        .aria_label(title.clone())
-                        .aria_selected(is_selected)
-                        .absolute()
-                        .left_0()
-                        .top(px(top as f32))
-                        .w_full()
-                        .h(px(ROW_HEIGHT as f32))
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
-                                window.focus(&this.focus, cx);
-                                this.select(column, id, cx);
-                                if event.click_count == 2 {
-                                    cx.emit(ColumnEvent::Activated(id));
-                                }
-                                cx.stop_propagation();
-                            }),
-                        )
-                        .child(drawing(
-                            content_width as f32,
-                            ROW_HEIGHT as f32,
-                            move |pen, _, _| {
-                                pen.language = language;
-                                let focused = focused && !crate::window::content_is_inactive();
-                                let ink = if is_selected && focused { WHITE } else { BLACK };
-                                let face = if is_selected {
-                                    if focused { theme.accent.dark } else { GRAY_4 }
-                                } else {
-                                    WHITE
-                                };
-                                pen.rect(0, 0, pen.width, ROW_HEIGHT, face);
-                                pen.text(
-                                    4,
-                                    12,
-                                    &fit_title(&title, pen.width - 16, language),
-                                    Font::Small,
-                                    ink,
-                                );
-                                if has_children {
-                                    for row in 0..5 {
-                                        let width = 3 - (row - 2i32).abs();
-                                        pen.hline(pen.width - 7, 5 + row, width, ink);
-                                    }
-                                }
-                            },
-                        )),
-                )
-            });
-            columns.push(
-                div()
-                    .id(column)
-                    .w(px(COLUMN_WIDTH as f32))
-                    .h(px(height as f32))
-                    .flex_shrink_0()
-                    .mr(px(-1.))
-                    .flex()
-                    .border_r_1()
-                    .border_color(gpui::rgb(GRAY_7))
-                    .on_scroll_wheel(cx.listener(
-                        move |this, event: &gpui::ScrollWheelEvent, _, cx| {
-                            let max = this.max_vertical(column);
-                            let delta =
-                                f32::from(event.delta.pixel_delta(px(16.)).y).round() as i32;
-                            this.offsets[column] = (this.offsets[column] - delta).clamp(0, max);
-                            cx.notify();
-                            cx.stop_propagation();
-                        },
-                    ))
-                    .child(
-                        div()
-                            .relative()
-                            .w(px(content_width as f32))
-                            .h_full()
-                            .overflow_hidden()
-                            .children(row_elements),
-                    )
-                    .when(scrolls, |element| {
-                        element.child(
-                            ScrollBar::new(
-                                ("column-scroll", column),
-                                offset as f64,
-                                height as f64,
-                                content as f64,
-                            )
-                            .tab_stop(false)
-                            .length(height)
-                            .step(16.)
-                            .theme(theme)
-                            .on_change(move |value, _, cx| {
-                                scroll_entity.update(cx, |this, cx| {
-                                    if let Some(offset) = this.offsets.get_mut(column) {
-                                        *offset = value.round() as i32;
-                                        cx.notify();
-                                    }
-                                });
-                            }),
-                        )
-                    }),
-            );
-        }
+        let columns: Vec<_> = (0..self.columns())
+            .map(|column| self.column(column, focused && column == self.active_column, cx))
+            .collect();
         div()
             .id("columns")
             .role(Role::ListBox)
             .aria_label(crate::tr(language, "files"))
             .track_focus(&self.focus)
             .tab_stop(true)
-            .w(px(self.width as f32))
+            .w(px(width as f32))
             .h(px(self.height as f32))
             .flex_shrink_0()
             .relative()
-            .bg(gpui::rgb(WHITE))
             .on_key_down(cx.listener(Self::key_down))
             .on_mouse_down(
                 MouseButton::Left,
@@ -405,6 +424,7 @@ impl Render for ColumnView {
                     .w_full()
                     .h(px(height as f32))
                     .overflow_hidden()
+                    .bg(gpui::rgb(WHITE))
                     .child(
                         div()
                             .absolute()
@@ -412,26 +432,42 @@ impl Render for ColumnView {
                             .top_0()
                             .flex()
                             .children(columns),
-                    ),
+                    )
+                    .when(focused, |lists| {
+                        // One ring round all the columns, inside them.
+                        lists.child(div().absolute().top_0().left_0().child(drawing(
+                            width as f32,
+                            height as f32,
+                            move |pen, _, _| {
+                                if crate::window::content_is_inactive() {
+                                    return;
+                                }
+                                let (w, h) = (pen.width, pen.height);
+                                pen.frame(0, 0, w, h, theme.accent.dark);
+                                pen.frame(1, 1, w - 2, h - 2, theme.accent.dark);
+                            },
+                        )))
+                    }),
             )
             .child(
                 div()
                     .when(self.scroll_bar_room > 0, |bar| {
                         bar.absolute().left(px(-1.)).top(px((height - 1) as f32))
                     })
+                    .when(self.scroll_bar_room == 0, |bar| bar.mt(px(-1.)))
                     .child(
                         ScrollBar::new(
                             "columns-horizontal",
                             self.horizontal as f64,
-                            self.width as f64,
+                            width as f64,
                             self.content_width() as f64,
                         )
                         .tab_stop(false)
                         .horizontal()
                         .length(if self.scroll_bar_room > 0 {
-                            self.width + 1 - self.scroll_bar_room
+                            width + 1 - self.scroll_bar_room
                         } else {
-                            self.width
+                            width
                         })
                         .step(COLUMN_WIDTH as f64 / 2.)
                         .theme(theme)
@@ -467,8 +503,8 @@ mod tests {
             view.update(cx, |view, cx| {
                 for silent in [false, true] {
                     view.select(0, 1, cx);
-                    view.offsets[1] = view.max_vertical(1);
-                    assert!(view.offsets[1] > 0);
+                    view.tops[1] = view.max_top(1);
+                    assert!(view.tops[1] > 0.);
 
                     if silent {
                         view.set_selection(Some(2), cx);
@@ -478,7 +514,7 @@ mod tests {
 
                     assert_eq!(view.selection(), Some(2));
                     assert_eq!(view.rows(1).len(), 2);
-                    assert_eq!(view.offsets[1], 0);
+                    assert_eq!(view.tops[1], 0.);
                 }
             });
         });
@@ -493,15 +529,15 @@ mod tests {
             });
             view.update(cx, |view, cx| {
                 view.set_selection(Some(20), cx);
-                view.offsets[1] = view.max_vertical(1);
-                assert!(view.offsets.iter().all(|offset| *offset > 0));
+                view.tops[1] = view.max_top(1);
+                assert!(view.tops.iter().all(|top| *top > 0.));
 
                 view.set_model(FileTree::new(vec![branch(20, 2), branch(21, 2)]), cx);
 
                 assert_eq!(view.path(), &[20]);
-                assert_eq!(view.offsets, vec![0, 0]);
+                assert_eq!(view.tops, vec![0., 0.]);
                 view.set_selection(None, cx);
-                assert_eq!(view.offsets, vec![0]);
+                assert_eq!(view.tops, vec![0.]);
             });
         });
     }

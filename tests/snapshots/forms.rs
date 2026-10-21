@@ -438,6 +438,7 @@ fn region(name: &'static str, language: Language, first_weekday: u8, hours: u8) 
         let side = cx.new(|_| Stack::column(0., 10., vec![picker.into(), field.into()]).inner());
         Stack::row(10., 12., vec![calendar.into(), side.into()])
     })
+    .east_asian()
 }
 
 /// "Highlight", Lavender's mid color, its picker open and the red of the
@@ -561,9 +562,14 @@ fn save_dialog(name: &'static str, language: Language) -> Scene {
     } else {
         "Letter"
     };
-    Scene::new(name, 400., 390., move |window, cx| {
+    let scene = Scene::new(name, 400., 390., move |window, cx| {
         save_dialog_view(file, language, window, cx)
-    })
+    });
+    if language == Language::English {
+        scene
+    } else {
+        scene.east_asian()
+    }
 }
 
 /// "Menu" typed over the name, a click on Recipes, dimmed, which chooses
@@ -594,6 +600,7 @@ fn save_dialog_replace_zh_hans() -> Scene {
     Scene::new("save-dialog-replace-zh-hans", 400., 390., |window, cx| {
         save_dialog_view("Letter", Language::SimplifiedChinese, window, cx)
     })
+    .east_asian()
     .prepare(|app, window| {
         keys(app, window, &["enter"]);
         // The moment after Save's flash.

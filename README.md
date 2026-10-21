@@ -140,7 +140,7 @@ These tests are not a complete automated audit of every interaction, screen read
 
 - [API guide](docs/api.md): application setup, component families, state, events, input and localization.
 - [Design specification](docs/spec.md): colors, metrics and expected control behavior.
-- [Static website](site/index.html): a five-language introduction and native screenshot gallery. Serve the repository root to preview it: `python3 -m http.server 8000`, then open `http://localhost:8000/site/`.
+- [Static website](site/index.html): a five-language introduction and native screenshot gallery. Serve the repository root to preview it: `python3 -m http.server 8000`, then open `http://localhost:8000/site/`. `./scripts/site.sh` builds it into `site/dist`, with the screenshots beside it; `./scripts/deploy.sh` builds it and deploys it to Cloudflare, as `wrangler.jsonc` says.
 
 ## License
 

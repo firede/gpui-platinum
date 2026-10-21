@@ -140,7 +140,7 @@ Gallery 按页展示控件；Controls 是可浏览的控件目录；Desktop 将�
 
 - [API 指南](docs/api.md)：应用初始化、控件类别、状态、事件、输入与本地化。
 - [设计规范](docs/spec.md)：颜色、尺寸和预期交互。
-- [静态官网](site/index.html)：五语言介绍与原生截图图库。可在仓库根目录运行 `python3 -m http.server 8000`，然后访问 `http://localhost:8000/site/`。
+- [静态官网](site/index.html)：五语言介绍与原生截图图库。可在仓库根目录运行 `python3 -m http.server 8000`，然后访问 `http://localhost:8000/site/`。`./scripts/site.sh` 会把网站连同截图构建到 `site/dist`；`./scripts/deploy.sh` 构建后按 `wrangler.jsonc` 部署到 Cloudflare。
 
 ## 许可
 

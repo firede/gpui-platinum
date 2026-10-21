@@ -664,7 +664,10 @@ impl Element for RangeElement {
             };
             match config.kind {
                 Kind::Slider => {
-                    draw_slider(&mut pen, &config, state.value, pressed == ScrollPart::Thumb)
+                    draw_slider(&mut pen, &config, state.value, pressed == ScrollPart::Thumb);
+                    if config.disabled {
+                        fade(&mut pen);
+                    }
                 }
                 Kind::ScrollBar { .. } => draw_scroll_bar(&mut pen, &config, state.value, pressed),
             }
@@ -948,18 +951,30 @@ pub fn draw_slider_thumb(pen: &mut Pen, state: SliderState, theme: Theme) {
         ),
         SliderState::Normal => (BLACK, thumb_face(theme), WHITE, theme.accent.dark),
     };
+    // Each pixel drawn once, as a faded thumb shows what is under it.
     for y in 0..16 {
         let inset = (y - 10).max(0);
         let width = THUMB_WIDTH - inset * 2;
-        pen.hline(inset, y, width, frame);
-        if y > 0 && width > 2 {
-            pen.hline(inset + 1, y, width - 2, if y == 1 { top } else { face });
-            if y < 11 {
-                pen.dot(inset + 1, y, top);
-            }
-            if y > 1 {
-                pen.dot(inset + width - 2, y, bottom);
-            }
+        if y == 0 || width <= 2 {
+            pen.hline(inset, y, width, frame);
+            continue;
+        }
+        pen.dot(inset, y, frame);
+        pen.dot(inset + width - 1, y, frame);
+        let (left, right) = (inset + 1, inset + width - 2);
+        if y == 1 {
+            pen.hline(left, y, right - left + 1, top);
+            continue;
+        }
+        for x in left..=right {
+            let color = if x == right {
+                bottom
+            } else if x == left && y < 11 {
+                top
+            } else {
+                face
+            };
+            pen.dot(x, y, color);
         }
     }
     if matches!(state, SliderState::Normal | SliderState::Pressed) {
@@ -967,6 +982,24 @@ pub fn draw_slider_thumb(pen: &mut Pen, state: SliderState, theme: Theme) {
             pen.hline(3, 4 + 2 * ridge, 5, theme.accent.dark);
             pen.hline(4, 5 + 2 * ridge, 5, WHITE);
         }
+    }
+}
+
+/// Paints what the pen drew at half over what is under it, as the original
+/// paints a control it disables, each color made so that over the window's
+/// face it comes out as asked: white, lighter than the face, comes out
+/// Gray1.
+fn fade(pen: &mut Pen) {
+    let unfade = |color: u32| {
+        let channel = |shift: u32| {
+            let (value, face) = ((color >> shift) & 255, (GRAY_2 >> shift) & 255);
+            (2 * value as i32 - face as i32).clamp(0, 255) as u32
+        };
+        channel(16) << 16 | channel(8) << 8 | channel(0)
+    };
+    for fill in &mut pen.fills {
+        fill.color = unfade(fill.color);
+        fill.alpha = 128;
     }
 }
 

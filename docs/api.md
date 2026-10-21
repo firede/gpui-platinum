@@ -170,7 +170,8 @@ always make room.
 `RichTextArea` is a text area with a format bar: bold, italic, underline,
 four sizes and paragraph alignment. `.show_format_bar(false)` hides the
 bar, leaving its shortcuts; `.bar_gap` puts room between the bar and the
-text. `editor()` returns the `Entity<TextField>` under it, for commands and
+text. `format_items` adds the bar's buttons to a `Toolbar` of one's own,
+for a window that keeps them with its other tools. `editor()` returns the `Entity<TextField>` under it, for commands and
 for `FindReplace`. `RichText` is the model without a view; `TextStyle`,
 `StyleAttribute`, `Run`, `Alignment` and `FormatState` describe its
 formatting. `SizeMenu` sets an editor's size.
@@ -219,6 +220,7 @@ A `fixed(true)` column does not sort, though its edge still resizes.
 16×16 pixels, drawn from rows of characters. `set_column_comparator` sorts
 a column by its values where the text shown, as "2 KB", would sort wrong.
 Row indices always refer to the model's rows, sorted or not.
+`.focus_ring(false)` leaves out the ring for a table that fills a window.
 
 A click chooses a row, Shift extends the range, and Command or Control
 adds or removes one row. `TableEvent::Selected` reports the current row,
@@ -239,7 +241,8 @@ drawn pixel for pixel and, when chosen, darkened by half, as the original
 does; `.selected_image` gives a chosen look of its own. `IconView` scrolls,
 chooses, opens and drags items. `.frame(true)` draws the sunken outline of
 a view standing alone, `.always_scrollbar(true)` keeps its scroll bar, and
-`.scroll_bar_room` leaves room under the bar for a window's resize corner.
+`.scroll_bar_room` leaves room under the bar for a window's resize corner. `.plain_when_inactive(true)` leaves the
+names plain while the window is in the background.
 
 ### Navigation and layout
 

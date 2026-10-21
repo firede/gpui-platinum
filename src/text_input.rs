@@ -1355,9 +1355,9 @@ impl Render for TextField {
             .h(px(self.height))
             .flex_shrink_0()
             .key_context("PlatinumText")
-            .track_focus(&self.focus_handle)
-            .tab_index(0)
-            .tab_stop(!self.disabled)
+            // A tracked handle is the tab stop as it is, so it carries the
+            // field's place in the tab order itself.
+            .track_focus(&self.focus_handle.clone().tab_stop(!self.disabled))
             .role(role)
             .aria_label(self.label.clone())
             .aria_placeholder(self.placeholder.clone())

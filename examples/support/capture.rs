@@ -24,19 +24,7 @@ pub fn render_png<V: Render + 'static>(
     if !scale.is_finite() || scale <= 0. || scale > 8. {
         return Err("image scale must be greater than zero and at most eight".into());
     }
-    let platform = gpui_platform::current_platform(true);
-    let mut app = HeadlessAppContext::with_platform(
-        platform.text_system(),
-        Arc::new(()),
-        gpui_platform::current_headless_renderer,
-    );
-    app.update(gpui_platinum::init);
-    let window = app.open_window(size(px(width), px(height)), build)?;
-    app.run_until_parked();
-    app.update_window(window.into(), |_, window, cx| {
-        let _ = window.draw(cx);
-    })?;
-    let rendered = app.capture_screenshot(window.into())?;
+    let rendered = render(width, height, build)?;
     let output_width = (width * scale).round() as u32;
     let output_height = (height * scale).round() as u32;
     let image = if rendered.dimensions() == (output_width, output_height) {
@@ -49,7 +37,32 @@ pub fn render_png<V: Render + 'static>(
             image::imageops::FilterType::Nearest,
         )
     };
-    let path = Path::new(path);
+    save_png(Path::new(path), &image)
+}
+
+/// Draws the view of a width×height window, at the display's scale.
+pub fn render<V: Render + 'static>(
+    width: f32,
+    height: f32,
+    build: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
+) -> Result<RgbaImage, Box<dyn Error>> {
+    let platform = gpui_platform::current_platform(true);
+    let mut app = HeadlessAppContext::with_platform(
+        platform.text_system(),
+        Arc::new(()),
+        gpui_platform::current_headless_renderer,
+    );
+    app.update(gpui_platinum::init);
+    let window = app.open_window(size(px(width), px(height)), build)?;
+    app.run_until_parked();
+    app.update_window(window.into(), |_, window, cx| {
+        let _ = window.draw(cx);
+    })?;
+    Ok(app.capture_screenshot(window.into())?)
+}
+
+/// Writes image to path as a PNG, making its directory if need be.
+pub fn save_png(path: &Path, image: &RgbaImage) -> Result<(), Box<dyn Error>> {
     if let Some(parent) = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -57,7 +70,7 @@ pub fn render_png<V: Render + 'static>(
         std::fs::create_dir_all(parent)?;
     }
     let mut output = BufWriter::new(File::create(path)?);
-    encode_png(&image, &mut output)?;
+    encode_png(image, &mut output)?;
     output.flush()?;
     Ok(())
 }

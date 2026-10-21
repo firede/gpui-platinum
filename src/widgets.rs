@@ -1106,7 +1106,7 @@ pub fn draw_disclosure(pen: &mut Pen, open: bool, disabled: bool, pressed: bool)
     let (line, fill, highlight) = if disabled {
         (GRAY_6, GRAY_3, GRAY_3)
     } else if crate::window::content_is_inactive() {
-        (GRAY_8, GRAY_2, GRAY_2)
+        (GRAY_8, GRAY_3, GRAY_3)
     } else if pressed {
         (BLACK, BLACK, BLACK)
     } else {

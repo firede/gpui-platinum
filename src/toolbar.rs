@@ -11,7 +11,7 @@ const OVERFLOW_WIDTH: i32 = 22;
 
 #[derive(Clone)]
 enum Item {
-    Control(Control),
+    Control(Box<Control>),
     Separator,
 }
 impl Item {
@@ -46,7 +46,7 @@ impl Toolbar {
         self
     }
     pub fn item(mut self, control: Control) -> Self {
-        self.items.push(Item::Control(control));
+        self.items.push(Item::Control(Box::new(control)));
         self
     }
     pub fn separator(mut self) -> Self {
@@ -465,10 +465,10 @@ mod tests {
     #[test]
     fn overflow_reserves_room_and_restores_every_tool_when_widened() {
         let items = vec![
-            Item::Control(bevel_button("one", "One").width(40)),
+            Item::Control(Box::new(bevel_button("one", "One").width(40))),
             Item::Separator,
-            Item::Control(bevel_button("two", "Two").width(40)),
-            Item::Control(bevel_button("three", "Three").width(40)),
+            Item::Control(Box::new(bevel_button("two", "Two").width(40))),
+            Item::Control(Box::new(bevel_button("three", "Three").width(40))),
         ];
         assert_eq!(visible_count(&items, 300), 4);
         assert_eq!(visible_count(&items, 100), 2);

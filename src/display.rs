@@ -364,8 +364,9 @@ pub fn status_bar_in(
         }))
 }
 
-/// When the application's first animation began, by the executor's clock.
-struct AnimationStart(Instant);
+/// When the application's first animation began, by the executor's clock,
+/// and the step each window has asked to be drawn again at.
+struct AnimationStart(Instant, std::collections::HashMap<WindowId, usize>);
 
 impl gpui::Global for AnimationStart {}
 
@@ -373,10 +374,30 @@ impl gpui::Global for AnimationStart {}
 fn frame_number(cx: &mut App) -> usize {
     let now = cx.background_executor().now();
     if !cx.has_global::<AnimationStart>() {
-        cx.set_global(AnimationStart(now));
+        cx.set_global(AnimationStart(now, Default::default()));
     }
     let start = cx.global::<AnimationStart>().0;
     (now.duration_since(start).as_millis() / 100) as usize
+}
+
+/// Draws the window again as the animations' next step begins, rather than
+/// on every frame: once for all the animations it shows.
+fn request_next_step(window: &mut Window, cx: &mut App) {
+    let step = frame_number(cx) + 1;
+    let id = window.window_handle().window_id();
+    let animation = cx.global_mut::<AnimationStart>();
+    if animation.1.get(&id) == Some(&step) {
+        return;
+    }
+    animation.1.insert(id, step);
+    let at = animation.0 + std::time::Duration::from_millis(step as u64 * 100);
+    let delay = at.saturating_duration_since(cx.background_executor().now());
+    window
+        .spawn(cx, async move |cx| {
+            cx.background_executor().timer(delay).await;
+            cx.update(|window, _| window.refresh()).ok();
+        })
+        .detach();
 }
 
 pub fn indeterminate_progress(width: i32, theme: Theme) -> impl IntoElement {
@@ -387,7 +408,7 @@ pub fn indeterminate_progress(width: i32, theme: Theme) -> impl IntoElement {
             let phase = frame_number(cx) as i32;
             crate::draw_progress_indeterminate(&mut pen, phase, theme.accent);
             pen.paint(bounds.origin, window);
-            window.request_animation_frame();
+            request_next_step(window, cx);
         },
     )
     .w(px(width as f32))
@@ -402,7 +423,7 @@ pub fn chasing_arrows() -> impl IntoElement {
             let mut pen = Pen::new(16, 16);
             draw_chasing_arrows(&mut pen, frame_number(cx) % 8);
             pen.paint(bounds.origin, window);
-            window.request_animation_frame();
+            request_next_step(window, cx);
         },
     )
     .w(px(16.))

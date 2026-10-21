@@ -8,8 +8,11 @@ use gpui::{
 };
 use gpui_platinum::{
     CalendarView, ColorWell, Combobox, DatePicker, Font, FontChoice, FontPicker, Language, Menu,
-    MenuBar, MenuItem, PageSetup, PageSetupState, PopupMenu, TimeField, menu::draw_popup_button,
-    models::Date, paint::drawing, theme::ACCENTS,
+    MenuBar, MenuItem, OpenDialog, PageSetup, PageSetupState, PopupMenu, SaveDialog, TimeField,
+    menu::draw_popup_button,
+    models::{Date, FileTree, NodeKind, TreeNode},
+    paint::drawing,
+    theme::ACCENTS,
 };
 
 pub fn scenes() -> Vec<Scene> {
@@ -32,6 +35,11 @@ pub fn scenes() -> Vec<Scene> {
         colorpicker(),
         pagesetup(),
         fontpicker(),
+        open_dialog(),
+        save_dialog("save-dialog", Language::English),
+        save_dialog("save-dialog-zh-hans", Language::SimplifiedChinese),
+        save_dialog_replace(),
+        save_dialog_replace_zh_hans(),
     ]
 }
 
@@ -99,6 +107,32 @@ fn click(app: &mut HeadlessAppContext, window: AnyWindowHandle, x: f32, y: f32) 
     move_to(app, window, x, y, false);
     press(app, window, x, y);
     release(app, window, x, y);
+}
+
+/// A click and a second one that the platform counts as a double click.
+fn double_click(app: &mut HeadlessAppContext, window: AnyWindowHandle, x: f32, y: f32) {
+    click(app, window, x, y);
+    send(
+        app,
+        window,
+        PlatformInput::MouseDown(MouseDownEvent {
+            button: MouseButton::Left,
+            position: point(px(x), px(y)),
+            modifiers: Modifiers::default(),
+            click_count: 2,
+            first_mouse: false,
+        }),
+    );
+    send(
+        app,
+        window,
+        PlatformInput::MouseUp(MouseUpEvent {
+            button: MouseButton::Left,
+            position: point(px(x), px(y)),
+            modifiers: Modifiers::default(),
+            click_count: 2,
+        }),
+    );
 }
 
 /// Types keys; Tab, unless what has the focus takes it, moves the focus
@@ -455,5 +489,115 @@ fn fontpicker() -> Scene {
     Scene::new("fontpicker", 420., 420., |_, cx| {
         let picker = font_picker(cx, true);
         Stack::column(10., 0., vec![picker.into()])
+    })
+}
+
+/// The original's tree of files: a disk with Documents (Letter and
+/// Recipes), an empty folder and a file, and a file beside it.
+fn file_tree() -> FileTree {
+    FileTree::new(vec![
+        TreeNode::new(0, "Platinum Disk", NodeKind::Disk).with_children(vec![
+            TreeNode::new(1, "Documents", NodeKind::Folder).with_children(vec![
+                TreeNode::new(2, "Letter", NodeKind::Document),
+                TreeNode::new(3, "Recipes", NodeKind::Document),
+            ]),
+            TreeNode::new(4, "Empty Folder", NodeKind::Folder),
+            TreeNode::new(5, "Read Me", NodeKind::Document),
+        ]),
+        TreeNode::new(6, "Note", NodeKind::Document),
+    ])
+}
+
+/// The dialog, 364 wide, centered a fifth of the way down; its list 16 in
+/// from its side and under the path pop-up, 22 tall, and a gap of 8.
+const FILE_LIST_LEFT: f32 = 18. + 16.;
+fn file_list_top(height: f32) -> f32 {
+    (height / 5.).round() + 16. + 22. + 8.
+}
+
+/// Into the disk with a double click, into Documents with Return, and
+/// down to Recipes.
+fn open_dialog() -> Scene {
+    Scene::new("open-dialog", 400., 350., |window, cx| {
+        let files = cx.new(|_| file_tree());
+        let dialog = cx.new(|cx| OpenDialog::new(files, cx));
+        dialog.update(cx, |dialog, cx| dialog.show(window, cx));
+        Stack::column(0., 0., vec![dialog.into()])
+    })
+    .prepare(|app, window| {
+        double_click(app, window, FILE_LIST_LEFT + 60., file_list_top(350.) + 10.);
+        keys(app, window, &["enter", "down"]);
+    })
+}
+
+fn save_dialog_view(
+    name: &'static str,
+    language: Language,
+    window: &mut gpui::Window,
+    cx: &mut gpui::Context<Stack>,
+) -> Stack {
+    let files = cx.new(|_| file_tree());
+    let dialog = cx.new(|cx| {
+        let prompt = if language == Language::English {
+            "Save as:"
+        } else {
+            "存储为："
+        };
+        SaveDialog::new(files, cx).language(language).prompt(prompt)
+    });
+    dialog.update(cx, |dialog, cx| {
+        dialog.set_parent(Some(1), cx);
+        dialog.set_name(name, cx);
+        dialog.show(window, cx);
+    });
+    Stack::column(0., 0., vec![dialog.into()])
+}
+
+/// In Documents, "untitled" selected under its prompt ("Letter" in
+/// Chinese, for the alert of a file of the name).
+fn save_dialog(name: &'static str, language: Language) -> Scene {
+    let file = if language == Language::English {
+        "untitled"
+    } else {
+        "Letter"
+    };
+    Scene::new(name, 400., 390., move |window, cx| {
+        save_dialog_view(file, language, window, cx)
+    })
+}
+
+/// "Menu" typed over the name, a click on Recipes, dimmed, which chooses
+/// nothing, then "Recipes" typed into the name, and Save.
+fn save_dialog_replace() -> Scene {
+    Scene::new("save-dialog-replace", 400., 390., |window, cx| {
+        save_dialog_view("untitled", Language::English, window, cx)
+    })
+    .prepare(|app, window| {
+        keys(app, window, &["shift-m", "e", "n", "u"]);
+        let top = file_list_top(390.);
+        click(app, window, FILE_LIST_LEFT + 60., top + 18. + 10.);
+        // The name's field, under the list and the prompt.
+        let field = top + 150. + 6. + 16. + 11.;
+        click(app, window, FILE_LIST_LEFT + 60., field);
+        keys(
+            app,
+            window,
+            &["cmd-a", "shift-r", "e", "c", "i", "p", "e", "s"],
+        );
+        // Save, at the bottom of the buttons.
+        click(app, window, 400. - 18. - 16. - 50., field);
+    })
+}
+
+/// Return over "Letter", a file of the name.
+fn save_dialog_replace_zh_hans() -> Scene {
+    Scene::new("save-dialog-replace-zh-hans", 400., 390., |window, cx| {
+        save_dialog_view("Letter", Language::SimplifiedChinese, window, cx)
+    })
+    .prepare(|app, window| {
+        keys(app, window, &["enter"]);
+        // The moment after Save's flash.
+        app.advance_clock(std::time::Duration::from_millis(200));
+        app.run_until_parked();
     })
 }

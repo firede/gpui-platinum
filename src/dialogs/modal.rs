@@ -102,6 +102,9 @@ pub(crate) struct ModalView {
     title: SharedString,
     movable: bool,
     content: AnyElement,
+    placed: bool,
+    spacing: Option<(f32, f32)>,
+    overlay: Option<AnyElement>,
 }
 
 impl ModalView {
@@ -110,7 +113,27 @@ impl ModalView {
             title: title.into(),
             movable,
             content: content.into_any_element(),
+            placed: false,
+            spacing: None,
+            overlay: None,
         }
+    }
+    /// Places a box without a title bar where a movable one opens, a fifth
+    /// of the way down, rather than in the middle.
+    pub fn placed(mut self) -> Self {
+        self.placed = true;
+        self
+    }
+    /// The padding inside the frame and the gap between the children.
+    pub fn spacing(mut self, padding: f32, gap: f32) -> Self {
+        self.spacing = Some((padding, gap));
+        self
+    }
+    /// Shows another box over this one, in the middle, as an alert the
+    /// box asks before it acts; the box keeps the keyboard's actions.
+    pub fn overlay(mut self, overlay: Option<AnyElement>) -> Self {
+        self.overlay = overlay;
+        self
     }
 }
 
@@ -127,6 +150,9 @@ pub(crate) fn modal<T: Render + 'static>(
         title,
         movable,
         content,
+        placed,
+        spacing,
+        overlay,
     } = view;
     if modal_state.subscription.is_none() {
         modal_state.subscription =
@@ -214,16 +240,25 @@ pub(crate) fn modal<T: Render + 'static>(
         })
         .aria_label(title)
         .relative()
-        .when(movable, |element| {
+        .when(movable || placed, |element| {
             element.absolute().left(position.x).top(position.y)
         })
         .w(px(width))
         .flex()
         .flex_col()
-        .gap(px(10.))
-        .px(px(if movable { 20. } else { 15. }))
-        .pb(px(if movable { 20. } else { 15. }))
-        .pt(px(if movable { 31. } else { 15. }))
+        .gap(px(spacing.map_or(10., |(_, gap)| gap)))
+        .px(px(spacing
+            .map_or(if movable { 20. } else { 15. }, |(padding, _)| {
+                padding
+            })))
+        .pb(px(spacing
+            .map_or(if movable { 20. } else { 15. }, |(padding, _)| {
+                padding
+            })))
+        .pt(px(spacing
+            .map_or(if movable { 31. } else { 15. }, |(padding, _)| {
+                padding
+            })))
         .child(frame)
         .child(content);
     if movable {
@@ -272,7 +307,8 @@ pub(crate) fn modal<T: Render + 'static>(
         )
         .on_action(cx.listener(move |this, _: &Accept, window, cx| accept(this, window, cx)))
         .on_action(cx.listener(move |this, _: &Cancel, window, cx| cancel(this, window, cx)))
-        .child(panel);
+        .child(panel)
+        .children(overlay);
     deferred(
         anchored()
             .position(point(px(0.), px(0.)))

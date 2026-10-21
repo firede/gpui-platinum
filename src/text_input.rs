@@ -1035,6 +1035,18 @@ impl TextField {
         let mut text = Pen::new(width, height);
         let selection = self.buffer.selection();
         let top = self.text_top(height as f32);
+        // A field's line, which its selection and caret fill, sits as far
+        // above its capitals as the glyphs of an East Asian language reach
+        // above the face's own, as the original's does; the text stays.
+        let line_shift = if self.multiline || self.language == Language::English {
+            0
+        } else {
+            let ink_top =
+                |(above, below): (i32, i32)| (LINE_HEIGHT as i32 - above - below) / 2 + above;
+            let ascent = Font::Small.ascent();
+            ink_top(Font::Small.line_ink(self.language))
+                - ink_top((ascent, Font::Small.line_height() - ascent))
+        };
         let selection_color = if inactive {
             GRAY_4
         } else if self.focused {
@@ -1057,7 +1069,7 @@ impl TextField {
                 };
                 text.rect(
                     left + x as i32,
-                    y - 1,
+                    y - 1 - line_shift,
                     (right - x).round() as i32,
                     line.height as i32,
                     selection_color,
@@ -1119,7 +1131,7 @@ impl TextField {
             // the character after it, as the original draws it.
             text.vline(
                 (self.document_left + x - self.scroll_x).round() as i32 - 1,
-                (top + self.lines[row].y - self.scroll_y).round() as i32,
+                (top + self.lines[row].y - self.scroll_y).round() as i32 - line_shift,
                 self.lines[row].height as i32 - 2,
                 BLACK,
             );

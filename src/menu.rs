@@ -143,6 +143,7 @@ pub struct PopupMenu {
     width: Option<i32>,
     label: SharedString,
     caption: SharedString,
+    bevel: Option<&'static [&'static str]>,
     theme: Theme,
     language: Language,
 }
@@ -173,6 +174,7 @@ impl PopupMenu {
             width: None,
             label: "Pop-up menu".into(),
             caption: "".into(),
+            bevel: None,
             theme: Theme::default(),
             language: Language::English,
         }
@@ -194,6 +196,17 @@ impl PopupMenu {
     }
     pub fn set_caption(&mut self, caption: impl Into<SharedString>, cx: &mut Context<Self>) {
         self.caption = caption.into();
+        cx.notify();
+    }
+    /// Draws the button as a bevel button with an icon before the item
+    /// chosen and the pop-down arrow after it, as a file dialog's folder,
+    /// the menu opening under it.
+    pub fn bevel(mut self, icon: &'static [&'static str]) -> Self {
+        self.bevel = Some(icon);
+        self
+    }
+    pub fn set_bevel(&mut self, icon: Option<&'static [&'static str]>, cx: &mut Context<Self>) {
+        self.bevel = icon;
         cx.notify();
     }
     pub fn label(mut self, label: impl Into<SharedString>) -> Self {
@@ -390,6 +403,19 @@ impl PopupMenu {
 impl PopupMenu {
     /// The button's width: as set, or room for the widest item's title.
     fn button_width(&self) -> i32 {
+        if let Some(icon) = self.bevel {
+            let title = self
+                .items
+                .get(self.selected)
+                .filter(|_| self.has_selection)
+                .map_or(&self.label, |item| &item.title);
+            let icon_width = icon.iter().map(|row| row.len()).max().unwrap_or(0) as i32;
+            return Font::Bold.measure_in(title, self.language)
+                + icon_width
+                + 4
+                + crate::widgets::BEVEL_ARROW_WIDTH
+                + 16;
+        }
         self.width.unwrap_or_else(|| {
             let widest = self
                 .items
@@ -410,6 +436,9 @@ const POPUP_CAPTION_GAP: i32 = 6;
 impl Render for PopupMenu {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let width = self.button_width();
+        let bevel = self.bevel;
+        let theme = self.theme;
+        let height = if bevel.is_some() { 22 } else { 20 };
         let menu_width = width.max(crate::menu_bar::menu_width(&self.items, self.language));
         let current = if self.has_selection {
             self.items
@@ -453,27 +482,47 @@ impl Render for PopupMenu {
                     cx.stop_propagation();
                 }),
             )
-            .child(drawing(width as f32, 20., move |pen, window, _| {
-                let inactive = crate::window::content_is_inactive();
-                pen.language = language;
-                let pressed =
-                    !disabled && !inactive && window.text_style().color == rgb(WHITE).into();
-                draw_popup_button(pen, &current, disabled, pressed);
-                if !disabled
-                    && !inactive
-                    && focus.is_focused(window)
-                    && window.last_input_was_keyboard()
-                {
-                    crate::widgets::draw_focus_ring(pen, 3, accent.dark);
-                }
-            }));
+            .child(drawing(
+                width as f32,
+                height as f32,
+                move |pen, window, _| {
+                    let inactive = crate::window::content_is_inactive();
+                    pen.language = language;
+                    let pressed =
+                        !disabled && !inactive && window.text_style().color == rgb(WHITE).into();
+                    let ring = if let Some(icon) = bevel {
+                        crate::widgets::draw_bevel_parts(
+                            pen,
+                            &current,
+                            Some(icon),
+                            true,
+                            (disabled, pressed || open, false),
+                            theme,
+                        );
+                        0
+                    } else {
+                        draw_popup_button(pen, &current, disabled, pressed);
+                        3
+                    };
+                    if !disabled
+                        && !inactive
+                        && focus.is_focused(window)
+                        && window.last_input_was_keyboard()
+                    {
+                        crate::widgets::draw_focus_ring(pen, ring, accent.dark);
+                    }
+                },
+            ));
         if self.open {
-            let selected_top: i32 = self
-                .items
-                .iter()
-                .take(self.selected)
-                .map(|item| if item.separator { 8 } else { 18 })
-                .sum();
+            let selected_top: i32 = if bevel.is_some() {
+                -height
+            } else {
+                self.items
+                    .iter()
+                    .take(self.selected)
+                    .map(|item| if item.separator { 8 } else { 18 })
+                    .sum()
+            };
             let menu = div()
                 .id("menu")
                 .role(Role::Menu)

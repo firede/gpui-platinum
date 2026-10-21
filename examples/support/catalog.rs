@@ -36,6 +36,7 @@ const PAGES: &[&str] = &[
     "Table",
     "IconView",
     "Split, SplitVertical, ScrollView",
+    "SplitPercent, SplitVerticalPercent",
     "Calendar",
     "DatePicker, TimeField",
     "Combobox",
@@ -104,6 +105,8 @@ pub struct Controls {
     pagination: Entity<Pagination>,
     split: f32,
     split_vertical: f32,
+    split_percent: f32,
+    split_vertical_percent: f32,
     scroll_view: ScrollHandle,
     dock: Entity<PopupWindow>,
     dock_detached: Option<Entity<PlatinumWindow>>,
@@ -406,6 +409,8 @@ impl Controls {
             pagination: cx.new(|cx| Pagination::new(2, 5, cx)),
             split: 120.,
             split_vertical: 40.,
+            split_percent: 40.,
+            split_vertical_percent: 30.,
             scroll_view: ScrollHandle::new(),
             dock,
             dock_content,
@@ -1341,6 +1346,54 @@ impl Controls {
                         .on_change(move |position, _, cx| {
                             vertical.update(cx, |this, cx| {
                                 this.split_vertical = position;
+                                cx.notify();
+                            })
+                        }),
+                    )
+                    .into_any_element()
+            }
+            "SplitPercent, SplitVerticalPercent" => {
+                let language = self.language;
+                let pane = move |percent: f32| {
+                    div().p(px(6.)).child(text_in_language(
+                        format!("{percent:.0}%"),
+                        Font::Small,
+                        BLACK,
+                        language,
+                    ))
+                };
+                let entity = cx.entity();
+                let vertical = cx.entity();
+                column
+                    .child(
+                        Split::new(
+                            "split-percent",
+                            self.split_percent,
+                            pane(self.split_percent),
+                            pane(100. - self.split_percent),
+                        )
+                        .percent()
+                        .size(300, 100)
+                        .on_change(move |percent, _, cx| {
+                            entity.update(cx, |this, cx| {
+                                this.split_percent = percent;
+                                cx.notify();
+                            })
+                        }),
+                    )
+                    .child(
+                        Split::new(
+                            "split-vertical-percent",
+                            self.split_vertical_percent,
+                            pane(self.split_vertical_percent),
+                            pane(100. - self.split_vertical_percent),
+                        )
+                        .vertical()
+                        .percent()
+                        .size(300, 100)
+                        .on_change(move |percent, _, cx| {
+                            vertical.update(cx, |this, cx| {
+                                this.split_vertical_percent = percent;
                                 cx.notify();
                             })
                         }),

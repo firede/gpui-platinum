@@ -29,7 +29,7 @@ The crate is an early 0.x project. Its API may change, and it currently pins the
 | Alerts, dialogs, find and replace, page setup | `Alert`, `Dialog`, `FindReplace`, `PageSetup` |
 | Open and save dialogs for an application-owned tree | `OpenDialog`, `SaveDialog`, `models::FileTree` |
 | Progress dialogs and notifications | `ProgressDialog`, `Banner`, `Toasts` |
-| Navigation and document layout | `ColumnView`, `DocumentTabs`, `PathPopup`, `Breadcrumbs`, `Pagination`, `Ruler`, `Split`, `ScrollView` |
+| Navigation and document layout | `ColumnView`, `DocumentTabs`, `PathPopup`, `Breadcrumbs`, `Pagination`, `Ruler`, `Split` (pixels or `.percent()`), `ScrollView` |
 | Labels, groups, toolbar and status displays | `label`, `paragraph`, `group_box`, `separator`, `Toolbar`, `placard`, `window_header_parts`, `badge`, `tag`, `status_bar` |
 | Supporting displays | `Balloon`, `image_well`, `card`, `empty_state`, `chasing_arrows` |
 

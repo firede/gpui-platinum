@@ -471,7 +471,9 @@ The look has no hover state: nothing changes as the pointer passes over.
 - Split divider: **7** wide (or tall), face Gray2 between Black edges, a
   White line inside the first edge and a Gray7 one inside the second; a grip
   of five dots (Gray7 with White) 4 apart at its middle. Each pane keeps at
-  least **40**; the arrows move the divider by **8**.
+  least **40**; the arrows move the divider by **8**. A percent split gives
+  the first pane its percentage of the room beside the divider, so both
+  panes grow and shrink with the split.
 - Scroll view: the content frame (5.11), the content **6** in from the
   sides and **4** from the top, a scroll bar (5.12) at its right.
 - Utility window: a title bar **13** tall with four pairs of stripes from

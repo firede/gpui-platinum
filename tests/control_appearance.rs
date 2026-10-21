@@ -1,4 +1,6 @@
-use gpui_platinum::{Font, Theme, draw_bevel_content, draw_disclosure, paint::Pen};
+use gpui_platinum::{
+    Font, Theme, draw_bevel_content, draw_disclosure, draw_split_divider, paint::Pen, theme::*,
+};
 
 fn pixels(pen: &Pen) -> image::RgbaImage {
     let mut pixels = image::RgbaImage::from_pixel(
@@ -100,4 +102,20 @@ fn disclosure_states_match_the_original_pixels() {
         );
         assert_crop(&pen, &reference, 6 + 18 * index, 6);
     }
+}
+
+// A split 160×127 whose panes are stacked, shared at 30%: 30% of the 120
+// beside the divider is 36, under the pane's least, so the first is 40.
+#[test]
+fn a_percent_split_matches_the_original_pixels() {
+    let reference = image::load_from_memory(include_bytes!("reference/split-percent.png"))
+        .unwrap()
+        .to_rgba8();
+    let mut pen = Pen::new(180, 147);
+    pen.text(10, 10 + Font::Small.ascent(), "30%", Font::Small, BLACK);
+    let mut divider = Pen::new(160, 7);
+    draw_split_divider(&mut divider, true);
+    pen.append(divider, 10, 50);
+    pen.text(10, 57 + Font::Small.ascent(), "70%", Font::Small, BLACK);
+    assert_eq!(pixels(&pen), reference);
 }

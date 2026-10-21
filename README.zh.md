@@ -29,7 +29,7 @@
 | 警告框、对话框、查找替换、页面设置 | `Alert`、`Dialog`、`FindReplace`、`PageSetup` |
 | 面向应用自有文件树的打开与保存对话框 | `OpenDialog`、`SaveDialog`、`models::FileTree` |
 | 进度对话框与通知 | `ProgressDialog`、`Banner`、`Toasts` |
-| 导航和文档布局 | `ColumnView`、`DocumentTabs`、`PathPopup`、`Breadcrumbs`、`Pagination`、`Ruler`、`Split`、`ScrollView` |
+| 导航和文档布局 | `ColumnView`、`DocumentTabs`、`PathPopup`、`Breadcrumbs`、`Pagination`、`Ruler`、`Split`（像素或 `.percent()`）、`ScrollView` |
 | 文字、分组、工具栏、状态显示 | `label`、`paragraph`、`group_box`、`separator`、`Toolbar`、`placard`、`window_header_parts`、`badge`、`tag`、`status_bar` |
 | 辅助显示 | `Balloon`、`image_well`、`card`、`empty_state`、`chasing_arrows` |
 

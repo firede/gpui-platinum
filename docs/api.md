@@ -158,7 +158,7 @@ Click selects one row; Shift extends a range; Command/Control toggles individual
 
 `IconItem::new(title, IconKind)` uses the bundled artwork. `.image(source)` or `IconItem::from_image` accepts a custom `ImageSource`, drawn in a 32-pixel square. `IconView` scrolls, selects and activates items; its events also support the desktop example's drag/drop behavior.
 
-`DocumentTabs` manages document selection and close events. `PathPopup`, `Breadcrumbs` and `Pagination` emit path/page changes. `Ruler` emits indentation changes; `Split` reports a divider position and `ScrollView` wraps GPUI scroll state.
+`DocumentTabs` manages document selection and close events. `PathPopup`, `Breadcrumbs` and `Pagination` emit path/page changes. `Ruler` emits indentation changes; `Split` reports a divider position: the first pane's width in pixels, or with `.percent()` the percentage of the room it takes, so that both panes grow and shrink with the split. A split too small for the first pane's width shrinks the pane, the second keeping its least, and leaves the width for when it grows again. `ScrollView` wraps GPUI scroll state.
 
 ## Menus, frames and dialogs
 
@@ -215,6 +215,7 @@ The original Go library binds values by pointer and reports changes when an imme
 | `Button`, `Checkbox`, `Disclosure` | `button`, `checkbox`, `disclosure` |
 | `RadioGroup`, `TabControl`, `Segmented` | `ChoiceGroup::radio`, `::tabs`, `::segments` |
 | `TextArea` | `TextField::multiline(true)` |
+| `SplitVertical`, `SplitPercent`, `SplitVerticalPercent` | `Split::vertical`, `::percent`, both |
 | `Calendar`, `Sheet` | `CalendarView`, `SheetView` |
 | `FormulaBar`, `FormatBar` | composed into `SheetView` and `RichTextArea` |
 | `Window` | `PlatinumWindow` |

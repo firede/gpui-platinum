@@ -15,6 +15,7 @@ struct Config {
     height: i32,
     minimum: f32,
     vertical: bool,
+    percent: bool,
     theme: Theme,
     language: Language,
     on_change: Option<ChangeHandler>,
@@ -35,6 +36,41 @@ impl Config {
     }
     fn clamp(&self, position: f32) -> f32 {
         position.clamp(self.minimum(), self.maximum())
+    }
+    /// The room the panes share beside the divider.
+    fn room(&self) -> f32 {
+        self.length() - 7.
+    }
+    /// The first pane's length as laid out: the divider moves from here, not
+    /// from a position the split is too small to show.
+    fn shown(&self) -> f32 {
+        if self.percent {
+            self.clamp(self.position.clamp(0., 100.) / 100. * self.room())
+        } else {
+            self.clamp(self.position)
+        }
+    }
+    /// The position to report for a first pane `length` long, if it moves.
+    fn report(&self, length: f32) -> Option<f32> {
+        let length = self.clamp(if self.percent { length } else { length.round() });
+        if length == self.shown() || (self.percent && self.room() <= 0.) {
+            return None;
+        }
+        Some(if self.percent {
+            length * 100. / self.room()
+        } else {
+            length
+        })
+    }
+    /// The first pane's length an arrow, Home or End asks for.
+    fn key(&self, key: &str) -> Option<f32> {
+        match (self.vertical, key) {
+            (false, "left") | (true, "up") => Some(self.shown() - 8.),
+            (false, "right") | (true, "down") => Some(self.shown() + 8.),
+            (_, "home") => Some(self.minimum()),
+            (_, "end") => Some(self.maximum()),
+            _ => None,
+        }
     }
     fn dimensions(&self) -> (i32, i32) {
         if self.vertical {
@@ -70,6 +106,7 @@ impl Split {
                 height: 160,
                 minimum: 40.,
                 vertical: false,
+                percent: false,
                 theme: Theme::default(),
                 language: Language::English,
                 on_change: None,
@@ -83,6 +120,13 @@ impl Split {
     }
     pub fn vertical(mut self) -> Self {
         self.config.vertical = true;
+        self
+    }
+    /// Treats the position as the percentage of the room the first pane
+    /// takes, from 0 to 100, so that both panes grow and shrink with the
+    /// split; drags and the arrows report a percentage too.
+    pub fn percent(mut self) -> Self {
+        self.config.percent = true;
         self
     }
     pub fn minimum(mut self, minimum: f32) -> Self {
@@ -103,9 +147,8 @@ impl Split {
     }
 }
 impl RenderOnce for Split {
-    fn render(mut self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        self.config.position = self.config.clamp(self.config.position);
-        let position = self.config.position;
+    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+        let position = self.config.shown();
         let first = div()
             .flex_shrink_0()
             .overflow_hidden()
@@ -213,7 +256,7 @@ impl Element for Divider {
             .id("split-input")
             .role(Role::Splitter)
             .aria_label(crate::tr(config.language, "divider"))
-            .aria_numeric_value(config.position as f64)
+            .aria_numeric_value(config.shown() as f64)
             .aria_min_numeric_value(config.minimum() as f64)
             .aria_max_numeric_value(config.maximum() as f64)
             .aria_numeric_value_step(8.)
@@ -235,23 +278,13 @@ impl Element for Divider {
                 } else {
                     event.position.x
                 });
-                state.start_position = state.config.position;
+                state.start_position = state.config.shown();
                 cx.stop_propagation();
             })
             .on_key_down(move |event, window, cx| {
-                let next = {
-                    let state = keyboard.borrow();
-                    let key = event.keystroke.key.as_str();
-                    match (state.config.vertical, key) {
-                        (false, "left") | (true, "up") => Some(state.config.position - 8.),
-                        (false, "right") | (true, "down") => Some(state.config.position + 8.),
-                        (_, "home") => Some(state.config.minimum()),
-                        (_, "end") => Some(state.config.maximum()),
-                        _ => None,
-                    }
-                };
-                if let Some(position) = next {
-                    change(&keyboard, position, window, cx);
+                let next = keyboard.borrow().config.key(&event.keystroke.key);
+                if let Some(length) = next {
+                    change(&keyboard, length, window, cx);
                     cx.stop_propagation();
                 }
             })
@@ -282,26 +315,7 @@ impl Element for Divider {
             let state = prepaint.state.borrow();
             let (width, height) = state.config.dimensions();
             let mut pen = Pen::new(width, height);
-            pen.rect(0, 0, width, height, GRAY_2);
-            if state.config.vertical {
-                pen.hline(0, 0, width, BLACK);
-                pen.hline(0, 1, width, WHITE);
-                pen.hline(0, 5, width, GRAY_7);
-                pen.hline(0, 6, width, BLACK);
-                for i in -2..=2 {
-                    pen.dot(width / 2 + i * 4, 2, GRAY_7);
-                    pen.dot(width / 2 + i * 4 + 1, 3, WHITE);
-                }
-            } else {
-                pen.vline(0, 0, height, BLACK);
-                pen.vline(1, 0, height, WHITE);
-                pen.vline(5, 0, height, GRAY_7);
-                pen.vline(6, 0, height, BLACK);
-                for i in -2..=2 {
-                    pen.dot(2, height / 2 + i * 4, GRAY_7);
-                    pen.dot(3, height / 2 + i * 4 + 1, WHITE);
-                }
-            }
+            draw_split_divider(&mut pen, state.config.vertical);
             if state.focus.is_focused(window) && window.last_input_was_keyboard() {
                 pen.frame(0, 0, width, height, state.config.theme.accent.dark);
             }
@@ -344,13 +358,12 @@ impl Element for Divider {
         });
     }
 }
-fn change(state: &SharedState, position: f32, window: &mut Window, cx: &mut App) {
+fn change(state: &SharedState, length: f32, window: &mut Window, cx: &mut App) {
     let (position, callback) = {
         let mut state = state.borrow_mut();
-        let position = state.config.clamp(position.round());
-        if position == state.config.position {
+        let Some(position) = state.config.report(length) else {
             return;
-        }
+        };
         state.config.position = position;
         (position, state.config.on_change.clone())
     };
@@ -360,23 +373,80 @@ fn change(state: &SharedState, position: f32, window: &mut Window, cx: &mut App)
     window.refresh();
 }
 
+/// Draws a split's divider filling `pen`, a horizontal bar when `vertical`.
+pub fn draw_split_divider(pen: &mut Pen, vertical: bool) {
+    let (width, height) = (pen.width, pen.height);
+    pen.rect(0, 0, width, height, GRAY_2);
+    if vertical {
+        pen.hline(0, 0, width, BLACK);
+        pen.hline(0, 1, width, WHITE);
+        pen.hline(0, 5, width, GRAY_7);
+        pen.hline(0, 6, width, BLACK);
+        for i in -2..=2 {
+            pen.dot(width / 2 + i * 4, 2, GRAY_7);
+            pen.dot(width / 2 + i * 4 + 1, 3, WHITE);
+        }
+    } else {
+        pen.vline(0, 0, height, BLACK);
+        pen.vline(1, 0, height, WHITE);
+        pen.vline(5, 0, height, GRAY_7);
+        pen.vline(6, 0, height, BLACK);
+        for i in -2..=2 {
+            pen.dot(2, height / 2 + i * 4, GRAY_7);
+            pen.dot(3, height / 2 + i * 4 + 1, WHITE);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::Config;
     use crate::{Language, Theme};
-    #[test]
-    fn narrow_splits_keep_both_panes_nonnegative() {
-        let config = Config {
-            position: 100.,
-            width: 60,
+    fn config(position: f32, width: i32, percent: bool) -> Config {
+        Config {
+            position,
+            width,
             height: 120,
             minimum: 40.,
             vertical: false,
+            percent,
             theme: Theme::default(),
             language: Language::English,
             on_change: None,
-        };
+        }
+    }
+    #[test]
+    fn narrow_splits_keep_both_panes_nonnegative() {
+        let config = config(100., 60, false);
         assert_eq!(config.clamp(-20.), 26.5);
         assert_eq!(config.clamp(1000.), 26.5);
+    }
+    // A split too small for its first pane's width shrinks the pane, the
+    // second keeping its least, and keeps the width for when it grows again.
+    #[test]
+    fn small_splits_keep_the_first_panes_width() {
+        assert_eq!(config(150., 307, false).shown(), 150.);
+        let small = config(150., 157, false);
+        assert_eq!((small.shown(), small.position), (110., 150.));
+        assert_eq!(small.key("left"), Some(102.));
+        assert_eq!(small.report(102.), Some(102.));
+    }
+    // A percent split shares the room as it grows, and turns drags and
+    // keys into a percentage.
+    #[test]
+    fn percent_splits_share_the_room() {
+        assert_eq!(config(25., 207, true).shown(), 50.);
+        let mut split = config(25., 407, true);
+        assert_eq!(split.shown(), 100.);
+        split.position = split.report(split.shown() + 30.).unwrap();
+        assert_eq!((split.position, split.shown()), (32.5, 130.));
+        split.position = split.report(split.key("right").unwrap()).unwrap();
+        assert_eq!(split.position, 34.5);
+        assert_eq!(split.report(split.shown()), None);
+        split.position = 0.;
+        assert_eq!(split.shown(), 40.);
+        assert_eq!(split.report(split.key("end").unwrap()), Some(90.));
+        split.position = 250.;
+        assert_eq!(split.shown(), 360.);
     }
 }

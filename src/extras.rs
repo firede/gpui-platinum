@@ -228,39 +228,54 @@ impl RenderOnce for ScrollView {
                 window.refresh();
             }
         });
+        // The content frame round the content, 6 in from its sides and 4
+        // from its top, and the scroll bar on the frame's line at its right.
+        let width = self.width;
         div()
             .id(self.id)
-            .flex()
+            .relative()
             .flex_shrink_0()
-            .w(px(self.width as f32))
+            .w(px(width as f32))
             .h(px(height as f32))
-            .border_1()
-            .border_color(rgb(BLACK))
+            .child(crate::paint::drawing(
+                width as f32,
+                height as f32,
+                |pen, _, _| {
+                    let (width, height) = (pen.width, pen.height);
+                    pen.bevel(0, 0, width, height, GRAY_7, WHITE);
+                    pen.rect(2, 2, width - 4, height - 4, WHITE);
+                    pen.frame(1, 1, width - 2, height - 2, BLACK);
+                },
+            ))
             .child(
                 div()
                     .id("viewport")
-                    .flex_1()
-                    .min_w_0()
-                    .h_full()
+                    .absolute()
+                    .left(px(2.))
+                    .top(px(2.))
+                    .w(px((width - 2 - 1 - 16) as f32))
+                    .h(px((height - 4) as f32))
                     .overflow_x_hidden()
                     .overflow_y_scroll()
                     .track_scroll(&self.handle)
                     .on_scroll_wheel(|_, window, _| window.refresh())
-                    .child(self.content),
+                    .child(div().px(px(6.)).py(px(4.)).child(self.content)),
             )
             .child(
-                ScrollBar::new(
-                    "scroll",
-                    position as f64,
-                    (height - 2) as f64,
-                    (extent + height as f32 - 2.) as f64,
-                )
-                .length(height - 2)
-                .theme(self.theme)
-                .on_change(move |position, window, _| {
-                    handle.set_offset(point(px(0.), px(-position as f32)));
-                    window.refresh();
-                }),
+                div().absolute().right(px(1.)).top(px(1.)).child(
+                    ScrollBar::new(
+                        "scroll",
+                        position as f64,
+                        (height - 4) as f64,
+                        (extent + height as f32 - 4.) as f64,
+                    )
+                    .length(height - 2)
+                    .theme(self.theme)
+                    .on_change(move |position, window, _| {
+                        handle.set_offset(point(px(0.), px(-position as f32)));
+                        window.refresh();
+                    }),
+                ),
             )
     }
 }

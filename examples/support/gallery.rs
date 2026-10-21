@@ -1000,9 +1000,11 @@ impl Gallery {
         let scroll = ScrollView::new(
             "planet-scroll",
             &self.scroll_view,
-            column_full().children(PLANETS.iter().enumerate().map(|(index, (name, _, _))| {
-                text_in(format!("{}. {name}", index + 1), Font::Small, BLACK)
-            })),
+            column_full()
+                .gap(px(2.))
+                .children(PLANETS.iter().enumerate().map(|(index, (name, _, _))| {
+                    text_in(format!("{}. {name}", index + 1), Font::Small, BLACK)
+                })),
         )
         .size(144, 140)
         .theme(self.theme);

@@ -1306,14 +1306,18 @@ impl Controls {
             "Split, SplitVertical, ScrollView" => {
                 let entity = cx.entity();
                 let vertical = cx.entity();
-                let lines = div().flex().flex_col().children((1..=12).map(|i| {
-                    text_in_language(
-                        format!("{i}. {}", self.say("catText")),
-                        Font::Small,
-                        BLACK,
-                        self.language,
-                    )
-                }));
+                let lines = div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .children((1..=12).map(|i| {
+                        text_in_language(
+                            format!("{i}. {}", self.say("catText")),
+                            Font::Small,
+                            BLACK,
+                            self.language,
+                        )
+                    }));
                 column
                     .child(
                         Split::new(

@@ -8,8 +8,9 @@ use gpui::{
     div, point, prelude::*, px, rgb,
 };
 use gpui_platinum::{
-    Breadcrumbs, ColumnView, Font, ListBox, Pagination, PathPopup, RichTextArea, Ruler, RulerState,
-    ScrollView, SheetView, Split, Table, TableColumn, TextField, Theme, TreeView, draw_list_box,
+    Breadcrumbs, ColumnView, DocumentTabs, Font, ListBox, Pagination, PathPopup, RichTextArea,
+    Ruler, RulerState, ScrollView, SheetView, Split, Table, TableColumn, TextField, Theme,
+    TreeView, draw_list_box,
     models::{Cell, FileTree, NodeKind, Sheet, TreeNode},
     paint::{Pen, drawing},
     theme::{BLACK, GRAY_2},
@@ -538,6 +539,25 @@ pub fn scenes() -> Vec<Scene> {
             keys(app, window, "right right");
         }),
     );
+
+    // Notes chosen of three documents, its pane showing its text.
+    scenes.push(Scene::new("document-tabs", 340., 120., |_, cx| {
+        let tabs = cx.new(|cx| {
+            let docs = ["Letter", "Notes", "Budget"];
+            DocumentTabs::new(docs.map(String::from).into(), cx)
+                .size(320, 90)
+                .selected(1)
+                .content(move |index, _, _| {
+                    gpui_platinum::text_in(
+                        format!("The text of {}", docs[index]),
+                        Font::Small,
+                        BLACK,
+                    )
+                    .into_any_element()
+                })
+        });
+        Host(tabs.into(), 10., false)
+    }));
 
     // Panes stacked, the first 40 tall.
     scenes.push(Scene::new("split-vertical", 180., 140., |_, _| {

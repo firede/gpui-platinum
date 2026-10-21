@@ -10,7 +10,7 @@
 
 这是 [mygo-platinum](https://github.com/firede/mygo-platinum) 的 GPUI 版本，沿用原项目的视觉语言、字体和原创图像，并以 GPUI 的元素、实体和事件构建 Rust API。它仅在风格上致敬经典桌面，与 Apple Inc. 没有任何关联。
 
-项目处于早期 0.x 阶段，API 可能变化。目前依赖固定到 `longbridge/gpui-fast` 的 `9690cf8` 修订版；应用中的 GPUI 依赖应使用同一修订版。本仓库的检查和截图不代表已经验证 GPUI 支持的所有平台。
+项目处于早期 0.x 阶段，API 可能变化。目前依赖固定到 `longbridge/gpui-fast` 的 `b836dd9` 修订版；应用中的 GPUI 依赖应使用同一修订版。本仓库的检查和截图不代表已经验证 GPUI 支持的所有平台。
 
 ## 包含哪些控件
 
@@ -44,8 +44,8 @@
 ```toml
 [dependencies]
 gpui-platinum = { path = "../gpui-platinum" }
-gpui = { git = "https://github.com/longbridge/gpui-fast", rev = "9690cf8" }
-gpui_platform = { git = "https://github.com/longbridge/gpui-fast", rev = "9690cf8", features = ["font-kit", "runtime_shaders", "wayland", "x11"] }
+gpui = { git = "https://github.com/longbridge/gpui-fast", rev = "b836dd9" }
+gpui_platform = { git = "https://github.com/longbridge/gpui-fast", rev = "b836dd9", features = ["font-kit", "runtime_shaders", "wayland", "x11"] }
 ```
 
 在打开第一个窗口前，调用一次 `gpui_platinum::init(cx)`，注册原生文本编辑、字体回退和模态对话框的键盘绑定。通过 `cx.new` 创建有状态控件，保存实体并订阅事件；轻量控件在 `Render::render` 中由应用状态构建：

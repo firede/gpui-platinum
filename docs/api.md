@@ -4,7 +4,7 @@
 
 `gpui-platinum` is a Rust component library built on GPUI. Its public crate name is `gpui_platinum`. The component library lives in `src`; the desktop applications live in `examples/support`.
 
-The crate currently uses the `longbridge/gpui-fast` fork at revision `9690cf8`. An application must use that same GPUI revision: types from a different GPUI package are not interchangeable. Generate the source reference with `cargo doc --no-deps --open`.
+The crate currently uses the `longbridge/gpui-fast` fork at revision `b836dd9`. An application must use that same GPUI revision: types from a different GPUI package are not interchangeable. Generate the source reference with `cargo doc --no-deps --open`.
 
 ## Application setup
 

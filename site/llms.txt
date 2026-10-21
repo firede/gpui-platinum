@@ -3,7 +3,7 @@
 > Native Rust components for GPUI in the gray, beveled Platinum desktop style, with bitmap type, a control gallery and a classic desktop example. This is a static introduction and screenshot gallery; it does not run the Rust desktop in a browser.
 
 - Crate: gpui-platinum; Rust import: gpui_platinum
-- GPUI: longbridge/gpui-fast, pinned revision 9690cf8; application dependencies must use the same revision
+- GPUI: longbridge/gpui-fast, pinned revision b836dd9; application dependencies must use the same revision
 - Rust edition: 2024
 - Initialization: gpui_platinum::init(cx), before the first window
 - Component patterns: lightweight elements with stable IDs and callbacks; retained GPUI entities with typed events

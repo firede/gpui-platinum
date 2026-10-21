@@ -9,14 +9,14 @@ keywords = ["gpui", "gui", "widgets", "platinum", "desktop"]
 categories = ["gui"]
 
 [dependencies]
-gpui = { git = "https://github.com/longbridge/gpui-fast", rev = "9690cf8" }
-gpui_platform = { git = "https://github.com/longbridge/gpui-fast", rev = "9690cf8", features = ["font-kit", "runtime_shaders", "wayland", "x11"] }
+gpui = { git = "https://github.com/longbridge/gpui-fast", rev = "b836dd9" }
+gpui_platform = { git = "https://github.com/longbridge/gpui-fast", rev = "b836dd9", features = ["font-kit", "runtime_shaders", "wayland", "x11"] }
 unicode-segmentation = "1.12"
 serde_json = "1"
 
 [dev-dependencies]
-gpui = { git = "https://github.com/longbridge/gpui-fast", rev = "9690cf8", features = ["test-support"] }
-gpui_platform = { git = "https://github.com/longbridge/gpui-fast", rev = "9690cf8", features = ["test-support", "font-kit", "runtime_shaders", "wayland", "x11"] }
+gpui = { git = "https://github.com/longbridge/gpui-fast", rev = "b836dd9", features = ["test-support", "leak-detection"] }
+gpui_platform = { git = "https://github.com/longbridge/gpui-fast", rev = "b836dd9", features = ["test-support", "font-kit", "runtime_shaders", "wayland", "x11"] }
 chrono = "0.4"
 image = { version = "0.25", default-features = false, features = ["png"] }
 

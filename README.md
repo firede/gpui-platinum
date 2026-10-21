@@ -10,7 +10,7 @@ More: [page 2](docs/gallery-2@2x.png) (buttons, fields and rich text), [page 3](
 
 This is the GPUI counterpart of [mygo-platinum](https://github.com/firede/mygo-platinum). It carries over that project's visual language, fonts and original artwork, with Rust APIs built around GPUI elements, entities and events. It is a tribute in style only, with no affiliation with Apple Inc.
 
-The crate is an early 0.x project. Its API may change, and it currently pins the `longbridge/gpui-fast` fork to revision `9690cf8`. Keep the GPUI dependencies of your application on that same revision. This repository's verification and screenshots do not establish support for every platform supported by GPUI.
+The crate is an early 0.x project. Its API may change, and it currently pins the `longbridge/gpui-fast` fork to revision `b836dd9`. Keep the GPUI dependencies of your application on that same revision. This repository's verification and screenshots do not establish support for every platform supported by GPUI.
 
 ## What is in it
 
@@ -44,8 +44,8 @@ For an application checked out beside this repository:
 ```toml
 [dependencies]
 gpui-platinum = { path = "../gpui-platinum" }
-gpui = { git = "https://github.com/longbridge/gpui-fast", rev = "9690cf8" }
-gpui_platform = { git = "https://github.com/longbridge/gpui-fast", rev = "9690cf8", features = ["font-kit", "runtime_shaders", "wayland", "x11"] }
+gpui = { git = "https://github.com/longbridge/gpui-fast", rev = "b836dd9" }
+gpui_platform = { git = "https://github.com/longbridge/gpui-fast", rev = "b836dd9", features = ["font-kit", "runtime_shaders", "wayland", "x11"] }
 ```
 
 Call `gpui_platinum::init(cx)` once, before opening the first window. It registers native text editing, font fallback and modal keyboard bindings. Construct stateful controls with `cx.new`, retain their entities and subscribe to their events. Rebuild lightweight controls from application state in `Render::render`:

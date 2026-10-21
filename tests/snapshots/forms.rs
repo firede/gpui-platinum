@@ -415,7 +415,9 @@ fn colorpicker() -> Scene {
     })
     .prepare(|app, window| {
         click(app, window, 32., 21.);
-        keys(app, window, &["down", "down"]);
+        // The dialog, 300 wide, centered a fifth of the way down; its
+        // palette 20 in from its side and 31 down, the swatch 2 + 2 × 14.
+        click(app, window, 20. + 20. + 2. + 7., 60. + 31. + 30. + 7.);
     })
 }
 
@@ -446,6 +448,9 @@ fn pagesetup() -> Scene {
         page.update(cx, |page, cx| page.show(window, cx));
         Stack::column(10., 0., vec![picker.into(), page.into()])
     })
+    // The picker's list boxes are not yet drawn as the original's: their
+    // frame and rows wait on the list boxes' own work.
+    .pending()
 }
 
 /// The picker once Bold is checked, the page setup closed.
@@ -454,4 +459,6 @@ fn fontpicker() -> Scene {
         let picker = font_picker(cx, true);
         Stack::column(10., 0., vec![picker.into()])
     })
+    // As the page setup's: its list boxes.
+    .pending()
 }

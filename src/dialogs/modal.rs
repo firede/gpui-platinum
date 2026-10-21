@@ -18,7 +18,7 @@ pub fn init(cx: &mut App) {
     ]);
 }
 
-pub(super) struct ModalState {
+pub(crate) struct ModalState {
     pub open: bool,
     pub width: f32,
     pub position: Point<Pixels>,
@@ -98,7 +98,7 @@ pub(super) fn cycle_index(count: usize, current: Option<usize>, backwards: bool)
     })
 }
 
-pub(super) struct ModalView {
+pub(crate) struct ModalView {
     title: SharedString,
     movable: bool,
     content: AnyElement,
@@ -114,7 +114,7 @@ impl ModalView {
     }
 }
 
-pub(super) fn modal<T: Render + 'static>(
+pub(crate) fn modal<T: Render + 'static>(
     modal_state: &mut ModalState,
     view: ModalView,
     window: &mut Window,

@@ -64,7 +64,7 @@ impl FontPicker {
                 .size(76, 70)
                 .selected(2)
         });
-        let size_field = cx.new(|cx| NumberField::new(12., 4., 288., 1., cx).width(76).digits(0));
+        let size_field = cx.new(|cx| NumberField::new(12., 4., 288., 1., cx).digits(0));
         let family_subscription = cx.subscribe(&family_list, |this, _, event, cx| {
             if let ListEvent::Selected(index) = event {
                 let Some(family) = this.families.get(*index) else {

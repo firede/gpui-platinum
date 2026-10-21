@@ -2,10 +2,10 @@
 
 use crate::Scene;
 use gpui::{
-    AnyElement, AnyView, AnyWindowHandle, App, AppContext as _, Context, Entity, FocusHandle,
-    Focusable, HeadlessAppContext, IntoElement, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, PlatformInput,
-    Render, Styled, Window, div, point, px, rgb,
+    AnyElement, AnyView, AnyWindowHandle, App, AppContext as _, Bounds, Context, Entity, Focusable,
+    HeadlessAppContext, IntoElement, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, PlatformInput, Render,
+    Styled, Window, canvas, div, point, px, rgb,
 };
 use gpui_platinum::{
     CheckState, Slider, Theme,
@@ -14,6 +14,8 @@ use gpui_platinum::{
     theme::*,
     *,
 };
+
+use std::{cell::RefCell, rc::Rc};
 
 type Cell = Box<dyn Fn(&mut Pen)>;
 
@@ -71,8 +73,10 @@ impl<T: 'static> Render for Held<T> {
     }
 }
 
+type Build = Box<dyn Fn(&mut Window, &mut App) -> AnyElement>;
+
 /// Elements built anew each frame, without a background: a window's content.
-struct Piece(Box<dyn Fn(&mut Window, &mut App) -> AnyElement>);
+struct Piece(Build);
 
 impl Render for Piece {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -155,14 +159,6 @@ fn key(app: &mut HeadlessAppContext, window: AnyWindowHandle, keystroke: &str) {
         }),
     );
     send(app, window, PlatformInput::KeyUp(KeyUpEvent { keystroke }));
-}
-
-/// Focuses `handle` from the keyboard, so that it shows its focus ring.
-fn focus(app: &mut HeadlessAppContext, window: AnyWindowHandle, handle: FocusHandle) {
-    app.update_window(window, |_, window, cx| window.focus(&handle, cx))
-        .unwrap();
-    // A key nothing handles, to make the last input the keyboard's.
-    key(app, window, "f19");
 }
 
 fn hover(app: &mut HeadlessAppContext, window: AnyWindowHandle, x: f32, y: f32) {
@@ -772,6 +768,111 @@ fn languages(name: &'static str, language: Language) -> Scene {
     })
 }
 
+/// A control of each kind in a window in the background, beside a small
+/// window in front.
+fn inactive_window() -> Scene {
+    Scene::new("inactive-window", 580., 240., |_, cx| {
+        let text = cx.new(|cx| TextField::new(cx).with_text("Text").size(110., 22.));
+        let stepper = cx.new(|cx| Stepper::new(cx).label("Count"));
+        let list = cx.new(|cx| {
+            ListBox::new(["A", "B", "C", "D", "E", "F"], cx)
+                .size(110, 52)
+                .selected(1)
+        });
+        // As wide as the original's fits its items: 9 before the text, 8
+        // after it, and the arrow's 18.
+        let text_width = Font::Bold.measure("One").max(Font::Bold.measure("Two"));
+        let menu = cx.new(|cx| {
+            PopupMenu::new(["One", "Two"], cx)
+                .selected(1)
+                .width(9 + text_width + 8 + 18)
+        });
+        let table = cx.new(|cx| {
+            let mut table = Table::with_columns(
+                vec![
+                    TableColumn::new("Name").width(60),
+                    TableColumn::new("Size").width(40),
+                ],
+                vec![
+                    vec!["Letter".into(), "2 K".into()],
+                    vec!["Recipes".into(), "4 K".into()],
+                ],
+                cx,
+            )
+            .size(110, 60);
+            table.sort_by(0, false, cx);
+            table
+        });
+        let content = piece(cx, move |_, _| {
+            let column = || div().flex().flex_col().items_start().gap(px(6.));
+            div()
+                .flex()
+                .items_start()
+                .p(px(8.))
+                .gap(px(10.))
+                .child(
+                    column()
+                        .child(button("button", "Button"))
+                        .child(button("default", "Default").default_button())
+                        .child(checkbox("check", "Check", CheckState::On))
+                        .child(radio("radio", "Radio", true))
+                        .child(disclosure("more", "More", false))
+                        .child(
+                            Slider::new("slider", 40., 0., 100.)
+                                .width(120)
+                                .label("Slider"),
+                        )
+                        .child(menu.clone()),
+                )
+                .child(
+                    column()
+                        .child(text.clone())
+                        .child(bevel_button("bevel", "Bevel").selected(true))
+                        .child(stepper.clone())
+                        .child(list.clone())
+                        .child(
+                            div()
+                                .flex()
+                                .gap(px(4.))
+                                .child(ScrollBar::new("bar", 0., 10., 40.).length(44)),
+                        ),
+                )
+                .child(
+                    column()
+                        .child(
+                            group_box("Group", Font::Bold.measure("Inside") + 24)
+                                .child(label("Inside")),
+                        )
+                        .child(table.clone()),
+                )
+        });
+        let back = cx.new(|cx| {
+            PlatinumWindow::new("In the background", cx)
+                .position(10., 10.)
+                .size(430., 220.)
+                .active(false)
+                .content(content)
+        });
+        let front = cx.new(|cx| {
+            PlatinumWindow::new("In front", cx)
+                .position(450., 10.)
+                .size(120., 60.)
+        });
+        Held::new((back, front), |(back, front), _, _| {
+            div()
+                .relative()
+                .size_full()
+                .child(back.clone())
+                .child(front.clone())
+        })
+    })
+    // Everything but the list box and the table matches. In the background
+    // the original's list box keeps black items on a gray4 selection with an
+    // empty gray track, and its table draws its rows a pixel higher with a
+    // divider after the last column; both live in the list and table code.
+    .pending()
+}
+
 fn windows() -> Vec<Scene> {
     vec![
         popup_windows("popup-window", true, 230),
@@ -998,5 +1099,180 @@ pub fn scenes() -> Vec<Scene> {
     scenes.push(languages("languages-zh-hans", Language::SimplifiedChinese).pending());
     scenes.push(languages("languages-ja", Language::Japanese).pending());
     scenes.extend(windows());
+    scenes.push(inactive_window());
+    // Pending on the list box alone: focused, the original's wears the
+    // two-pixel focus ring outside its frame, where ours draws one line.
+    scenes.push(focus_states().pending());
     scenes
+}
+
+/// Where each measured control was laid out in the last frame.
+type Places = Rc<RefCell<Vec<Bounds<Pixels>>>>;
+
+/// `child`, with its bounds kept in `places[index]` as it is laid out.
+fn measured(places: &Places, index: usize, child: impl IntoElement) -> impl IntoElement {
+    let places = places.clone();
+    div().relative().child(child).child(
+        canvas(
+            move |bounds, _, _| places.borrow_mut()[index] = bounds,
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full(),
+    )
+}
+
+/// One run of a row of the montage: x, y, width and color.
+type Run = (i32, i32, i32, u32);
+
+/// The original's focus montage: Tab moves the focus through one control of
+/// each kind, and each step's focused control, 5 pixels around, takes the
+/// next 150×64 cell. The scene's window draws the column scrolled to each
+/// control in turn, keeps what it shows, and at last draws the montage.
+fn focus_states() -> Scene {
+    const COUNT: usize = 12;
+    const CELL: (i32, i32) = (150, 64);
+    let places: Places = Rc::new(RefCell::new(vec![Bounds::default(); COUNT]));
+    let scroll = Rc::new(std::cell::Cell::new(0.));
+    let montage: Rc<RefCell<Option<Vec<Run>>>> = Rc::new(RefCell::new(None));
+    let scene = {
+        let (places, scroll, montage) = (places.clone(), scroll.clone(), montage.clone());
+        Scene::new("focus-states", 600., 192., move |_, cx| {
+            // The original's field keeps its caret where a new one starts.
+            let field = cx.new(|cx| {
+                let mut field = TextField::new(cx).with_text("Name").size(100., 22.);
+                field.select(0, 0, cx);
+                field
+            });
+            let list = cx.new(|cx| ListBox::new(["One", "Two"], cx).size(90, 38).selected(1));
+            let text_width = Font::Bold.measure("Name").max(Font::Bold.measure("Date"));
+            let menu = cx.new(|cx| {
+                PopupMenu::new(["Name", "Date"], cx)
+                    .selected(0)
+                    .label("Sort")
+                    .width(9 + text_width + 8 + 18)
+            });
+            let stepper = cx.new(|cx| Stepper::new(cx).label("Count"));
+            Held::new(
+                (field, list, menu, stepper),
+                move |(field, list, menu, stepper), _, _| {
+                    if let Some(runs) = montage.borrow().clone() {
+                        return div()
+                            .child(drawing(600., 192., move |pen, _, _| {
+                                for &(x, y, width, color) in &runs {
+                                    pen.hline(x, y, width, color);
+                                }
+                            }))
+                            .into_any_element();
+                    }
+                    let controls: [AnyElement; COUNT] = [
+                        button("button", "Button").into_any_element(),
+                        checkbox("check", "Check", CheckState::On).into_any_element(),
+                        ChoiceGroup::radio("radio", 0, ["Radio"]).into_any_element(),
+                        Slider::new("volume", 40., 0., 100.)
+                            .width(120)
+                            .label("Volume")
+                            .into_any_element(),
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            // The original's label, its capitals centered on
+                            // the button's 20 pixels.
+                            .child(drawing(
+                                Font::Bold.measure("Sort") as f32,
+                                20.,
+                                |pen, _, _| {
+                                    let cap = Font::Bold.cap_height();
+                                    pen.text(0, (20 - cap) / 2 + cap, "Sort", Font::Bold, BLACK);
+                                },
+                            ))
+                            .child(menu.clone())
+                            .into_any_element(),
+                        disclosure("more", "More", false).into_any_element(),
+                        field.clone().into_any_element(),
+                        list.clone().into_any_element(),
+                        tab_control("tabs", 0, &["Tabs", "Two"], (130, 50), div())
+                            .into_any_element(),
+                        bevel_button("bevel", "Bevel").into_any_element(),
+                        ChoiceGroup::segments("seg", 0, ["Seg", "Two"]).into_any_element(),
+                        stepper.clone().into_any_element(),
+                    ];
+                    div()
+                        .absolute()
+                        .top(px(-scroll.get()))
+                        .left_0()
+                        .flex()
+                        .flex_col()
+                        .items_start()
+                        .p(px(10.))
+                        .gap(px(10.))
+                        .children(
+                            controls
+                                .into_iter()
+                                .enumerate()
+                                .map(|(index, control)| measured(&places, index, control)),
+                        )
+                        .into_any_element()
+                },
+            )
+        })
+    };
+    scene.prepare(move |app, window| {
+        let mut picture = image::RgbaImage::from_pixel(
+            4 * CELL.0 as u32,
+            3 * CELL.1 as u32,
+            image::Rgba([0xdd, 0xdd, 0xdd, 255]),
+        );
+        for index in 0..COUNT {
+            app.update_window(window, |_, window, cx| window.focus_next(cx))
+                .unwrap();
+            key(app, window, "f19");
+            // Scroll the column so that the control is 5 from the top.
+            let place = places.borrow()[index];
+            let top = f32::from(place.origin.y) + scroll.get();
+            scroll.set((top - 5.).max(0.));
+            app.update_window(window, |_, window, cx| {
+                window.refresh();
+                let _ = window.draw(cx);
+            })
+            .unwrap();
+            let place = places.borrow()[index];
+            let shot = app.capture_screenshot(window).unwrap();
+            let scale = shot.width() / 600;
+            let (x, y) = (
+                f32::from(place.origin.x) as i32 - 5,
+                f32::from(place.origin.y) as i32 - 5,
+            );
+            let width = (f32::from(place.size.width) as i32 + 10).min(CELL.0);
+            let height = (f32::from(place.size.height) as i32 + 10).min(CELL.1);
+            let (cell_x, cell_y) = (index as i32 % 4 * CELL.0, index as i32 / 4 * CELL.1);
+            for row in 0..height {
+                for column in 0..width {
+                    let mut pixel =
+                        *shot.get_pixel(((x + column) as u32) * scale, ((y + row) as u32) * scale);
+                    pixel[3] = 255;
+                    picture.put_pixel((cell_x + column) as u32, (cell_y + row) as u32, pixel);
+                }
+            }
+        }
+        let mut runs = Vec::new();
+        for (y, row) in picture.rows().enumerate() {
+            let mut start = 0;
+            let colors: Vec<u32> = row
+                .map(|pixel| u32::from_be_bytes([0, pixel[0], pixel[1], pixel[2]]))
+                .collect();
+            for x in 1..=colors.len() {
+                if x == colors.len() || colors[x] != colors[start] {
+                    runs.push((start as i32, y as i32, (x - start) as i32, colors[start]));
+                    start = x;
+                }
+            }
+        }
+        *montage.borrow_mut() = Some(runs);
+        app.update_window(window, |_, window, _| window.refresh())
+            .unwrap();
+    })
 }

@@ -1,13 +1,15 @@
 //! What the controls do over time — flashes, blinks, repeats and how long
-//! typing waits — by the test executor's clock, which only the test moves.
+//! a click or typing waits — by the test executor's clock, which only the
+//! test moves.
 
 use gpui::{
     AnyElement, Context, Entity, FocusHandle, Focusable, Modifiers, MouseButton, Subscription,
     TestAppContext, VisualTestContext, Window, div, point, prelude::*, px,
 };
 use gpui_platinum::{
-    ListBox, PopupWindow, Step, Stepper, TextField, Theme, button, button_scope, chasing_arrows,
-    indeterminate_progress,
+    ListBox, MENU_FLASH, Menu, MenuBar, MenuChoice, MenuItem, PopupMenu, PopupWindow, Step,
+    Stepper, TextField, Theme, button, button_scope, chasing_arrows, indeterminate_progress,
+    window::{PlatinumWindow, WindowEvent},
 };
 use std::time::Duration;
 
@@ -279,4 +281,167 @@ fn stepper_repeats_while_held(cx: &mut TestAppContext) {
     advance(cx, 1000);
     let value = cx.read_entity(&view, |view, _| view.value);
     assert_eq!(value, 5, "the arrow repeated after it was let go");
+}
+
+/// Presses and lets go at x, y.
+fn click(cx: &mut VisualTestContext, x: f32, y: f32, modifiers: Modifiers) {
+    cx.simulate_mouse_down(point(px(x), px(y)), MouseButton::Left, modifiers);
+    cx.simulate_mouse_up(point(px(x), px(y)), MouseButton::Left, modifiers);
+}
+
+/// Moves the clock on by a duration and draws what it changed.
+fn advance_by(cx: &mut VisualTestContext, duration: Duration) {
+    cx.executor().advance_clock(duration);
+    cx.run_until_parked();
+}
+
+struct Bar {
+    menu: Entity<MenuBar>,
+    chosen: Vec<MenuChoice>,
+    _choices: Subscription,
+}
+
+impl Render for Bar {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().size_full().child(self.menu.clone())
+    }
+}
+
+/// A chosen menu item blinks for 150 ms, the menu open, before its choice
+/// goes out and the menu closes.
+#[gpui::test]
+fn menu_flashes_before_its_action(cx: &mut TestAppContext) {
+    let (view, cx) = cx.add_window_view(|_, cx| {
+        let items = vec![
+            MenuItem::new("New"),
+            MenuItem::new("Open…"),
+            MenuItem::separator(),
+            MenuItem::new("Save"),
+        ];
+        let menu = cx.new(|cx| MenuBar::new(vec![Menu::new("File", items)], cx));
+        let choices = cx.subscribe(&menu, |this: &mut Bar, _, choice: &MenuChoice, _| {
+            this.chosen.push(choice.clone())
+        });
+        Bar {
+            menu,
+            chosen: Vec::new(),
+            _choices: choices,
+        }
+    });
+    let menu = cx.read_entity(&view, |view, _| view.menu.clone());
+    let chosen = |cx: &mut VisualTestContext| cx.read_entity(&view, |view, _| view.chosen.clone());
+    // A click on the title leaves the menu open; New is its first item,
+    // under the bar.
+    click(cx, 20., 10., Modifiers::none());
+    click(cx, 25., 30., Modifiers::none());
+    let before = frame(cx);
+    assert!(
+        chosen(cx).is_empty(),
+        "the choice went out before the blink"
+    );
+    advance_by(cx, MENU_FLASH / 4);
+    assert_ne!(frame(cx), before, "the item did not blink");
+    assert!(
+        menu.read_with(cx, |menu, _| menu.is_open()) && chosen(cx).is_empty(),
+        "the menu closed while the item blinked"
+    );
+    advance_by(cx, MENU_FLASH);
+    assert_eq!(
+        chosen(cx),
+        vec![MenuChoice {
+            menu: 0,
+            path: vec![0]
+        }],
+        "New was not chosen once after the blink"
+    );
+    assert!(
+        !menu.read_with(cx, |menu, _| menu.is_open()),
+        "the menu stayed open after the blink"
+    );
+}
+
+struct Popup {
+    popup: Entity<PopupMenu>,
+}
+
+impl Render for Popup {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().size_full().child(self.popup.clone())
+    }
+}
+
+/// A press on a pop-up menu let go within 400 ms leaves its menu open to
+/// choose from; one held longer chooses the item under it, and closes it.
+#[gpui::test]
+fn popup_menu_click_hold(cx: &mut TestAppContext) {
+    for held in [350, 450] {
+        let (view, cx) = cx.add_window_view(|_, cx| Popup {
+            popup: cx.new(|cx| PopupMenu::new(["One", "Two", "Three"], cx)),
+        });
+        let popup = cx.read_entity(&view, |view, _| view.popup.clone());
+        let at = point(px(10.), px(10.));
+        cx.simulate_mouse_down(at, MouseButton::Left, Modifiers::none());
+        advance(cx, held);
+        cx.simulate_mouse_up(at, MouseButton::Left, Modifiers::none());
+        advance_by(cx, MENU_FLASH);
+        let (open, selection) =
+            popup.read_with(cx, |popup, _| (popup.is_open(), popup.selection()));
+        assert_eq!(
+            (open, selection),
+            (held < 400, 0),
+            "held {held} ms: the menu open {open}, chose {selection}"
+        );
+    }
+}
+
+struct Frame {
+    frame: Entity<PlatinumWindow>,
+    chosen: usize,
+    _events: Subscription,
+}
+
+impl Render for Frame {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().relative().size_full().child(self.frame.clone())
+    }
+}
+
+/// A Command-press on a window's title let go within 400 ms leaves its
+/// path menu open to choose from; one held longer and let go off the
+/// folders closes it.
+#[gpui::test]
+fn window_path_menu_click_hold(cx: &mut TestAppContext) {
+    for held in [350, 450] {
+        let (view, cx) = cx.add_window_view(|_, cx| {
+            let frame = cx.new(|cx| {
+                PlatinumWindow::new("Window", cx)
+                    .position(30., 30.)
+                    .size(180., 120.)
+                    .path(vec!["Disk".into(), "Folder".into()])
+            });
+            let events = cx.subscribe(&frame, |this: &mut Frame, _, event: &WindowEvent, _| {
+                if let WindowEvent::PathChosen(_) = event {
+                    this.chosen += 1;
+                }
+            });
+            Frame {
+                frame,
+                chosen: 0,
+                _events: events,
+            }
+        });
+        let title = point(px(120.), px(38.));
+        cx.simulate_mouse_down(title, MouseButton::Left, Modifiers::command());
+        advance(cx, held);
+        cx.simulate_mouse_up(title, MouseButton::Left, Modifiers::command());
+        // Folder, the menu's second item, under the title bar.
+        click(cx, 110., 80., Modifiers::none());
+        advance_by(cx, MENU_FLASH);
+        let chosen = cx.read_entity(&view, |view, _| view.chosen);
+        assert_eq!(
+            chosen,
+            usize::from(held < 400),
+            "held {held} ms: chose {chosen} folders"
+        );
+    }
 }

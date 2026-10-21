@@ -6,6 +6,73 @@ use crate::{
     theme::*,
 };
 use gpui::{prelude::*, *};
+use std::time::{Duration, Instant};
+
+/// How long a chosen menu item blinks before its action runs, as the
+/// classic menus confirm a choice: four steps, off and on.
+pub const MENU_FLASH: Duration = Duration::from_millis(150);
+
+/// How quickly a click must come up for the menu it opened to stay open.
+pub(crate) const CLICK_HOLD: Duration = Duration::from_millis(400);
+
+/// The press that opened a menu, until it comes up.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct MenuPress {
+    at: Instant,
+    position: Point<Pixels>,
+    moved: bool,
+}
+
+impl MenuPress {
+    pub(crate) fn new(position: Point<Pixels>, cx: &App) -> Self {
+        Self {
+            at: cx.background_executor().now(),
+            position,
+            moved: false,
+        }
+    }
+    /// Follows the pointer: a press that moves more than three pixels is
+    /// no longer a click.
+    pub(crate) fn track(&mut self, position: Point<Pixels>) {
+        let dx = f32::from(position.x - self.position.x);
+        let dy = f32::from(position.y - self.position.y);
+        self.moved |= dx * dx + dy * dy > 9.;
+    }
+    /// Reports whether a release at position ends a click that should
+    /// leave the menu open.
+    pub(crate) fn quick_click(mut self, position: Point<Pixels>, cx: &App) -> bool {
+        self.track(position);
+        !self.moved && cx.background_executor().now() - self.at < CLICK_HOLD
+    }
+}
+
+/// Blinks a chosen item through blink, off and on for MENU_FLASH / 4 each,
+/// then runs done. Dropping the task stops it.
+pub(crate) fn flash_menu<T: 'static>(
+    window: &Window,
+    cx: &mut Context<T>,
+    blink: fn(&mut T) -> &mut bool,
+    done: impl FnOnce(&mut T, &mut Window, &mut Context<T>) + 'static,
+) -> Task<()> {
+    cx.spawn_in(window, async move |this, cx| {
+        for phase in 1..4 {
+            cx.background_executor().timer(MENU_FLASH / 4).await;
+            let blinked = this.update(cx, |this, cx| {
+                *blink(this) = phase % 2 == 0;
+                cx.notify();
+            });
+            if blinked.is_err() {
+                return;
+            }
+        }
+        cx.background_executor().timer(MENU_FLASH / 4).await;
+        this.update_in(cx, |this, window, cx| {
+            *blink(this) = false;
+            done(this, window, cx);
+        })
+        .ok();
+    })
+}
 
 #[derive(Clone, Debug)]
 pub struct MenuItem {
@@ -69,6 +136,9 @@ pub struct PopupMenu {
     has_selection: bool,
     highlighted: Option<usize>,
     open: bool,
+    press: Option<MenuPress>,
+    flash: Option<Task<()>>,
+    blink_off: bool,
     disabled: bool,
     width: i32,
     label: SharedString,
@@ -95,6 +165,9 @@ impl PopupMenu {
             has_selection: true,
             highlighted: None,
             open: false,
+            press: None,
+            flash: None,
+            blink_off: false,
             disabled: false,
             width: 180,
             label: "Pop-up menu".into(),
@@ -160,6 +233,7 @@ impl PopupMenu {
         if disabled {
             self.open = false;
             self.highlighted = None;
+            self.stop_flash();
         }
         cx.notify();
     }
@@ -167,6 +241,7 @@ impl PopupMenu {
         self.items = items;
         self.selected = self.selected.min(self.items.len().saturating_sub(1));
         self.open = false;
+        self.stop_flash();
         cx.notify();
     }
     pub fn choose(&mut self, selected: usize, cx: &mut Context<Self>) {
@@ -181,12 +256,66 @@ impl PopupMenu {
         self.has_selection = true;
         self.open = false;
         self.highlighted = None;
+        self.stop_flash();
         cx.emit(MenuEvent(selected));
         cx.notify();
     }
+    fn choosable(&self, index: usize) -> bool {
+        self.items
+            .get(index)
+            .is_some_and(|item| !item.disabled && !item.separator)
+    }
+    /// Blinks the item the user chose, the menu open, before choosing it.
+    fn choose_after_flash(&mut self, index: usize, window: &Window, cx: &mut Context<Self>) {
+        if !self.choosable(index) {
+            return;
+        }
+        self.highlighted = Some(index);
+        self.blink_off = true;
+        self.flash = Some(flash_menu(
+            window,
+            cx,
+            |this| &mut this.blink_off,
+            move |this, _, cx| this.choose(index, cx),
+        ));
+        cx.notify();
+    }
+    fn stop_flash(&mut self) {
+        self.flash = None;
+        self.blink_off = false;
+    }
+    /// Ends a press at position, over the item at index if any: a quick
+    /// click leaves the menu open to choose from; otherwise the item is
+    /// chosen, and a press held and let go off the items closes the menu.
+    fn release(
+        &mut self,
+        index: Option<usize>,
+        position: Point<Pixels>,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        let press = self.press.take();
+        if self.flash.is_some() || press.is_some_and(|press| press.quick_click(position, cx)) {
+            return;
+        }
+        if let Some(index) = index
+            && self.choosable(index)
+        {
+            self.choose_after_flash(index, window, cx);
+        } else if press.is_some() {
+            self.open = false;
+            self.highlighted = None;
+            cx.notify();
+        }
+    }
 
-    fn key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if self.disabled || self.items.is_empty() {
+            return;
+        }
+        // The menu waits out the blink of a choice.
+        if self.flash.is_some() {
+            cx.stop_propagation();
             return;
         }
         match event.keystroke.key.as_str() {
@@ -197,7 +326,7 @@ impl PopupMenu {
             "enter" | "space" => {
                 if self.open {
                     if let Some(index) = self.highlighted {
-                        self.choose(index, cx);
+                        self.choose_after_flash(index, window, cx);
                     }
                 } else {
                     self.open = true;
@@ -279,13 +408,14 @@ impl Render for PopupMenu {
             .on_key_down(cx.listener(Self::key_down))
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(|this, _, window, cx| {
-                    if this.disabled {
+                cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                    if this.disabled || this.flash.is_some() {
                         return;
                     }
                     window.focus(&this.focus, cx);
                     this.open = !this.open;
                     this.highlighted = None;
+                    this.press = this.open.then(|| MenuPress::new(event.position, cx));
                     cx.notify();
                     cx.stop_propagation();
                 }),
@@ -320,17 +450,33 @@ impl Render for PopupMenu {
                 .child(menu_frame())
                 .occlude()
                 .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                    if this.flash.is_some() {
+                        return;
+                    }
                     this.open = false;
                     cx.notify();
                     cx.stop_propagation();
                 }))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_mouse_up(
+                    MouseButton::Left,
+                    cx.listener(|this, event: &MouseUpEvent, window, cx| {
+                        this.release(None, event.position, window, cx)
+                    }),
+                )
+                .on_mouse_up_out(
+                    MouseButton::Left,
+                    cx.listener(|this, event: &MouseUpEvent, window, cx| {
+                        this.release(None, event.position, window, cx)
+                    }),
+                )
                 .children(self.items.iter().enumerate().map(|(index, item)| {
                     let title = item.title.clone();
                     let disabled = item.disabled;
                     let separator = item.separator;
                     let selected = self.has_selection && index == self.selected;
-                    let highlighted = self.highlighted == Some(index) && !disabled;
+                    let highlighted =
+                        self.highlighted == Some(index) && !disabled && !self.blink_off;
                     let mut item = item.clone();
                     item.checked = selected;
                     div()
@@ -340,16 +486,20 @@ impl Render for PopupMenu {
                         .aria_selected(selected)
                         .h(px(if separator { 8. } else { 18. }))
                         .w_full()
-                        .on_mouse_move(cx.listener(move |this, _, _, cx| {
-                            if !disabled && this.highlighted != Some(index) {
+                        .on_mouse_move(cx.listener(move |this, event: &MouseMoveEvent, _, cx| {
+                            if let Some(press) = &mut this.press {
+                                press.track(event.position);
+                            }
+                            if !disabled && this.flash.is_none() && this.highlighted != Some(index)
+                            {
                                 this.highlighted = Some(index);
                                 cx.notify();
                             }
                         }))
                         .on_mouse_up(
                             MouseButton::Left,
-                            cx.listener(move |this, _, _, cx| {
-                                this.choose(index, cx);
+                            cx.listener(move |this, event: &MouseUpEvent, window, cx| {
+                                this.release(Some(index), event.position, window, cx);
                                 cx.stop_propagation();
                             }),
                         )

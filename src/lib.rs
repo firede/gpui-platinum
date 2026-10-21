@@ -50,7 +50,7 @@ pub use font::{Font, Language};
 pub use forms::*;
 pub use list::{ListBox, ListEvent, ListItem};
 pub use locale::tr;
-pub use menu::{MenuEvent, MenuItem, PopupMenu};
+pub use menu::{MENU_FLASH, MenuEvent, MenuItem, PopupMenu};
 pub use menu_bar::{ContextMenu, Menu, MenuBar, MenuChoice};
 pub use navigation::*;
 pub use rich_text::{

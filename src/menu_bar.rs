@@ -1,6 +1,11 @@
 //! Menu bars and context menus with shared keyboard navigation.
 
-use crate::{Font, Language, MenuItem, Theme, paint::drawing, theme::*};
+use crate::{
+    Font, Language, MenuItem, Theme,
+    menu::{MENU_FLASH, MenuPress, flash_menu},
+    paint::drawing,
+    theme::*,
+};
 use gpui::{prelude::*, *};
 
 #[derive(Clone, Debug)]
@@ -56,6 +61,10 @@ pub struct MenuBar {
     position: Option<Point<Pixels>>,
     bounds: Option<Bounds<Pixels>>,
     closed_submenu: Option<Vec<usize>>,
+    press: Option<MenuPress>,
+    flash: Option<Task<()>>,
+    blink_off: bool,
+    title_flash: Option<(usize, Task<()>)>,
 }
 
 impl EventEmitter<MenuChoice> for MenuBar {}
@@ -79,6 +88,10 @@ impl MenuBar {
             position: None,
             bounds: None,
             closed_submenu: None,
+            press: None,
+            flash: None,
+            blink_off: false,
+            title_flash: None,
         }
     }
     pub fn context_menu(items: Vec<MenuItem>, cx: &mut Context<Self>) -> Self {
@@ -125,6 +138,9 @@ impl MenuBar {
         self.open = None;
         self.path.clear();
         self.closed_submenu = None;
+        self.press = None;
+        self.flash = None;
+        self.blink_off = false;
         if let Some(focus) = self.previous_focus.take() {
             window.focus(&focus, cx);
         }
@@ -143,6 +159,7 @@ impl MenuBar {
         }
         self.open = Some(index);
         self.closed_submenu = None;
+        self.press = None;
         self.path = first_enabled(&self.menus[index].items)
             .into_iter()
             .collect();
@@ -150,7 +167,7 @@ impl MenuBar {
         cx.notify();
     }
     fn choose(&mut self, path: Vec<usize>, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(menu) = self.open else {
+        let Some(menu) = self.open.filter(|_| self.flash.is_none()) else {
             return;
         };
         let Some(item) = item_at(&self.menus[menu].items, &path) else {
@@ -168,8 +185,96 @@ impl MenuBar {
             cx.notify();
             return;
         }
+        // The item blinks, the menu open, before the menu closes and the
+        // choice goes out.
+        self.path = path.clone();
+        self.blink_off = true;
+        self.flash = Some(flash_menu(
+            window,
+            cx,
+            |this| &mut this.blink_off,
+            move |this, window, cx| {
+                this.close(window, cx);
+                cx.emit(MenuChoice { menu, path });
+            },
+        ));
+        cx.notify();
+    }
+    /// Records the press that opened the open menu, which, held and let go
+    /// off its items and title, closes it.
+    pub(crate) fn press(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+        self.press = Some(MenuPress::new(position, cx));
+    }
+    /// Ends a press at position, over the item at path if any: the item is
+    /// chosen; a release on the open menu's title, or a quick click, leaves
+    /// the menu open to choose from; one held and let go elsewhere closes
+    /// it. A release after the menu was left open takes only an item.
+    fn release(
+        &mut self,
+        path: Option<Vec<usize>>,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let press = self.press.take();
+        if self.flash.is_some() {
+            return;
+        }
+        let Some(press) = press else {
+            if let Some(path) = path {
+                self.choose(path, window, cx);
+            }
+            return;
+        };
+        if let Some(path) = path
+            && let Some(menu) = self.open
+            && item_at(&self.menus[menu].items, &path)
+                .is_some_and(|item| !item.disabled && !item.separator && item.submenu.is_empty())
+        {
+            self.choose(path, window, cx);
+            return;
+        }
+        if self.open.is_some() && self.title_at(position) == self.open
+            || press.quick_click(position, cx)
+        {
+            return;
+        }
         self.close(window, cx);
-        cx.emit(MenuChoice { menu, path });
+    }
+    /// The menu whose title on the bar is at position.
+    fn title_at(&self, position: Point<Pixels>) -> Option<usize> {
+        let bounds = self.bounds.filter(|_| !self.context)?;
+        let x = f32::from(position.x - bounds.origin.x) as i32;
+        let y = f32::from(position.y - bounds.origin.y);
+        if !(0. ..19.).contains(&y) {
+            return None;
+        }
+        let mut left = 10;
+        for (index, menu) in self.menus.iter().enumerate() {
+            let right = left + menu.title_width(self.language);
+            if (left..right).contains(&x) {
+                return Some(index);
+            }
+            left = right;
+        }
+        None
+    }
+    /// Highlights a menu's title for MENU_FLASH, as a keyboard equivalent
+    /// of one of its items does.
+    fn flash_title(&mut self, menu: usize, cx: &mut Context<Self>) {
+        if self.context {
+            return;
+        }
+        let task = cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(MENU_FLASH).await;
+            this.update(cx, |this, cx| {
+                this.title_flash = None;
+                cx.notify();
+            })
+            .ok();
+        });
+        self.title_flash = Some((menu, task));
+        cx.notify();
     }
     /// Dispatch a keyboard equivalent from the containing window's key handler.
     pub fn dispatch_shortcut(
@@ -187,6 +292,7 @@ impl MenuBar {
         for (menu, entry) in self.menus.iter().enumerate() {
             if let Some(path) = shortcut_path(&entry.items, &event.keystroke.key) {
                 self.close(window, cx);
+                self.flash_title(menu, cx);
                 cx.emit(MenuChoice { menu, path });
                 return true;
             }
@@ -194,6 +300,11 @@ impl MenuBar {
         false
     }
     fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        // The menu waits out the blink of a choice.
+        if self.flash.is_some() {
+            cx.stop_propagation();
+            return;
+        }
         if self.dispatch_shortcut(event, window, cx) {
             cx.stop_propagation();
             return;
@@ -264,6 +375,7 @@ impl MenuBar {
         let width = menu_width(items, self.language);
         let level = prefix.len();
         let selected = self.path.get(level).copied();
+        let blink_off = self.blink_off && level + 1 == self.path.len();
         let accent = self.theme.accent;
         let language = self.language;
         let mut panel = div()
@@ -280,7 +392,7 @@ impl MenuBar {
             let accessible_path = path.clone();
             let accessible = cx.entity();
             let item = item.clone();
-            let highlighted = selected == Some(index) && !item.disabled;
+            let highlighted = selected == Some(index) && !item.disabled && !blink_off;
             let height = if item.separator { 8 } else { 18 };
             panel = panel.child(
                 div()
@@ -290,7 +402,13 @@ impl MenuBar {
                     .aria_selected(highlighted)
                     .w_full()
                     .h(px(height as f32))
-                    .on_mouse_move(cx.listener(move |this, _, _, cx| {
+                    .on_mouse_move(cx.listener(move |this, event: &MouseMoveEvent, _, cx| {
+                        if let Some(press) = &mut this.press {
+                            press.track(event.position);
+                        }
+                        if this.flash.is_some() {
+                            return;
+                        }
                         if this.path != path || this.closed_submenu.is_some() {
                             this.path = path.clone();
                             this.closed_submenu = None;
@@ -304,8 +422,8 @@ impl MenuBar {
                     })
                     .on_mouse_up(
                         MouseButton::Left,
-                        cx.listener(move |this, _, window, cx| {
-                            this.choose(choose_path.clone(), window, cx);
+                        cx.listener(move |this, event: &MouseUpEvent, window, cx| {
+                            this.release(Some(choose_path.clone()), event.position, window, cx);
                             cx.stop_propagation();
                         }),
                     )
@@ -386,7 +504,10 @@ impl Render for MenuBar {
                 let width = menu.title_width(self.language);
                 let icon = menu.icon;
                 let icon_title = menu.icon_title;
-                let selected = self.open == Some(index);
+                let selected = self
+                    .open
+                    .or(self.title_flash.as_ref().map(|(menu, _)| *menu))
+                    == Some(index);
                 let theme = self.theme;
                 let language = self.language;
                 let accessible = cx.entity();
@@ -401,20 +522,40 @@ impl Render for MenuBar {
                         .h(px(19.))
                         .on_mouse_down(
                             MouseButton::Left,
-                            cx.listener(move |this, _, window, cx| {
+                            cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                                cx.stop_propagation();
+                                if this.flash.is_some() {
+                                    return;
+                                }
                                 if this.open == Some(index) {
                                     this.close(window, cx);
-                                } else {
-                                    this.show(index, window, cx);
+                                    return;
                                 }
-                                cx.stop_propagation();
+                                // A press into a menu left open goes on
+                                // as a click.
+                                let opening = this.open.is_none();
+                                this.show(index, window, cx);
+                                if opening {
+                                    this.press(event.position, cx);
+                                }
                             }),
                         )
-                        .on_mouse_move(cx.listener(move |this, _, window, cx| {
-                            if this.open.is_some() && this.open != Some(index) {
-                                this.show(index, window, cx);
-                            }
-                        }))
+                        .on_mouse_move(cx.listener(
+                            move |this, event: &MouseMoveEvent, window, cx| {
+                                if this.flash.is_some() {
+                                    return;
+                                }
+                                if this.open.is_some() && this.open != Some(index) {
+                                    // The press goes on into the menu it moved to.
+                                    let press = this.press.take();
+                                    this.show(index, window, cx);
+                                    this.press = press;
+                                }
+                                if let Some(press) = &mut this.press {
+                                    press.track(event.position);
+                                }
+                            },
+                        ))
                         .on_a11y_action(AccessibleAction::Click, move |_, window, cx| {
                             accessible.update(cx, |this, cx| {
                                 if this.open == Some(index) {
@@ -475,6 +616,9 @@ impl Render for MenuBar {
                 .role(Role::Menu)
                 .occlude()
                 .on_mouse_down_out(cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                    if this.flash.is_some() {
+                        return;
+                    }
                     if this.context
                         || this
                             .bounds
@@ -484,6 +628,18 @@ impl Render for MenuBar {
                     }
                 }))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_mouse_up(
+                    MouseButton::Left,
+                    cx.listener(|this, event: &MouseUpEvent, window, cx| {
+                        this.release(None, event.position, window, cx)
+                    }),
+                )
+                .on_mouse_up_out(
+                    MouseButton::Left,
+                    cx.listener(|this, event: &MouseUpEvent, window, cx| {
+                        this.release(None, event.position, window, cx)
+                    }),
+                )
                 .child(self.panel(&self.menus[index].items, Vec::new(), cx));
             let mut anchor = anchored()
                 .anchor(Anchor::TopLeft)

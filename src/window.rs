@@ -453,6 +453,10 @@ impl Render for PlatinumWindow {
                                     menu.set_theme(theme, cx);
                                     menu.set_language(language, cx);
                                     menu.show_at(0, position, window, cx);
+                                    // Released on a folder, it is chosen; a
+                                    // quick click leaves the menu open to
+                                    // choose from; elsewhere, it closes.
+                                    menu.press(event.position, cx);
                                 });
                             } else if event.click_count == 2
                                 && !this.options.normalized().no_collapse

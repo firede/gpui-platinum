@@ -4,7 +4,7 @@ use gpui::{
 };
 use gpui_platinum::{
     Alert, AlertKind, Combobox, DateChanged, DatePicker, Dialog, FontPicker, ListBox, ListItem,
-    PopupMenu, TextField, button, button_scope,
+    MENU_FLASH, PopupMenu, TextField, button, button_scope,
     models::Date,
     text_input,
     window::{PlatinumWindow, PlatinumWindowOptions, WindowState},
@@ -298,11 +298,17 @@ fn popup_direction_keys_open_at_the_current_selection(cx: &mut TestAppContext) {
     let (menu, cx) =
         cx.add_window_view(|_, cx| PopupMenu::new(["One", "Two", "Three", "Four"], cx).selected(2));
     cx.update(|window, cx| window.focus(&menu.focus_handle(cx), cx));
-    cx.simulate_keystrokes("down enter");
+    // Return chooses once the item has blinked.
+    let choose = |cx: &mut gpui::VisualTestContext, keys| {
+        cx.simulate_keystrokes(keys);
+        cx.executor().advance_clock(MENU_FLASH);
+        cx.run_until_parked();
+    };
+    choose(cx, "down enter");
     cx.read_entity(&menu, |menu, _| assert_eq!(menu.selection(), 2));
-    cx.simulate_keystrokes("up enter");
+    choose(cx, "up enter");
     cx.read_entity(&menu, |menu, _| assert_eq!(menu.selection(), 2));
-    cx.simulate_keystrokes("down down enter");
+    choose(cx, "down down enter");
     cx.read_entity(&menu, |menu, _| assert_eq!(menu.selection(), 3));
 }
 

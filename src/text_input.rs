@@ -2,6 +2,7 @@
 
 use std::{
     ops::Range,
+    sync::atomic::{AtomicBool, Ordering as AtomicOrdering},
     time::{Duration, Instant},
 };
 
@@ -14,7 +15,7 @@ use gpui::{
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::rich_text::{Alignment, FormatState, RichFormat, Run, StyleAttribute, TextStyle};
-use crate::theme::{BLACK, GRAY_2, GRAY_3, GRAY_4, GRAY_6, GRAY_7, GRAY_8, WHITE};
+use crate::theme::{BLACK, GRAY_1, GRAY_2, GRAY_3, GRAY_4, GRAY_6, GRAY_7, GRAY_8, WHITE};
 use crate::{Font, Language, Theme};
 
 #[path = "text_buffer.rs"]
@@ -72,9 +73,31 @@ actions!(
     ]
 );
 
+/// Whether lines of text make room for East Asian glyphs.
+static EAST_ASIAN_ROOM: AtomicBool = AtomicBool::new(true);
+
+/// Makes lines of text room for the East Asian glyphs above and below the
+/// Latin face's, as the original's lines are once it has East Asian faces,
+/// which [`init`] sets; or fits them to the Latin face alone, as the
+/// original's are without them, as its own tests and gallery run.
+pub fn set_east_asian_line_room(room: bool) {
+    EAST_ASIAN_ROOM.store(room, AtomicOrdering::Relaxed);
+}
+
+/// The rows of a line's ink above and below its baseline.
+pub(crate) fn line_ink(language: Language) -> (i32, i32) {
+    if EAST_ASIAN_ROOM.load(AtomicOrdering::Relaxed) {
+        Font::Small.line_ink(language)
+    } else {
+        let ascent = Font::Small.ascent();
+        (ascent, Font::Small.line_height() - ascent)
+    }
+}
+
 /// Register the text editing bindings once when the application starts.
 pub fn init(cx: &mut App) {
     crate::font::init(cx);
+    set_east_asian_line_room(true);
     cx.bind_keys([
         KeyBinding::new("backspace", Backspace, Some("PlatinumText")),
         KeyBinding::new("delete", Delete, Some("PlatinumText")),
@@ -174,7 +197,7 @@ impl Line {
         let x = x - self.offset_x;
         self.cells
             .iter()
-            .find(|cell| x < cell.x + cell.width / 2.)
+            .find(|cell| x < cell.x + (cell.width / 2.).floor())
             .map_or(self.end, |cell| cell.range.start)
     }
 
@@ -1005,7 +1028,14 @@ impl TextField {
         } else if self.borderless {
             pen.rect(0, 0, width, height, face);
         } else {
-            pen.bevel(0, 0, width, height, GRAY_7, WHITE);
+            pen.bevel(
+                0,
+                0,
+                width,
+                height,
+                GRAY_7,
+                if self.disabled { GRAY_1 } else { WHITE },
+            );
             pen.frame(
                 1,
                 1,
@@ -1021,12 +1051,12 @@ impl TextField {
             );
             pen.rect(2, 2, width - 4, height - 4, face);
             if self.focused && !self.disabled && !inactive {
-                pen.frame(0, 0, width, height, self.theme.accent.dark);
+                crate::widgets::draw_focus_ring(&mut pen, 0, self.theme.accent.dark);
             }
         }
         let content_right = width
             - if self.multiline {
-                SCROLLBAR_WIDTH as i32 + 1
+                SCROLLBAR_WIDTH as i32 + 2
             } else {
                 2
             };
@@ -1042,7 +1072,8 @@ impl TextField {
         } else {
             GRAY_3
         };
-        for line in &self.lines {
+        let last = self.lines.len().saturating_sub(1);
+        for (n, line) in self.lines.iter().enumerate() {
             let y = (top + line.y - self.scroll_y).round() as i32;
             if y + (line.height as i32) < 2 || y >= height - 2 {
                 continue;
@@ -1050,15 +1081,22 @@ impl TextField {
             let left = (self.document_left - self.scroll_x).round() as i32;
             if !selection.is_empty() && selection.start <= line.end && selection.end > line.start {
                 let x = line.x_at(selection.start.max(line.start));
-                let right = if selection.end > line.end {
-                    line.offset_x + line.width + 3.
+                // The selection runs on past the end of all but the last line.
+                let right = if selection.end > line.end && n < last {
+                    width as f32
                 } else {
-                    line.x_at(selection.end)
+                    left as f32 + line.x_at(selection.end.min(line.end))
+                };
+                let line_top = if self.multiline {
+                    y
+                } else {
+                    let (up, down) = line_ink(self.language);
+                    y + line.baseline as i32 - ((LINE_HEIGHT as i32 - up - down) / 2 + up)
                 };
                 text.rect(
                     left + x as i32,
-                    y - 1,
-                    (right - x).round() as i32,
+                    line_top,
+                    (right - left as f32 - x).round() as i32,
                     line.height as i32,
                     selection_color,
                 );
@@ -1114,12 +1152,32 @@ impl TextField {
             );
         }
         if self.focused && !self.disabled && !inactive && self.blink_on && selection.is_empty() {
+            // The line's height but a pixel at either end, reaching as far
+            // as its glyphs do, a pixel left of where the next one goes.
             let (row, x) = self.cursor_position();
+            let line = &self.lines[row];
+            let scale = line
+                .cells
+                .iter()
+                .map(|cell| cell.style.scale)
+                .max()
+                .unwrap_or(1)
+                .clamp(1, 4) as i32;
+            let (up, down) = line_ink(self.language);
+            let y = (top + line.y - self.scroll_y).round() as i32;
+            let base = y + line.baseline as i32;
+            let line_top = if self.multiline {
+                y
+            } else {
+                base - ((LINE_HEIGHT as i32 - up - down) / 2 + up)
+            };
+            let from = (line_top + 1).min(base - up * scale);
+            let to = (line_top + line.height as i32 - 1).max(base + down * scale);
             text.vline(
-                (self.document_left + x - self.scroll_x).round() as i32,
-                (top + self.lines[row].y - self.scroll_y - 1.).round() as i32,
-                self.lines[row].height as i32,
-                BLACK,
+                (self.document_left + x - self.scroll_x).round() as i32 - 1,
+                from,
+                to - from,
+                ink,
             );
         }
         let mask = ContentMask {
@@ -1279,7 +1337,7 @@ fn layout_document_lines(
     }
     lines.push(line);
     let mut y = 0.;
-    let (above, below) = Font::Small.line_ink(language);
+    let (above, below) = line_ink(language);
     for line in &mut lines {
         let scale = line
             .cells

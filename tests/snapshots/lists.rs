@@ -8,9 +8,10 @@ use gpui::{
     div, point, prelude::*, px, rgb,
 };
 use gpui_platinum::{
-    ListBox, SheetView, Table, TableColumn, Theme, TreeView, draw_list_box,
+    ListBox, SheetView, Table, TableColumn, TextField, Theme, TreeView, draw_list_box,
     models::{Cell, FileTree, NodeKind, Sheet, TreeNode},
     paint::{Pen, drawing},
+    text_input,
     theme::GRAY_2,
 };
 use std::{cell::RefCell, rc::Rc};
@@ -65,7 +66,7 @@ fn keys(app: &mut HeadlessAppContext, window: AnyWindowHandle, keys: &str) {
     for key in keys.split_whitespace() {
         let keystroke = Keystroke::parse(key).unwrap();
         app.update_window(window, |_, window, cx| {
-            if keystroke.key.chars().count() == 1 {
+            if keystroke.key.chars().count() == 1 || keystroke.key == "space" {
                 window.dispatch_keystroke(keystroke, cx);
             } else {
                 // A key that types nothing, as Return, which the platform
@@ -170,6 +171,26 @@ impl Render for Host {
         } else {
             padded(self.1, self.0.clone()).into_any_element()
         }
+    }
+}
+
+/// Views in a padded row on Gray2, as the original's rows lay them.
+struct Row {
+    views: Vec<gpui::AnyView>,
+    padding: f32,
+    gap: f32,
+}
+
+impl Render for Row {
+    fn render(&mut self, _: &mut gpui::Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+        div()
+            .size_full()
+            .bg(rgb(GRAY_2))
+            .flex()
+            .items_start()
+            .p(px(self.padding))
+            .gap(px(self.gap))
+            .children(self.views.clone())
     }
 }
 
@@ -323,7 +344,87 @@ pub fn scenes() -> Vec<Scene> {
             );
         }),
     );
-    scenes
+
+    // Typed into, cut, undone, all replaced by "Ada", submitted, and the
+    // last letter taken back.
+    let field = slot::<TextField>();
+    scenes.push(
+        hosted("textfield-focused", 200., 60., 10., &field, |cx| {
+            TextField::new(cx)
+                .with_text("Hello")
+                .size(160., 22.)
+                .label("Name")
+        })
+        .prepare({
+            let field = field.clone();
+            move |app, window| {
+                focus(app, window, &field);
+                keys(app, window, "end , space w o r l d");
+                keys(
+                    app,
+                    window,
+                    "alt-shift-left cmd-x cmd-z cmd-a A d a enter backspace",
+                );
+            }
+        }),
+    );
+
+    scenes.push(Scene::new("textfield-states", 360., 40., |_, cx| {
+        let field = |cx: &mut gpui::App, text: &str| {
+            let text = text.to_owned();
+            cx.new(|cx| TextField::new(cx).with_text(text).size(100., 22.))
+        };
+        Row {
+            views: vec![
+                field(cx, "Untitled Disk").into(),
+                cx.new(|cx| TextField::new(cx).placeholder("Search").size(100., 22.))
+                    .into(),
+                cx.new(|cx| {
+                    TextField::new(cx)
+                        .with_text("Read only")
+                        .size(100., 22.)
+                        .disabled(true)
+                })
+                .into(),
+            ],
+            padding: 8.,
+            gap: 10.,
+        }
+    }));
+
+    // To the end, a new line typed, then Up and Shift-Down.
+    let area = slot::<TextField>();
+    scenes.push(
+        hosted("textarea-focused", 180., 100., 10., &area, |cx| {
+            TextField::new(cx)
+                .multiline(true)
+                .with_text("The quick brown fox jumps over the lazy dog, again and again.")
+                .size(150., 76.)
+                .label("Note")
+        })
+        .prepare({
+            let area = area.clone();
+            move |app, window| {
+                focus(app, window, &area);
+                keys(
+                    app,
+                    window,
+                    "cmd-down enter L i n e space t w o up shift-down",
+                );
+            }
+        }),
+    );
+    // The original's tests have no East Asian faces: lines fit the Latin.
+    scenes.into_iter().map(latin_lines).collect()
+}
+
+fn latin_lines(mut scene: Scene) -> Scene {
+    let view = scene.view;
+    scene.view = Box::new(move |window, cx| {
+        text_input::set_east_asian_line_room(false);
+        view(window, cx)
+    });
+    scene
 }
 
 const PRODUCE: [(&str, &str, f64); 9] = [

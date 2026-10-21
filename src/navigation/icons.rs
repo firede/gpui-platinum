@@ -12,6 +12,9 @@ use crate::{
 const CELL_WIDTH: i32 = 84;
 const CELL_HEIGHT: i32 = 64;
 const GRID_TOP: i32 = 4;
+const SCROLL_BAR_WIDTH: i32 = 16;
+/// The scroll bar's arrows move a quarter of a row.
+const SCROLL_STEP: i32 = CELL_HEIGHT / 4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IconKind {
@@ -176,7 +179,8 @@ impl IconView {
         self.frame = frame;
         self
     }
-    /// Reserves a permanent scrollbar, as a folder window does.
+    /// Reserves a permanent scrollbar, as a folder window does. Otherwise the
+    /// bar appears only when the rows do not all fit.
     pub fn always_scrollbar(mut self, always: bool) -> Self {
         self.always_scrollbar = always;
         self
@@ -225,24 +229,29 @@ impl IconView {
         self.language = language;
         cx.notify();
     }
+    fn layout(&self) -> IconLayout {
+        icon_layout(
+            self.width,
+            self.height,
+            self.frame,
+            self.always_scrollbar,
+            self.items.len(),
+        )
+    }
     fn columns(&self) -> usize {
-        (self.content_width() / CELL_WIDTH).max(1) as usize
+        self.layout().columns
     }
     fn inset(&self) -> i32 {
         if self.frame { 2 } else { 0 }
     }
     fn content_width(&self) -> i32 {
-        self.width - 2 * self.inset() - if self.always_scrollbar { 16 } else { 0 }
+        self.layout().width
     }
     fn content_viewport_height(&self) -> i32 {
-        self.height - 2 * self.inset()
+        self.layout().height
     }
     fn content_height(&self) -> i32 {
-        if self.items.is_empty() {
-            0
-        } else {
-            GRID_TOP * 2 + self.items.len().div_ceil(self.columns()) as i32 * CELL_HEIGHT
-        }
+        self.layout().total
     }
     fn max_offset(&self) -> i32 {
         (self.content_height() - self.content_viewport_height()).max(0)
@@ -263,11 +272,12 @@ impl IconView {
             return;
         };
         let top = GRID_TOP + (index / self.columns()) as i32 * CELL_HEIGHT;
+        let bottom = top + CELL_HEIGHT;
+        let height = self.content_viewport_height();
         if top < self.offset {
             self.offset = top;
-        }
-        if top + CELL_HEIGHT > self.offset + self.content_viewport_height() {
-            self.offset = top + CELL_HEIGHT - self.content_viewport_height();
+        } else if bottom > self.offset + height {
+            self.offset = top.min(bottom - height);
         }
         self.offset = self.offset.clamp(0, self.max_offset());
     }
@@ -284,9 +294,14 @@ impl IconView {
                 return;
             }
             key => {
-                let Some(index) =
-                    icon_key_target(self.selected, key, self.items.len(), self.columns())
-                else {
+                let layout = self.layout();
+                let Some(index) = icon_key_target(
+                    self.selected,
+                    key,
+                    self.items.len(),
+                    layout.columns,
+                    layout.page(),
+                ) else {
                     return;
                 };
                 index
@@ -297,22 +312,83 @@ impl IconView {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct IconLayout {
+    width: i32,
+    height: i32,
+    columns: usize,
+    total: i32,
+    scrolls: bool,
+}
+
+impl IconLayout {
+    /// Page Up and Down move by the rows in view, less one.
+    fn page(&self) -> usize {
+        (self.height / CELL_HEIGHT - 1).max(1) as usize * self.columns
+    }
+}
+
+/// Lays the grid out in the box: rows start four down and leave four under
+/// the last, and when they do not all fit a scroll bar stands at the right,
+/// the columns filling what is left.
+fn icon_layout(
+    width: i32,
+    height: i32,
+    frame: bool,
+    always_scrollbar: bool,
+    count: usize,
+) -> IconLayout {
+    let inset = if frame { 2 } else { 0 };
+    let total = |columns: usize| {
+        if count == 0 {
+            0
+        } else {
+            GRID_TOP * 2 + count.div_ceil(columns) as i32 * CELL_HEIGHT
+        }
+    };
+    let mut layout = IconLayout {
+        width: (width - 2 * inset).max(0),
+        height: (height - 2 * inset).max(0),
+        columns: 1,
+        total: 0,
+        scrolls: always_scrollbar,
+    };
+    layout.columns = (layout.width / CELL_WIDTH).max(1) as usize;
+    layout.total = total(layout.columns);
+    layout.scrolls |= layout.total > layout.height;
+    if layout.scrolls {
+        // A framed view's bar shares the content's right outline.
+        let bar = if frame {
+            SCROLL_BAR_WIDTH - 1
+        } else {
+            SCROLL_BAR_WIDTH
+        };
+        layout.width = (layout.width - bar).max(0);
+        layout.columns = (layout.width / CELL_WIDTH).max(1) as usize;
+        layout.total = total(layout.columns);
+    }
+    layout
+}
+
 fn icon_key_target(
     selected: Option<usize>,
     key: &str,
     count: usize,
     columns: usize,
+    page: usize,
 ) -> Option<usize> {
     if count == 0 {
         return None;
     }
     let at = selected.unwrap_or(0);
     let target = match key {
-        "left" | "right" | "up" | "down" if selected.is_none() => 0,
+        "left" | "right" | "up" | "down" | "pageup" | "pagedown" if selected.is_none() => 0,
         "left" => at.saturating_sub(1),
         "right" => at.saturating_add(1).min(count - 1),
         "up" => at.saturating_sub(columns),
         "down" => at.saturating_add(columns).min(count - 1),
+        "pageup" => at.saturating_sub(page),
+        "pagedown" => at.saturating_add(page).min(count - 1),
         "home" => 0,
         "end" => count - 1,
         _ => return None,
@@ -330,7 +406,8 @@ fn icon_index_at(x: i32, y: i32, columns: usize, count: usize) -> Option<usize> 
 
 impl Render for IconView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let columns = self.columns();
+        let layout = self.layout();
+        let columns = layout.columns;
         let offset = self.offset;
         let theme = self.theme;
         let language = self.language;
@@ -338,7 +415,8 @@ impl Render for IconView {
         let width = self.width;
         let height = self.height;
         let inset = self.inset();
-        let viewport_height = self.content_viewport_height();
+        let viewport_height = layout.height;
+        let bar_top = if self.frame { 1 } else { 0 };
         let scroll_entity = cx.entity();
         div()
             .id("icons")
@@ -406,7 +484,7 @@ impl Render for IconView {
             .child(
                 div()
                     .relative()
-                    .w(px(self.content_width() as f32))
+                    .w(px(layout.width as f32))
                     .h_full()
                     .overflow_hidden()
                     .on_mouse_down(
@@ -538,24 +616,30 @@ impl Render for IconView {
                             }),
                     ),
             )
-            .when(self.always_scrollbar, |view| {
+            .when(layout.scrolls, |view| {
                 view.child(
-                    ScrollBar::new(
-                        "icon-scroll",
-                        self.offset as f64,
-                        viewport_height as f64,
-                        self.content_height() as f64,
-                    )
-                    .length(viewport_height)
-                    .step(64.)
-                    .tab_stop(false)
-                    .theme(theme)
-                    .on_change(move |value, _, cx| {
-                        scroll_entity.update(cx, |this, cx| {
-                            this.offset = value.round() as i32;
-                            cx.notify();
-                        });
-                    }),
+                    div()
+                        .absolute()
+                        .left(px((inset + layout.width) as f32))
+                        .top(px(bar_top as f32))
+                        .child(
+                            ScrollBar::new(
+                                "icon-scroll",
+                                self.offset as f64,
+                                viewport_height as f64,
+                                layout.total as f64,
+                            )
+                            .length(height - 2 * bar_top)
+                            .step(SCROLL_STEP as f64)
+                            .tab_stop(false)
+                            .theme(theme)
+                            .on_change(move |value, _, cx| {
+                                scroll_entity.update(cx, |this, cx| {
+                                    this.offset = value.round() as i32;
+                                    cx.notify();
+                                });
+                            }),
+                        ),
                 )
             })
     }
@@ -826,7 +910,8 @@ fn line(pen: &mut Pen, mut x: i32, mut y: i32, end_x: i32, end_y: i32, color: u3
 
 #[cfg(test)]
 mod tests {
-    use super::{icon_index_at, icon_key_target};
+    use super::*;
+    use gpui::{Modifiers, TestAppContext, point};
 
     #[test]
     fn grid_hit_testing_keeps_the_top_gutter_and_row_boundaries() {
@@ -840,12 +925,102 @@ mod tests {
 
     #[test]
     fn first_arrow_selects_the_first_icon_and_subsequent_arrows_follow_the_grid() {
-        for key in ["left", "right", "up", "down"] {
-            assert_eq!(icon_key_target(None, key, 8, 3), Some(0));
+        for key in ["left", "right", "up", "down", "pageup", "pagedown"] {
+            assert_eq!(icon_key_target(None, key, 8, 3, 3), Some(0));
         }
-        assert_eq!(icon_key_target(Some(0), "down", 8, 3), Some(3));
-        assert_eq!(icon_key_target(Some(6), "right", 8, 3), Some(7));
-        assert_eq!(icon_key_target(Some(7), "down", 8, 3), Some(7));
-        assert_eq!(icon_key_target(None, "right", 0, 3), None);
+        assert_eq!(icon_key_target(Some(0), "down", 8, 3, 3), Some(3));
+        assert_eq!(icon_key_target(Some(6), "right", 8, 3, 3), Some(7));
+        assert_eq!(icon_key_target(Some(7), "down", 8, 3, 3), Some(7));
+        assert_eq!(icon_key_target(None, "right", 0, 3, 3), None);
+    }
+
+    #[test]
+    fn page_keys_move_by_the_rows_in_view_less_one() {
+        // 260×110 shows one whole row in two columns: a page is one row.
+        let short = icon_layout(260, 110, true, false, 12);
+        assert_eq!(short.page(), 2);
+        // 280×300 shows four rows in three columns: a page is three rows.
+        let tall = icon_layout(280, 300, true, false, 24);
+        assert_eq!(tall.page(), 9);
+        assert_eq!(icon_key_target(Some(0), "pagedown", 12, 2, 2), Some(2));
+        assert_eq!(icon_key_target(Some(2), "pageup", 12, 2, 2), Some(0));
+        assert_eq!(icon_key_target(Some(10), "pagedown", 12, 2, 2), Some(11));
+        assert_eq!(icon_key_target(Some(1), "pageup", 12, 2, 2), Some(0));
+    }
+
+    #[test]
+    fn a_scroll_bar_appears_when_the_rows_do_not_fit() {
+        // Two rows in two columns fit 206×140 exactly, as in the gallery.
+        assert_eq!(
+            icon_layout(206, 140, true, false, 4),
+            IconLayout {
+                width: 202,
+                height: 136,
+                columns: 2,
+                total: 136,
+                scrolls: false,
+            }
+        );
+        // At 130 they do not, and the bar takes the room of its width less
+        // the outline it shares.
+        let scrolled = icon_layout(206, 130, true, false, 4);
+        assert!(scrolled.scrolls);
+        assert_eq!(scrolled.width, 187);
+        assert_eq!(scrolled.columns, 2);
+        // A bar can cost a column, and with it a row.
+        let fits = icon_layout(280, 300, true, false, 12);
+        assert_eq!((fits.scrolls, fits.columns, fits.total), (false, 3, 264));
+        let narrowed = icon_layout(260, 110, true, false, 12);
+        assert_eq!(
+            (narrowed.scrolls, narrowed.width, narrowed.columns),
+            (true, 241, 2)
+        );
+        assert_eq!(narrowed.total, 8 + 6 * CELL_HEIGHT);
+        // An unframed view with a permanent bar gives it the full width.
+        let folder = icon_layout(328, 174, false, true, 1);
+        assert_eq!((folder.scrolls, folder.width), (true, 312));
+        assert_eq!(icon_layout(206, 130, true, false, 0).total, 0);
+    }
+
+    fn numbered(count: usize) -> Vec<IconItem> {
+        (1..=count)
+            .map(|index| IconItem::new(format!("Icon {index}"), IconKind::Document))
+            .collect()
+    }
+
+    #[gpui::test]
+    fn page_keys_choose_a_page_away_and_scroll_it_into_view(cx: &mut TestAppContext) {
+        let (view, cx) = cx.add_window_view(|_, cx| IconView::new(numbered(12), cx).size(260, 110));
+        cx.update(|window, cx| window.focus(&view.focus_handle(cx), cx));
+        for (key, selection, offset) in [
+            ("right", 0, 0),
+            ("pagedown", 2, 26),
+            ("pagedown", 4, 90),
+            ("end", 11, 282),
+            ("pageup", 9, 260),
+            ("pageup", 7, 196),
+            ("home", 0, 4),
+        ] {
+            cx.simulate_keystrokes(key);
+            cx.read_entity(&view, |view, _| {
+                assert_eq!(
+                    (view.selection(), view.offset),
+                    (Some(selection), offset),
+                    "{key}"
+                );
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn the_scroll_bar_arrow_steps_a_quarter_row(cx: &mut TestAppContext) {
+        let (view, cx) = cx.add_window_view(|_, cx| IconView::new(numbered(12), cx).size(280, 110));
+        cx.run_until_parked();
+        cx.simulate_click(point(px(271.), px(101.)), Modifiers::default());
+        cx.read_entity(&view, |view, _| {
+            assert_eq!(SCROLL_STEP, 16);
+            assert_eq!(view.offset, SCROLL_STEP);
+            assert_eq!(view.selection(), None);
+        });
     }
 }

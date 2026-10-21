@@ -529,7 +529,9 @@ The look has no hover state: nothing changes as the pointer passes over.
 
 ### 5.24 Sheet, formula bar, find and replace, ruler
 
-- Sheet: cells **72×18**, row numbers **32** wide, in the content frame.
+- Sheet: cells **72×18**, row numbers **32** wide, in the content frame;
+  a sheet filling its window lies on the window's lines, its scroll bars
+  down to the resize corner, with no focus ring.
   Headers in the App face on raised Gray2 (White/Gray7, Gray9 lines between
   them), the headers of the selected rows and columns Gray4. Gray3 lines
   between cells; numbers right-aligned **4** from the edge, text left. The

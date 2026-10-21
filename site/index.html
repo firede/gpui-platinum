@@ -1,127 +1,81 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#dddddd">
-  <title>GPUI Platinum — classic desktop controls for Rust</title>
-  <meta name="description" content="Pixel-drawn Platinum controls for Rust and GPUI. Explore the native control gallery, classic desktop example, API guide and original design specification.">
-  <meta property="og:type" content="website">
-  <meta property="og:title" content="GPUI Platinum — classic desktop controls for Rust">
-  <meta property="og:description" content="Gray faces, beveled edges and bitmap type. A native Rust component library with a classic desktop example.">
-  <link rel="icon" type="image/svg+xml" href="icon.svg">
-  <link rel="alternate" type="text/plain" title="llms.txt" href="llms.txt">
-  <link rel="preload" href="fonts/sans-bold-sc.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="site.css">
-  <script src="site.js" defer></script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Platinum — classic desktop controls for GPUI</title>
+<meta name="description" content="Controls for GPUI in the gray, beveled style of late-1990s desktops, written in Rust and drawn pixel by pixel. See the example desktop in five languages.">
+<link rel="icon" type="image/png" sizes="32x32" href="icon-32.png">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="alternate" type="text/plain" title="llms.txt" href="llms.txt">
+<meta property="og:type" content="website">
+<meta property="og:url" content="__SITE__/">
+<meta property="og:title" content="Platinum — classic desktop controls for GPUI">
+<meta property="og:description" content="Controls for GPUI in the gray, beveled style of late-1990s desktops, written in Rust and drawn pixel by pixel.">
+<meta property="og:image" content="__SITE__/card.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="A window reading “Platinum, classic desktop controls for GPUI” on a patterned desktop, with a calculator behind it.">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="preload" href="fonts/sans-bold-sc.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="site.css">
 </head>
 <body>
-  <a class="skip-link" href="#main" data-t="skip">Skip to content</a>
-  <header class="menubar">
-    <a class="brand" href="#main" aria-label="GPUI Platinum"><img src="icon.svg" width="14" height="14" alt=""><span>Platinum</span></a>
-    <nav aria-label="Main" data-label="navigation">
-      <a href="#gallery" data-t="gallery">Gallery</a>
-      <a href="#desktop" data-t="desktop">Desktop</a>
-      <a href="#using" data-t="documentation">Documentation</a>
-    </nav>
-    <time id="clock" aria-hidden="true"></time>
-  </header>
+<header class="menubar" aria-hidden="true">
+  <span class="menu icon"><img src="logo.png" width="10" height="10" alt=""></span>
+  <span class="menu" data-t="menuFile">File</span>
+  <span class="menu" data-t="menuEdit">Edit</span>
+  <span class="menu" data-t="menuView">View</span>
+  <span class="menu" data-t="menuSpecial">Special</span>
+  <span class="menu" data-t="menuHelp">Help</span>
+  <span class="menu right" id="clock"></span>
+  <span class="menu"><img src="desk.png" width="12" height="12" alt=""> <span data-t="desk">Desk</span></span>
+</header>
 
-  <main id="main" class="desk">
-    <section class="window launch" aria-labelledby="name">
-      <div class="titlebar"><span class="titlebox" aria-hidden="true"></span><span class="window-title" data-t="aboutTitle">About GPUI Platinum</span><span class="titlebox" aria-hidden="true"></span></div>
-      <div class="window-content">
-        <h1 id="name">Platinum</h1>
-        <p class="tagline" data-t="tagline">Classic desktop controls for Rust &amp; GPUI</p>
-        <p class="about" data-t="about">Windows, menus, buttons, lists and dialogs in the gray, beveled style of late-1990s desktops. Native Rust components, drawn pixel by pixel through GPUI.</p>
-        <dl class="facts">
-          <dt data-t="language">Language</dt>
-          <dd><select id="language" aria-label="Language" data-label="language">
-            <option value="" data-t="automatic">Browser language</option>
-            <option value="en" lang="en">English</option>
-            <option value="zh-Hans" lang="zh-Hans">简体中文</option>
-            <option value="zh-Hant" lang="zh-Hant">繁體中文</option>
-            <option value="ja" lang="ja">日本語</option>
-            <option value="ko" lang="ko">한국어</option>
-          </select></dd>
-          <dt data-t="needs">Needs</dt><dd>Rust 2024 · gpui-fast <code>b836dd9</code></dd>
-          <dt data-t="license">License</dt><dd><a href="../LICENSE">MIT</a> · <span data-t="fontLicense">bitmap font licenses included</span></dd>
-          <dt data-t="source">Source</dt><dd><a href="../README.md" data-t="readme">README &amp; source guide</a></dd>
-        </dl>
-        <div class="command"><code id="run-command">cargo run --example gallery</code><button type="button" id="copy" class="small-button" data-t="copy">Copy</button></div>
-        <p class="native-note" data-t="nativeNote">Run the examples locally. The gallery below shows this GPUI implementation.</p>
-        <div class="buttons"><a class="button" href="#using" data-t="getStarted">Get started</a><a class="button default" href="#gallery" data-t="viewGallery">View the gallery</a></div>
-        <p id="copy-status" class="sr-only" role="status" aria-live="polite"></p>
-      </div>
-    </section>
+<main class="desk">
+  <section class="window" aria-labelledby="name">
+    <h1 id="name">Platinum</h1>
+    <p class="tagline" data-t="tagline">Classic desktop controls for GPUI</p>
+    <p class="about" data-t="about">Windows, menus, buttons, lists and dialogs in the gray, beveled style of late-1990s desktops, for <a href="https://github.com/longbridge/gpui-fast">GPUI</a>. Written in Rust, drawn pixel by pixel, in five languages.</p>
 
-    <section id="gallery" class="window showcase" aria-labelledby="gallery-title">
-      <div class="titlebar"><span class="titlebox" aria-hidden="true"></span><h2 id="gallery-title" class="window-title" data-t="galleryTitle">Control Gallery</h2><span class="titlebox" aria-hidden="true"></span></div>
-      <div class="window-content">
-        <p class="section-intro" data-t="galleryIntro">The component families, arranged across five pages of the native gallery.</p>
-        <div class="tabs" role="tablist" aria-label="Gallery pages" data-label="galleryPages">
-          <button type="button" id="page-tab-1" role="tab" aria-selected="true" aria-controls="gallery-panel" tabindex="0" data-page="1" data-t="page1">Basics</button>
-          <button type="button" id="page-tab-2" role="tab" aria-selected="false" aria-controls="gallery-panel" tabindex="-1" data-page="2" data-t="page2">Fields &amp; text</button>
-          <button type="button" id="page-tab-3" role="tab" aria-selected="false" aria-controls="gallery-panel" tabindex="-1" data-page="3" data-t="page3">Collections</button>
-          <button type="button" id="page-tab-4" role="tab" aria-selected="false" aria-controls="gallery-panel" tabindex="-1" data-page="4" data-t="page4">Dates &amp; sheets</button>
-          <button type="button" id="page-tab-5" role="tab" aria-selected="false" aria-controls="gallery-panel" tabindex="-1" data-page="5" data-t="page5">Navigation</button>
-        </div>
-        <figure id="gallery-panel" class="picture" role="tabpanel" aria-labelledby="page-tab-1" tabindex="0">
-          <a id="gallery-image-link" href="../docs/gallery@2x.png" aria-label="Open full-size gallery image" data-label="openGallery"><img id="gallery-image" src="../docs/gallery@2x.png" width="1512" height="952" alt="The native GPUI gallery showing buttons, check boxes, radio buttons and sliders." fetchpriority="high"></a>
-          <figcaption id="gallery-caption" data-t="galleryCaption1">Buttons, choices, sliders, menus and window frames.</figcaption>
-        </figure>
-      </div>
-    </section>
+    <dl class="facts">
+      <dt data-t="install">Install</dt>
+      <dd><pre class="field"><code>gpui-platinum = { git = "https://github.com/firede/gpui-platinum" }
+gpui = { git = "https://github.com/longbridge/gpui-fast", rev = "b836dd9" }
+gpui_platform = { git = "https://github.com/longbridge/gpui-fast", rev = "b836dd9", features = ["font-kit", "runtime_shaders", "wayland", "x11"] }</code></pre></dd>
+      <dt data-t="source">Source</dt>
+      <dd><a href="https://github.com/firede/gpui-platinum">github.com/firede/gpui-platinum</a></dd>
+      <dt data-t="docs">Docs</dt>
+      <dd data-t="docsText"><a href="https://github.com/firede/gpui-platinum/blob/main/README.md">README</a>, <a href="https://github.com/firede/gpui-platinum/blob/main/docs/api.md">API guide</a>, <a href="https://github.com/firede/gpui-platinum/blob/main/docs/spec.md">design specification</a></dd>
+      <dt data-t="needs">Needs</dt>
+      <dd>Rust 2024, gpui-fast v0.1.10 (b836dd9)</dd>
+      <dt data-t="license">License</dt>
+      <dd data-t="licenseText">MIT; fonts from <a href="https://github.com/firede/platinum-fonts">Platinum Fonts</a>, OFL 1.1</dd>
+      <dt><label for="language" data-t="language">Language</label></dt>
+      <dd>
+        <select class="popup" id="language">
+          <option value="" data-t="browserLanguage">The browser’s language</option>
+          <option value="en" lang="en">English</option>
+          <option value="zh-Hans" lang="zh-Hans">简体中文</option>
+          <option value="zh-Hant" lang="zh-Hant">繁體中文</option>
+          <option value="ja" lang="ja">日本語</option>
+          <option value="ko" lang="ko">한국어</option>
+        </select>
+      </dd>
+    </dl>
 
-    <section id="desktop" class="window showcase" aria-labelledby="desktop-title">
-      <div class="titlebar"><span class="titlebox" aria-hidden="true"></span><h2 id="desktop-title" class="window-title" data-t="desktopTitle">The Classic Desktop</h2><span class="titlebox" aria-hidden="true"></span></div>
-      <div class="window-content">
-        <p class="section-intro" data-t="desktopIntro">A whole desktop in one GPUI window: a virtual disk, movable windows, a calculator, notes, rich text, a spreadsheet and control panels.</p>
-        <figure class="picture">
-          <a id="desktop-image-link" href="../docs/desktop@2x.png" aria-label="Open full-size desktop image" data-label="openDesktop"><img id="desktop-image" src="../docs/desktop@2x.png" width="1800" height="1240" alt="The GPUI desktop example with the disk browser, notes, calculator and sliding puzzle open." loading="lazy"></a>
-          <figcaption id="desktop-caption" data-t="desktopCaption">The native desktop example, shown in English.</figcaption>
-        </figure>
-        <p class="command single"><code>cargo run --example desktop</code></p>
-        <p class="footnote" data-t="desktopNote">The example's files live in its own in-memory disk. The component library does not replace the operating system's desktop.</p>
-      </div>
-    </section>
+    <figure class="scene">
+      <div class="peek"><img id="scene" src="scene-en.png" width="900" height="620" alt="The example desktop with a few windows open: a disk, a note, a calculator and a sliding puzzle."></div>
+      <figcaption data-t="caption">The example desktop, as GPUI draws it. It runs natively, not in the browser: <code>cargo run --example desktop</code>.</figcaption>
+    </figure>
 
-    <section id="using" class="window reference" aria-labelledby="using-title">
-      <div class="titlebar"><span class="titlebox" aria-hidden="true"></span><h2 id="using-title" class="window-title" data-t="usingTitle">Using the Library</h2><span class="titlebox" aria-hidden="true"></span></div>
-      <div class="window-content guide-layout">
-        <div>
-          <p data-t="usingIntro">Initialize once, keep stateful controls as GPUI entities, and build lightweight controls from application state.</p>
-          <pre><code>gpui_platinum::init(cx);
+    <div class="buttons">
+      <a class="button" href="https://github.com/firede/gpui-platinum/blob/main/docs/api.md" data-t="apiGuide">API Guide</a>
+      <a class="button default" href="https://github.com/firede/gpui-platinum">GitHub</a>
+    </div>
+  </section>
+</main>
 
-let field = cx.new(|cx| {
-    TextField::new(cx)
-        .label("Name")
-        .size(220., 22.)
-});
-
-button("save", "Save")
-    .default_button()
-    .on_click(cx.listener(Self::save))</code></pre>
-          <p class="footnote" data-t="usingNote">Use the same pinned GPUI revision throughout the application. The API is evolving in 0.x.</p>
-        </div>
-        <div class="documents">
-          <h3 data-t="documentation">Documentation</h3>
-          <ul>
-            <li><a href="../README.md" data-t="englishReadme">English overview</a></li>
-            <li><a href="../README.zh.md" lang="zh-Hans">简体中文介绍</a></li>
-            <li><a href="../docs/api.md" data-t="apiGuide">API guide</a><span data-t="apiDescription">State, events, focus and localization.</span></li>
-            <li><a href="../docs/spec.md" data-t="designSpec">Design specification</a><span data-t="specDescription">The gray ramp, metrics and control behavior.</span></li>
-            <li><a href="../examples/desktop.rs" data-t="examples">Example source</a><span data-t="examplesDescription">A native desktop built from the controls.</span></li>
-          </ul>
-          <p><code>cargo doc --no-deps --open</code></p>
-          <p class="footnote" data-t="referenceNote">Generate the Rust reference from the checked-out source.</p>
-        </div>
-      </div>
-    </section>
-  </main>
-  <footer>
-    <p><span data-t="footer">A GPUI counterpart of</span> <a href="https://github.com/firede/mygo-platinum">mygo-platinum</a> · <a href="https://github.com/firede/platinum-fonts">Platinum Fonts</a> · <a href="../LICENSE">MIT</a></p>
-    <p data-t="tribute">A tribute in style only. Not affiliated with Apple Inc.</p>
-  </footer>
+<script src="site.js"></script>
 </body>
 </html>

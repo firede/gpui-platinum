@@ -100,13 +100,15 @@ impl Documents {
                 let pages: Vec<_> = (0..8)
                     .map(|page| {
                         cx.new(|cx| {
-                            TextField::new(cx).multiline(true).label("Page").with_text(
-                                if page == 0 {
+                            TextField::new(cx)
+                                .multiline(true)
+                                .document(true)
+                                .label("Page")
+                                .with_text(if page == 0 {
                                     desk(Language::English, "jotterNotes")
                                 } else {
                                     String::new()
-                                },
-                            )
+                                })
                         })
                     })
                     .collect();
@@ -150,7 +152,7 @@ impl Documents {
                 }
             }
             DocumentKind::Ledger => {
-                let sheet = cx.new(|cx| SheetView::new(Sheet::ledger(), cx));
+                let sheet = cx.new(|cx| SheetView::new(Sheet::ledger(), cx).fill_window(true));
                 subscriptions.push(cx.subscribe(&sheet, |_, _, _: &SheetEvent, cx| cx.notify()));
                 Content::Ledger(sheet)
             }
@@ -372,7 +374,11 @@ impl Documents {
             Content::Jotter { pages, .. } => {
                 for page in pages {
                     page.update(cx, |field, cx| {
-                        field.set_size(self.width as f32, (self.height - 20).max(60) as f32, cx)
+                        field.set_size(
+                            self.width as f32,
+                            (self.height - GROW_BOX_SIZE).max(60) as f32,
+                            cx,
+                        )
                     });
                 }
             }
@@ -798,21 +804,32 @@ impl Render for Documents {
                 let number = desk(lang, "pageOf")
                     .replace("{page}", &(page + 1).to_string())
                     .replace("{pages}", &pages.len().to_string());
+                // The page fills the window, its scroll bar over the window's
+                // line down to the foot, as a document's. The foot is as tall
+                // as the resize corner at its right end, under a Black line:
+                // the corner that turns the page, folded up in the window's
+                // corner, and which page it is.
                 div()
                     .flex()
                     .flex_col()
-                    .bg(rgb(0xfff6c8))
                     .child(pages[*page].clone())
                     .child(
                         div()
                             .flex()
-                            .h(px(20.))
+                            .h(px(GROW_BOX_SIZE as f32))
                             .items_center()
                             .gap(px(8.))
-                            .px(px(4.))
+                            .bg(rgb(0xfff6c8))
+                            .border_t_1()
+                            .border_color(rgb(BLACK))
                             .child(
+                                // The corner's edges on the window's lines and
+                                // the foot's.
                                 div()
                                     .id("turn-page")
+                                    .self_start()
+                                    .mt(px(-1.))
+                                    .ml(px(-1.))
                                     .role(Role::Button)
                                     .aria_label(desk(lang, "turnPage"))
                                     .track_focus(corner)
@@ -856,7 +873,10 @@ impl Render for Documents {
                                         pen.hline(0, 15, 16, BLACK);
                                     })),
                             )
-                            .child(text_in_language(number, Font::Small, BLACK, lang)),
+                            .child(
+                                text_in_language(number, Font::Small, BLACK, lang)
+                                    .height(GROW_BOX_SIZE - 1),
+                            ),
                     )
                     .into_any_element()
             }

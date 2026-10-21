@@ -12,6 +12,7 @@ use crate::{
     models::{Cell, Sheet},
     paint::{Pen, drawing},
     theme::*,
+    window::GROW_BOX_SIZE,
 };
 
 const CELL_WIDTH: i32 = 72;
@@ -41,6 +42,7 @@ pub struct SheetView {
     top: usize,
     left: usize,
     formula_bar: bool,
+    fills_window: bool,
     cell_editing: bool,
     dragging: bool,
     focus_after_edit: bool,
@@ -87,6 +89,7 @@ impl SheetView {
             top: 0,
             left: 0,
             formula_bar: true,
+            fills_window: false,
             cell_editing: false,
             dragging: false,
             focus_after_edit: false,
@@ -182,6 +185,15 @@ impl SheetView {
         self.formula_bar = show;
         self
     }
+    /// Lays a sheet that fills its window on the window's lines: the grid's
+    /// outline on them and on the resize corner's top edge, its vertical
+    /// scroll bar sharing that outline down to the corner, and its
+    /// horizontal one over the window's lines at the left and bottom, its
+    /// end at the corner's edge.
+    pub fn fill_window(mut self, fill: bool) -> Self {
+        self.fills_window = fill;
+        self
+    }
     pub fn model(&self) -> &Sheet {
         &self.model
     }
@@ -222,10 +234,22 @@ impl SheetView {
     }
 
     fn grid_width(&self) -> i32 {
-        self.width - SCROLLBAR
+        if self.fills_window {
+            // From under the window's line at the left to the scroll bar's
+            // outline, the bar's right one on the window's line.
+            self.width + 3 - SCROLLBAR + 2
+        } else {
+            self.width - SCROLLBAR
+        }
     }
     fn grid_height(&self) -> i32 {
-        self.height - SCROLLBAR - if self.formula_bar { FORMULA_HEIGHT } else { 0 }
+        let formula = if self.formula_bar { FORMULA_HEIGHT } else { 0 };
+        if self.fills_window {
+            // The outline on the resize corner's top edge.
+            self.height - formula - GROW_BOX_SIZE + 2
+        } else {
+            self.height - SCROLLBAR - formula
+        }
     }
     fn visible_cols(&self) -> usize {
         ((self.grid_width() - ROW_HEADER - 4) / CELL_WIDTH).max(1) as usize
@@ -613,6 +637,7 @@ impl Render for SheetView {
         }
         let theme = self.theme;
         let language = self.language;
+        let fills = self.fills_window;
         let formula_width = self.width - 62;
         if self.configured != Some((formula_width, theme, language)) {
             self.formula.update(cx, |field, cx| {
@@ -801,37 +826,55 @@ impl Render for SheetView {
                 )
             })
             .child(
-                div().flex().flex_shrink_0().child(grid).child(
-                    ScrollBar::new(
-                        "sheet-vertical",
-                        self.top as f64 * CELL_HEIGHT as f64,
-                        self.visible_rows() as f64 * CELL_HEIGHT as f64,
-                        self.rows as f64 * CELL_HEIGHT as f64,
-                    )
-                    .tab_stop(false)
-                    .step(CELL_HEIGHT as f64)
-                    .length(self.grid_height())
-                    .theme(theme)
-                    .label("Rows")
-                    .on_change(move |value, _, cx| {
-                        vertical.update(cx, |this, cx| {
-                            this.top = (value / CELL_HEIGHT as f64).round() as usize;
-                            cx.notify();
-                        })
-                    }),
-                ),
+                div()
+                    .flex()
+                    .flex_shrink_0()
+                    .when(fills, |row| row.ml(px(-2.)))
+                    .child(grid)
+                    .child(
+                        div().when(fills, |bar| bar.ml(px(-2.)).mt(px(1.))).child(
+                            ScrollBar::new(
+                                "sheet-vertical",
+                                self.top as f64 * CELL_HEIGHT as f64,
+                                self.visible_rows() as f64 * CELL_HEIGHT as f64,
+                                self.rows as f64 * CELL_HEIGHT as f64,
+                            )
+                            .tab_stop(false)
+                            .step(CELL_HEIGHT as f64)
+                            .length(self.grid_height() - if fills { 2 } else { 0 })
+                            .theme(theme)
+                            .label("Rows")
+                            .on_change(move |value, _, cx| {
+                                vertical.update(cx, |this, cx| {
+                                    this.top = (value / CELL_HEIGHT as f64).round() as usize;
+                                    cx.notify();
+                                })
+                            }),
+                        ),
+                    ),
             )
             .child(
                 div()
                     .flex()
                     .flex_shrink_0()
                     .h(px(SCROLLBAR as f32))
-                    .child(
+                    .when(fills, |row| row.ml(px(-1.)).mt(px(-2.)))
+                    .child(if fills {
+                        // On the window's lines and the grid's outline.
+                        drawing((ROW_HEADER + 1) as f32, SCROLLBAR as f32, |pen, _, _| {
+                            pen.rect(0, 0, pen.width, pen.height, GRAY_2);
+                            pen.hline(0, 0, pen.width, BLACK);
+                            pen.hline(0, pen.height - 1, pen.width, BLACK);
+                            pen.vline(0, 0, pen.height, BLACK);
+                        })
+                        .into_any_element()
+                    } else {
                         div()
                             .w(px(ROW_HEADER as f32))
                             .h_full()
-                            .bg(gpui::rgb(GRAY_2)),
-                    )
+                            .bg(gpui::rgb(GRAY_2))
+                            .into_any_element()
+                    })
                     .child(
                         ScrollBar::new(
                             "sheet-horizontal",
@@ -842,7 +885,12 @@ impl Render for SheetView {
                         .tab_stop(false)
                         .horizontal()
                         .step(CELL_WIDTH as f64)
-                        .length(self.grid_width() - ROW_HEADER)
+                        .length(if fills {
+                            // To the resize corner's edge.
+                            self.width - GROW_BOX_SIZE + 1 - ROW_HEADER
+                        } else {
+                            self.grid_width() - ROW_HEADER
+                        })
                         .theme(theme)
                         .label("Columns")
                         .on_change(move |value, _, cx| {

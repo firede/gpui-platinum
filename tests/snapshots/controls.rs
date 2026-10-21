@@ -686,6 +686,92 @@ fn groups() -> Vec<Scene> {
     ]
 }
 
+/// East Asian text in both faces, styled and scaled, beside Latin text,
+/// in `language`'s forms.
+fn east_asian(name: &'static str, language: Language) -> Scene {
+    Scene::elements(name, 200., 90., move |_, _| {
+        div()
+            .flex()
+            .flex_col()
+            .items_start()
+            .py(px(4.))
+            .px(px(6.))
+            .gap(px(6.))
+            .child(label_in("System 系统设置：显示", language))
+            .child(text_in_language(
+                "App 文稿，3 个项目。",
+                Font::Small,
+                BLACK,
+                language,
+            ))
+            .child(drawing(188., 44., move |pen, _, _| {
+                pen.language = language;
+                let baseline = Font::Small.ascent();
+                let style = TextStyle::default();
+                let bold = TextStyle {
+                    bold: true,
+                    ..style
+                };
+                let italic = TextStyle {
+                    italic: true,
+                    ..style
+                };
+                let underline = TextStyle {
+                    underline: true,
+                    ..style
+                };
+                let x = pen.text_styled(0, baseline, "粗体 ", Font::Small, BLACK, bold);
+                let x = pen.text_styled(x, baseline, "斜体 ", Font::Small, BLACK, italic);
+                pen.text_styled(x + 4, baseline, "下划线", Font::Small, BLACK, underline);
+                pen.text_styled(
+                    0,
+                    18 + 2 * Font::Bold.ascent(),
+                    "12:30 中",
+                    Font::Bold,
+                    BLACK,
+                    style.scaled(2),
+                );
+            }))
+    })
+}
+
+/// The controls whose words and dates follow the language, on 15 October
+/// 2026 at 21:41.
+fn languages(name: &'static str, language: Language) -> Scene {
+    Scene::new(name, 420., 200., move |_, cx| {
+        let day = models::Date::new(2026, 10, 15).unwrap();
+        // The original's clock, frozen for its pictures.
+        let epoch = models::Date::new(1970, 1, 1).unwrap();
+        let calendar = cx.new(|cx| CalendarView::new(day, cx).today(epoch).language(language));
+        let picker = cx.new(|cx| DatePicker::new(day, cx).language(language));
+        let time = cx.new(|cx| TimeField::new(21, 41, 0, cx).language(language));
+        let pages = cx.new(|cx| Pagination::new(2, 5, cx).language(language));
+        let search = cx.new(|cx| SearchField::new(cx).language(language));
+        Held::new(
+            (calendar, picker, time, pages, search),
+            |(calendar, picker, time, pages, search), _, _| {
+                div()
+                    .flex()
+                    .items_start()
+                    .p(px(10.))
+                    .gap(px(12.))
+                    .child(calendar.clone())
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .items_start()
+                            .gap(px(10.))
+                            .child(picker.clone())
+                            .child(time.clone())
+                            .child(pages.clone())
+                            .child(search.clone()),
+                    )
+            },
+        )
+    })
+}
+
 fn windows() -> Vec<Scene> {
     vec![
         popup_windows("popup-window", true, 230),
@@ -902,6 +988,15 @@ pub fn scenes() -> Vec<Scene> {
     scenes.extend(status());
     scenes.extend(text());
     scenes.extend(groups());
+    scenes.push(east_asian("eastasian", Language::SimplifiedChinese));
+    scenes.push(east_asian("eastasian-ja", Language::Japanese));
+    // Pending on controls of the calendar and navigation families: the
+    // calendar's weekday names stand a pixel higher than the original's and
+    // its sunken edge fills two corners the original leaves; Pagination
+    // draws raised black-outlined arrows where the original has 22×22
+    // bevel buttons with the month arrows' icons, 8 from its title.
+    scenes.push(languages("languages-zh-hans", Language::SimplifiedChinese).pending());
+    scenes.push(languages("languages-ja", Language::Japanese).pending());
     scenes.extend(windows());
     scenes
 }

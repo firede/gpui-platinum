@@ -97,7 +97,9 @@ pub fn scenes() -> Vec<Scene> {
             }
         });
         // The original's list ends with a page for its diagrams, which
-        // this port has none of, so its scroll bar's thumb is shorter.
+        // this port has none of, so its scroll bar's thumb is shorter; and
+        // a page chosen as its tests choose one leaves its list unscrolled,
+        // where this port's list scrolls to the page.
         scenes.push(scene.pending());
     }
     scenes.extend(desk_tests());

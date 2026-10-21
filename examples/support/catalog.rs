@@ -378,7 +378,7 @@ impl Controls {
                     ],
                     cx,
                 )
-                .size(300, 130)
+                .size(280, 110)
                 .selected(1)
             }),
             columns: cx.new(|cx| ColumnView::new(models::FileTree::sample(), cx).size(440, 160)),

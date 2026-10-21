@@ -3,8 +3,8 @@ use std::ops::Range;
 use super::modal::{ModalState, ModalView, modal, text};
 use crate::{CheckState, Font, Language, TextField, Theme, button, checkbox, tr};
 use gpui::{
-    Context, Entity, EventEmitter, FocusHandle, Focusable, Render, SharedString, Subscription,
-    Window, div, prelude::*, px,
+    ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, Render, SharedString,
+    Subscription, Window, div, prelude::*, px,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -238,6 +238,13 @@ impl FindReplace {
         });
         cx.emit(FindEvent::Replaced(count));
     }
+    /// A click on a button leaves the keyboard in the Find field, as the
+    /// original's buttons take no focus from the mouse.
+    fn keep_typing(&self, event: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if !event.is_keyboard() {
+            window.focus(&self.query.focus_handle(cx), cx);
+        }
+    }
     fn accept(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         self.find(cx);
     }
@@ -360,7 +367,10 @@ impl Render for FindReplace {
                         .theme(theme)
                         .language(lang)
                         .disabled(empty)
-                        .on_click(cx.listener(|this, _, _, cx| this.replace_every(cx))),
+                        .on_click(cx.listener(|this, event, window, cx| {
+                            this.keep_typing(event, window, cx);
+                            this.replace_every(cx)
+                        })),
                 )
                 .child(
                     button("replace", tr(lang, "replace"))
@@ -368,7 +378,10 @@ impl Render for FindReplace {
                         .theme(theme)
                         .language(lang)
                         .disabled(empty)
-                        .on_click(cx.listener(|this, _, _, cx| this.replace(cx))),
+                        .on_click(cx.listener(|this, event, window, cx| {
+                            this.keep_typing(event, window, cx);
+                            this.replace(cx)
+                        })),
                 )
                 .child(
                     button("find", tr(lang, "find"))
@@ -377,7 +390,10 @@ impl Render for FindReplace {
                         .theme(theme)
                         .language(lang)
                         .disabled(empty)
-                        .on_click(cx.listener(|this, _, _, cx| this.find(cx))),
+                        .on_click(cx.listener(|this, event, window, cx| {
+                            this.keep_typing(event, window, cx);
+                            this.find(cx)
+                        })),
                 ),
         );
         modal(

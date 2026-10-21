@@ -17,7 +17,6 @@ pub fn scenes() -> Vec<Scene> {
         Scene::new(name, 756., 476., move |_, cx| {
             Gallery::for_capture(page, cx)
         })
-        .pending()
     })
     .collect();
     for (name, language) in [

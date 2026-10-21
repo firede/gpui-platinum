@@ -192,8 +192,12 @@ impl TextBuffer {
             .map(|rich| rich.state(&self.text, self.selection()))
     }
 
+    /// Takes a document of runs, the caret at its start, as the original
+    /// does: typing keeps the style it had until the caret moves.
     pub fn set_runs(&mut self, runs: &[Run]) {
+        let typing = self.rich.as_ref().map(|rich| rich.typing);
         self.set(runs.iter().map(|run| run.text.as_str()).collect());
+        (self.anchor, self.caret) = (0, 0);
         let mut rich = RichFormat::new(&self.text);
         rich.styles = runs
             .iter()
@@ -201,7 +205,7 @@ impl TextBuffer {
                 std::iter::repeat_n(run.style.scaled(run.style.scale), run.text.chars().count())
             })
             .collect();
-        rich.update_typing(&self.text, self.caret);
+        rich.typing = typing.unwrap_or_default();
         self.rich = Some(rich);
     }
 

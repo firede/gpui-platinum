@@ -76,28 +76,36 @@ impl Render for Breadcrumbs {
         let language = self.language;
         let theme = self.theme;
         let focused = self.focus.is_focused(window) && window.last_input_was_keyboard();
-        div()
+        // Each name 4 from either side of its button, 18 tall, and between
+        // them an arrow 7 wide, 2 apart.
+        let mut row = div()
             .id("breadcrumbs")
             .role(Role::Group)
             .aria_label(crate::tr(language, "path"))
             .track_focus(&self.focus)
             .tab_stop(true)
             .flex()
-            .h(px(22.))
+            .items_center()
+            .gap(px(2.))
             .flex_shrink_0()
-            .on_key_down(cx.listener(Self::key_down))
-            .children(self.path.iter().enumerate().map(|(index, title)| {
-                let title = title.clone();
-                let last = index + 1 == self.path.len();
-                let active = index == self.active;
-                let text_width = Font::Bold.measure_in(&title, language);
-                let width = text_width + if last { 8 } else { 22 };
+            .on_key_down(cx.listener(Self::key_down));
+        for (index, title) in self.path.iter().enumerate() {
+            if index > 0 {
+                row = row.child(drawing(7., 12., |pen, _, _| {
+                    crate::collections::draw_bitmap(pen, 2, 3, &CRUMB_ARROW, GRAY_8);
+                }));
+            }
+            let title = title.clone();
+            let last = index + 1 == self.path.len();
+            let active = index == self.active;
+            let width = Font::Bold.measure_in(&title, language) + 8;
+            row = row.child(
                 div()
                     .id(index)
                     .role(Role::Button)
                     .aria_label(title.clone())
                     .w(px(width as f32))
-                    .h_full()
+                    .h(px(18.))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, _, window, cx| {
@@ -108,28 +116,39 @@ impl Render for Breadcrumbs {
                             cx.stop_propagation();
                         }),
                     )
-                    .child(drawing(width as f32, 22., move |pen, _, _| {
+                    .child(drawing(width as f32, 18., move |pen, _, _| {
                         pen.language = language;
-                        pen.text(4, 15, &title, Font::Bold, if last { BLACK } else { GRAY_9 });
+                        let ink = if last { BLACK } else { GRAY_9 };
+                        pen.text_centered(&title, Font::Bold, ink);
                         if focused && active {
-                            pen.rect(3, 18, text_width + 2, 2, theme.accent.dark);
+                            pen.rect(3, 16, width - 6, 2, theme.accent.dark);
                         }
-                        if !last {
-                            for row in 0..5 {
-                                pen.hline(text_width + 12, 8 + row, 3 - (row - 2i32).abs(), GRAY_7);
-                            }
-                        }
-                    }))
-            }))
+                    })),
+            );
+        }
+        row
     }
 }
+
+/// A folder, before the name on a path pop-up.
+const PATH_FOLDER: [&str; 6] = [
+    "###.......",
+    "#..######.",
+    "#.......#.",
+    "#.......#.",
+    "#.......#.",
+    "#########.",
+];
+
+/// The arrow between breadcrumbs.
+const CRUMB_ARROW: [&str; 5] = ["#..", "##.", "###", "##.", "#.."];
 
 pub struct PathPopup {
     focus: FocusHandle,
     path: Vec<String>,
     open: bool,
     highlighted: usize,
-    width: i32,
+    width: Option<i32>,
     theme: Theme,
     language: Language,
 }
@@ -146,13 +165,14 @@ impl PathPopup {
             highlighted: path.len().saturating_sub(1),
             path,
             open: false,
-            width: 180,
+            width: None,
             theme: Theme::default(),
             language: Language::English,
         }
     }
+    /// A fixed width, where the button otherwise fits its folder's name.
     pub fn width(mut self, width: i32) -> Self {
-        self.width = width.max(60);
+        self.width = Some(width.max(60));
         self
     }
     pub fn theme(mut self, theme: Theme) -> Self {
@@ -232,71 +252,40 @@ impl PathPopup {
     }
 }
 impl Render for PathPopup {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let width = self.width;
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let language = self.language;
         let theme = self.theme;
-        let focused = self.focus.is_focused(window) && window.last_input_was_keyboard();
         let title = self.path.last().cloned().unwrap_or_default();
+        // A bevel button of the folder's name and icon, with the arrow of a
+        // button that opens a menu.
+        let mut button = crate::bevel_button("path-button", title.clone())
+            .icon(&PATH_FOLDER)
+            .menu_arrow(true)
+            .focus_handle(&self.focus)
+            .theme(theme)
+            .language(language)
+            .on_click(cx.listener(|this, event: &gpui::ClickEvent, _, cx| {
+                // The keys open it themselves.
+                if !this.path.is_empty() && !event.is_keyboard() {
+                    this.open = !this.open;
+                    this.highlighted = this.path.len() - 1;
+                    cx.notify();
+                }
+            }));
+        if let Some(width) = self.width {
+            button = button.width(width);
+        }
+        let width = self.width.unwrap_or(180);
         let mut root = div()
             .id("path-popup")
             .role(Role::ComboBox)
             .aria_label(crate::tr(language, "path"))
-            .aria_value(title.clone())
+            .aria_value(title)
             .aria_expanded(self.open)
-            .track_focus(&self.focus)
-            .tab_stop(true)
             .relative()
-            .w(px(width as f32))
-            .h(px(22.))
             .flex_shrink_0()
             .on_key_down(cx.listener(Self::key_down))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, window, cx| {
-                    window.focus(&this.focus, cx);
-                    if !this.path.is_empty() {
-                        this.open = !this.open;
-                        this.highlighted = this.path.len() - 1;
-                        cx.notify();
-                    }
-                    cx.stop_propagation();
-                }),
-            )
-            .child(drawing(width as f32, 22., move |pen, _, _| {
-                pen.language = language;
-                pen.raised(GRAY_2);
-                pen.text(
-                    21,
-                    15,
-                    &super::icons::fit_title(&title, width - 41, language),
-                    Font::Small,
-                    BLACK,
-                );
-                for (row, line) in [
-                    "###.......",
-                    "#..######.",
-                    "#.......#.",
-                    "#.......#.",
-                    "#.......#.",
-                    "#########.",
-                ]
-                .iter()
-                .enumerate()
-                {
-                    for (col, ch) in line.chars().enumerate() {
-                        if ch == '#' {
-                            pen.dot(7 + col as i32, 8 + row as i32, BLACK);
-                        }
-                    }
-                }
-                for row in 0..4 {
-                    pen.hline(width - 14 + row, 9 + row, 7 - row * 2, BLACK);
-                }
-                if focused {
-                    pen.frame(2, 2, width - 4, 18, theme.accent.dark);
-                }
-            }));
+            .child(button);
         if self.open {
             let current = self.path.len().saturating_sub(1);
             let menu = div()

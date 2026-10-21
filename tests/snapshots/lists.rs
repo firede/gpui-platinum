@@ -8,8 +8,8 @@ use gpui::{
     div, point, prelude::*, px, rgb,
 };
 use gpui_platinum::{
-    ListBox, RichTextArea, Ruler, RulerState, SheetView, Table, TableColumn, TextField, Theme,
-    TreeView, draw_list_box,
+    Breadcrumbs, ListBox, Pagination, PathPopup, RichTextArea, Ruler, RulerState, SheetView, Table,
+    TableColumn, TextField, Theme, TreeView, draw_list_box,
     models::{Cell, FileTree, NodeKind, Sheet, TreeNode},
     paint::{Pen, drawing},
     theme::GRAY_2,
@@ -512,7 +512,61 @@ pub fn scenes() -> Vec<Scene> {
         }),
     );
 
+    // The path as a pop-up and as breadcrumbs, the third of five pages, a
+    // card, an empty state and a status bar.
+    scenes.push(
+        Scene::new("paths-pages", 340., 300., |_, cx| {
+            let path: Vec<String> = ["Platinum Disk", "Documents", "Letters"]
+                .map(String::from)
+                .into();
+            let popup = cx.new(|cx| PathPopup::new(path.clone(), cx));
+            let crumbs = cx.new(|cx| Breadcrumbs::new(path, cx));
+            let pages = cx.new(|cx| Pagination::new(3, 5, cx));
+            Column {
+                views: vec![popup.into(), crumbs.into(), pages.into()],
+            }
+        })
+        // The path pop-up, the breadcrumbs and the pages match. The rest is
+        // display.rs's: the original's Card is a gray box of what it holds in a
+        // black frame with a raised bevel, where `card` is a white one with a
+        // bold title; its EmptyState is one line of gray small text centered in
+        // the room, where `empty_state` has a bold title over a paragraph; the
+        // status bar below them falls where they leave it.
+        .pending(),
+    );
+
     scenes
+}
+
+/// Views in a column, padded and 10 apart, then a card, an empty state and
+/// a status bar, as the original's paths-and-pages scene lays them.
+struct Column {
+    views: Vec<gpui::AnyView>,
+}
+
+impl Render for Column {
+    fn render(&mut self, _: &mut gpui::Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+        div()
+            .size_full()
+            .bg(rgb(GRAY_2))
+            .flex()
+            .flex_col()
+            .items_start()
+            .p(px(10.))
+            .gap(px(10.))
+            .children(self.views.clone())
+            .child(gpui_platinum::card("A card of controls", 120))
+            .child(
+                div()
+                    .w(px(300.))
+                    .h(px(70.))
+                    .child(gpui_platinum::empty_state("No documents", "", 300)),
+            )
+            .child(gpui_platinum::status_bar(
+                ["3 items", "1.2 MB available"],
+                300,
+            ))
+    }
 }
 
 const PRODUCE: [(&str, &str, f64); 9] = [

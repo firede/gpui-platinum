@@ -193,6 +193,7 @@ pub struct Dialog {
     content: AnyView,
     content_focus: Vec<FocusHandle>,
     buttons: [FocusHandle; 2],
+    accept_label: Option<SharedString>,
 }
 
 impl EventEmitter<DialogEvent> for Dialog {}
@@ -208,7 +209,14 @@ impl Dialog {
             content: content.into(),
             content_focus: Vec::new(),
             buttons: [cx.focus_handle(), cx.focus_handle()],
+            accept_label: None,
         }
+    }
+    /// Names the default button for what it does, such as "Rename", in
+    /// place of OK.
+    pub fn accept_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.accept_label = Some(label.into());
+        self
     }
     pub fn width(mut self, width: f32) -> Self {
         self.modal.width = width.max(180.);
@@ -272,10 +280,14 @@ impl Render for Dialog {
         }
         let lang = self.modal.language;
         let theme = self.modal.theme;
+        let accept = self
+            .accept_label
+            .clone()
+            .unwrap_or_else(|| tr(lang, "ok").into());
         let content = div()
             .flex()
             .flex_col()
-            .gap(px(12.))
+            .gap(px(8.))
             .child(self.content.clone())
             .child(
                 div()
@@ -291,7 +303,7 @@ impl Render for Dialog {
                             .on_click(cx.listener(|this, _, window, cx| this.cancel(window, cx))),
                     )
                     .child(
-                        button("ok", tr(lang, "ok"))
+                        button("ok", accept)
                             .focus_handle(&self.buttons[1])
                             .default_button()
                             .theme(theme)
@@ -423,7 +435,12 @@ impl Render for ProgressDialog {
                     .child(crate::progress_bar(self.value, 290, self.modal.theme)),
             )
             .when(!self.detail.is_empty(), |el| {
-                el.child(text(self.detail.clone(), Font::Small, lang))
+                el.child(crate::text_in_language(
+                    self.detail.clone(),
+                    Font::Small,
+                    GRAY_9,
+                    lang,
+                ))
             })
             .child(
                 div().flex().justify_end().child(

@@ -4,7 +4,7 @@ use std::{
     time::Duration,
 };
 
-use chrono::{DateTime, Datelike, FixedOffset, Local};
+use chrono::{DateTime, Datelike, FixedOffset, Local, Timelike};
 use gpui::{
     AnyView, App, Bounds, Context, DispatchPhase, Entity, FocusHandle, Focusable, KeyDownEvent,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, RenderImage, Role,
@@ -12,11 +12,12 @@ use gpui::{
 };
 use gpui_platinum::locale::desk;
 use gpui_platinum::{
-    Font, IconDrag, IconKind, Language, Menu, MenuBar, MenuChoice, MenuItem, PlatinumWindow,
-    PopupWindow, PopupWindowEvent, Theme, WindowEvent, WindowState, button, label_in,
+    Alert, AlertEvent, AlertKind, Font, IconDrag, IconKind, Language, Menu, MenuBar, MenuChoice,
+    MenuItem, PlatinumWindow, PopupWindow, PopupWindowEvent, Theme, WindowEvent, WindowState,
     models::{FileTree, NodeKind, TreeNode},
     paint::drawing,
     theme::*,
+    tr,
 };
 
 use super::{
@@ -77,7 +78,7 @@ impl Launch {
             Self::Folder(_) => (340, 230),
             Self::Controls => (620, 380),
             Self::Find => (470, 270),
-            Self::Info(_) => (262, 338),
+            Self::Info(_) => (250, 261),
             Self::About => (332, 232),
             Self::Document(DocumentKind::Jotter) => (240, 220),
             Self::Document(DocumentKind::Scribe) => (420, 300),
@@ -86,10 +87,10 @@ impl Launch {
                 let (width, height) = match kind {
                     AppKind::Calculator => (156, 196),
                     AppKind::Puzzle => (184, 214),
-                    AppKind::AlarmClock => (220, 150),
+                    AppKind::AlarmClock => (220, 142),
                     AppKind::Appearance => (300, 250),
-                    AppKind::DateTime => (390, 240),
-                    AppKind::Sound => (300, 220),
+                    AppKind::DateTime => (390, 235),
+                    AppKind::Sound => (300, 218),
                     AppKind::Mouse => (300, 200),
                     AppKind::Language => (300, 280),
                 };
@@ -240,10 +241,16 @@ pub struct Desktop {
     fixed_time: Option<DateTime<FixedOffset>>,
     panel_settings: PanelSettings,
     show_date: bool,
+    /// The time or date the menu bar's clock shows, as last set.
+    clock: String,
     balloons: bool,
+    /// The alert asking to empty the wastebasket, and whether it is up.
+    empty_alert: Entity<Alert>,
     emptying: bool,
-    empty_focus: FocusHandle,
-    before_empty_focus: Option<FocusHandle>,
+    /// Whether the front document's dialog is up, its window inactive
+    /// behind it, and the point size its Size menu checks.
+    document_modal: bool,
+    document_scale: Option<u8>,
     selected_icon: Option<usize>,
     icon_positions: [Option<Point<i32>>; 2],
     icon_drag: Option<(usize, Point<Pixels>, Point<i32>)>,
@@ -251,11 +258,32 @@ pub struct Desktop {
     background: Option<BackgroundCache>,
 }
 
+/// The time of the original's scene and tests.
+fn scene_time() -> DateTime<FixedOffset> {
+    DateTime::parse_from_rfc3339("2026-10-14T09:41:00Z").expect("reference scene time")
+}
+
 impl Desktop {
+    /// The desk, with the windows of the original's scene open at its time
+    /// if scene is true.
     pub fn new(language: Language, scene: bool, cx: &mut Context<Self>) -> Self {
-        let fixed_time = scene.then(|| {
-            DateTime::parse_from_rfc3339("2026-10-14T09:41:00Z").expect("reference scene time")
-        });
+        if !scene {
+            return Self::with_time(language, None, cx);
+        }
+        let mut this = Self::at_scene_time(language, cx);
+        this.open_scene(cx);
+        this
+    }
+    /// The desk at the time of the original's scene, with no window open,
+    /// as the original's tests start it.
+    pub fn at_scene_time(language: Language, cx: &mut Context<Self>) -> Self {
+        Self::with_time(language, Some(scene_time()), cx)
+    }
+    fn with_time(
+        language: Language,
+        fixed_time: Option<DateTime<FixedOffset>>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let mut model = FileTree::sample();
         model.roots.push(TreeNode::new(
             TRASH,
@@ -344,12 +372,38 @@ impl Desktop {
             cx.notify();
         })
         .detach();
+        // The clock, a title with no items, then the application menu.
         cx.subscribe(&application_menu, |this, _, event: &MenuChoice, cx| {
-            this.pending = event
-                .path
-                .first()
-                .and_then(|index| this.app_commands.get(*index))
-                .cloned();
+            if event.menu == 0 {
+                this.show_date = !this.show_date;
+                this.refresh_menus(cx);
+            } else {
+                this.pending = event
+                    .path
+                    .first()
+                    .and_then(|index| this.app_commands.get(*index))
+                    .cloned();
+            }
+            cx.notify();
+        })
+        .detach();
+        let empty_alert = cx.new(|cx| {
+            Alert::new(
+                AlertKind::Caution,
+                "",
+                "",
+                [desk(language, "cancel"), desk(language, "ok")],
+                cx,
+            )
+            .language(language)
+        });
+        cx.subscribe(&empty_alert, |this, _, event, cx| {
+            let AlertEvent::Chosen(choice) = event;
+            if *choice == 1 {
+                this.pending = Some(Command::ConfirmEmpty);
+            }
+            this.emptying = false;
+            this.set_front_active(true, cx);
             cx.notify();
         })
         .detach();
@@ -362,7 +416,15 @@ impl Desktop {
         cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(Duration::from_secs(1)).await;
-                if this.update(cx, |_, cx| cx.notify()).is_err() {
+                if this
+                    .update(cx, |this, cx| {
+                        if this.clock != this.clock_title() {
+                            this.refresh_menus(cx);
+                        }
+                        cx.notify()
+                    })
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -392,10 +454,12 @@ impl Desktop {
             fixed_time,
             panel_settings: PanelSettings::default(),
             show_date: false,
+            clock: String::new(),
             balloons: false,
+            empty_alert,
             emptying: false,
-            empty_focus: cx.focus_handle(),
-            before_empty_focus: None,
+            document_modal: false,
+            document_scale: None,
             selected_icon: None,
             icon_positions: [None, None],
             icon_drag: None,
@@ -403,73 +467,114 @@ impl Desktop {
             background: None,
         };
         this.refresh_menus(cx);
-        if scene {
-            for (kind, x, y, width, height) in [
-                (Launch::Folder(DISK), 24., 20., 360, 220),
-                (Launch::Document(DocumentKind::Jotter), 420., 250., 240, 200),
-                (Launch::Accessory(AppKind::Calculator), 620., 40., 156, 196),
-            ] {
-                let id = this.launch(kind, cx);
-                if let Some(entry) = this.windows.iter().find(|entry| entry.id == id) {
-                    entry.frame.update(cx, |frame, cx| {
-                        frame.state.x = x;
-                        frame.state.y = y;
-                        frame.state.width = width as f32;
-                        frame.state.height = height as f32;
-                        cx.notify();
-                    });
-                    entry.content.set_size(width - 12, height - 25, cx);
-                    if let Content::Accessory(view) = &entry.content {
-                        view.update(cx, |view, cx| {
-                            view.calculate(&["1", "2", "×", "3", "+", "6", "="], cx)
-                        });
-                    }
-                }
-            }
-            for (key, x, width, height, open) in [
-                ("documents", 610., 250, 104, true),
-                ("applications", 390., 200, 150, false),
-            ] {
-                let folder = this
-                    .node_labels
-                    .iter()
-                    .find(|(_, label)| **label == key)
-                    .map(|(id, _)| *id)
-                    .unwrap();
-                let id = this.launch(Launch::Folder(folder), cx);
-                let entry = this.windows.iter().find(|entry| entry.id == id).unwrap();
+        this
+    }
+    fn open_scene(&mut self, cx: &mut Context<Self>) {
+        for (kind, x, y, width, height) in [
+            (Launch::Folder(DISK), 24., 20., 360, 220),
+            (Launch::Document(DocumentKind::Jotter), 420., 250., 240, 200),
+            (Launch::Accessory(AppKind::Calculator), 620., 40., 156, 196),
+        ] {
+            let id = self.launch(kind, cx);
+            if let Some(entry) = self.windows.iter().find(|entry| entry.id == id) {
                 entry.frame.update(cx, |frame, cx| {
                     frame.state.x = x;
+                    frame.state.y = y;
                     frame.state.width = width as f32;
+                    frame.state.height = height as f32;
                     cx.notify();
                 });
-                this.toggle_dock(cx);
-                let entry = this.windows.iter().find(|entry| entry.id == id).unwrap();
-                entry.popup.as_ref().unwrap().update(cx, |popup, cx| {
-                    popup.set_size(width, height, cx);
-                    popup.set_open(open, cx);
-                });
-                entry.content.set_size(width - 12, height - 6, cx);
+                entry.content.set_size(width - 12, height - 25, cx);
+                if let Content::Accessory(view) = &entry.content {
+                    view.update(cx, |view, cx| {
+                        view.calculate(&["1", "2", "×", "3", "+", "6", "="], cx)
+                    });
+                }
             }
-            let id = this.launch(Launch::Accessory(AppKind::Puzzle), cx);
-            this.windows
+        }
+        for (key, x, width, height, open) in [
+            ("documents", 610., 250, 104, true),
+            ("applications", 390., 200, 150, false),
+        ] {
+            let folder = self
+                .node_labels
                 .iter()
-                .find(|entry| entry.id == id)
-                .unwrap()
-                .frame
-                .update(cx, |frame, cx| {
-                    frame.state.x = 120.;
-                    frame.state.y = 290.;
-                    cx.notify();
-                });
+                .find(|(_, label)| **label == key)
+                .map(|(id, _)| *id)
+                .unwrap();
+            let id = self.launch(Launch::Folder(folder), cx);
+            let entry = self.windows.iter().find(|entry| entry.id == id).unwrap();
+            entry.frame.update(cx, |frame, cx| {
+                frame.state.x = x;
+                frame.state.width = width as f32;
+                cx.notify();
+            });
+            self.toggle_dock(cx);
+            let entry = self.windows.iter().find(|entry| entry.id == id).unwrap();
+            entry.popup.as_ref().unwrap().update(cx, |popup, cx| {
+                popup.set_size(width, height, cx);
+                popup.set_open(open, cx);
+            });
+            entry.content.set_size(width - 12, height - 6, cx);
+        }
+        let id = self.launch(Launch::Accessory(AppKind::Puzzle), cx);
+        self.windows
+            .iter()
+            .find(|entry| entry.id == id)
+            .unwrap()
+            .frame
+            .update(cx, |frame, cx| {
+                frame.state.x = 120.;
+                frame.state.y = 290.;
+                cx.notify();
+            });
+    }
+    /// The desk at the scene's time with the controls' window alone, at the
+    /// desk's corner and on the page named, as the original's catalog tests
+    /// open it.
+    #[allow(
+        dead_code,
+        reason = "the snapshot tests' scenes open it; the example does not"
+    )]
+    pub fn with_controls(language: Language, page: &str, cx: &mut Context<Self>) -> Self {
+        let mut this = Self::at_scene_time(language, cx);
+        let id = this.launch(Launch::Controls, cx);
+        let entry = this.windows.iter().find(|entry| entry.id == id).unwrap();
+        entry.frame.update(cx, |frame, cx| {
+            frame.state.x = 4.;
+            frame.state.y = 4.;
+            cx.notify();
+        });
+        if let Content::Controls(controls) = &entry.content {
+            controls.update(cx, |controls, cx| controls.show_page(page, cx));
+        }
+        this
+    }
+    /// The desk at the scene's time with the document named by its key
+    /// open alone, as the original's tests open one.
+    #[allow(
+        dead_code,
+        reason = "the snapshot tests' scenes open it; the example does not"
+    )]
+    pub fn with_document(language: Language, key: &str, cx: &mut Context<Self>) -> Self {
+        fn find(nodes: &[TreeNode], title: &str) -> Option<usize> {
+            nodes.iter().find_map(|node| {
+                (node.kind == NodeKind::Document && node.title == title)
+                    .then_some(node.id)
+                    .or_else(|| find(&node.children, title))
+            })
+        }
+        let mut this = Self::at_scene_time(language, cx);
+        let title = desk(language, key);
+        if let Some(id) = find(&this.files.read(cx).roots, &title) {
+            this.open_node(id, cx);
         }
         this
     }
     /// The desk a link to the web page shows: the calculator alone, at 42,
     /// behind a window of the page's own (site.rs).
     pub fn for_share(cx: &mut Context<Self>) -> Self {
-        let mut this = Self::new(Language::English, false, cx);
-        this.fixed_time = DateTime::parse_from_rfc3339("2026-10-14T09:41:00Z").ok();
+        let mut this = Self::at_scene_time(Language::English, cx);
         let id = this.launch(Launch::Accessory(AppKind::Calculator), cx);
         this.active = None;
         let entry = this.windows.iter().find(|entry| entry.id == id).unwrap();
@@ -494,13 +599,15 @@ impl Desktop {
             _ => None,
         }
     }
+    /// The item chosen: in the folder's window in front, or the desk's
+    /// icon chosen with no window in front. A window coming to the front
+    /// leaves the icon chosen, as the original does.
     fn selected_node(&self, cx: &App) -> Option<usize> {
-        self.cabinet()
-            .and_then(|view| view.read(cx).selection())
-            .or_else(|| {
-                self.selected_icon
-                    .map(|index| if index == 0 { DISK } else { TRASH })
-            })
+        if self.active.is_some() {
+            return self.cabinet().and_then(|view| view.read(cx).selection());
+        }
+        self.selected_icon
+            .map(|index| if index == 0 { DISK } else { TRASH })
     }
     fn title(&self, kind: Launch, cx: &App) -> String {
         match kind {
@@ -589,6 +696,35 @@ impl Desktop {
             }
         }
     }
+    /// Follows the front document: its window inactive while its dialog is
+    /// up, and its Size menu checking the selection's size.
+    fn sync_document(&mut self, cx: &mut Context<Self>) {
+        let Some(Content::Document(view)) = self.front().map(|entry| entry.content.clone()) else {
+            return;
+        };
+        let modal = view.read(cx).is_modal_open(cx);
+        if modal != self.document_modal {
+            self.document_modal = modal;
+            self.set_front_active(!modal, cx);
+        }
+        let scale = view.read(cx).format_state(cx).map(|state| state.scale);
+        if scale != self.document_scale {
+            self.document_scale = scale;
+            self.refresh_menus(cx);
+        }
+    }
+    /// Shows the front window active, or inactive while an alert of the
+    /// desk's is up.
+    fn set_front_active(&self, active: bool, cx: &mut Context<Self>) {
+        if let Some(entry) = self.front() {
+            entry
+                .frame
+                .update(cx, |frame, cx| frame.set_active(active, cx));
+            if let Some(popup) = &entry.popup {
+                popup.update(cx, |popup, cx| popup.set_active(active, cx));
+            }
+        }
+    }
     fn raise(&mut self, id: usize, cx: &mut Context<Self>) {
         if let Some(index) = self.windows.iter().position(|entry| entry.id == id) {
             let entry = self.windows.remove(index);
@@ -608,7 +744,6 @@ impl Desktop {
                         .update(cx, |frame, cx| frame.set_active(false, cx));
                 }
             }
-            self.selected_icon = None;
             self.refresh_menus(cx);
             self.refresh_about(cx);
             cx.notify();
@@ -738,7 +873,10 @@ impl Desktop {
             Launch::Info(node) => {
                 let files = self.files.clone();
                 let comments = self.comments.clone();
-                Content::Info(cx.new(|cx| GetInfo::new(files, node, comments, cx)))
+                let zone = self
+                    .fixed_time
+                    .map_or_else(|| *Local::now().offset(), |time| *time.offset());
+                Content::Info(cx.new(|cx| GetInfo::new(files, node, comments, zone, cx)))
             }
             Launch::About => Content::About(cx.new(About::new)),
             Launch::Controls => Content::Controls(cx.new(Controls::new)),
@@ -785,6 +923,12 @@ impl Desktop {
             Launch::Document(app) => {
                 let files = self.files.clone();
                 let view = cx.new(|cx| Documents::new(app, cx).files(files));
+                cx.observe(&view, move |this, _, cx| {
+                    if this.active == Some(id) {
+                        this.sync_document(cx);
+                    }
+                })
+                .detach();
                 cx.subscribe(&view, move |this, _, event, cx| match event {
                     DocumentsEvent::Closed => this.remove_window(id, cx),
                     DocumentsEvent::CloseCancelled => {
@@ -910,6 +1054,8 @@ impl Desktop {
         self.menu.update(cx, |menu, cx| menu.set_theme(theme, cx));
         self.application_menu
             .update(cx, |menu, cx| menu.set_theme(theme, cx));
+        self.empty_alert
+            .update(cx, |alert, cx| alert.set_theme(theme, cx));
         for entry in &self.windows {
             entry
                 .frame
@@ -1025,6 +1171,7 @@ impl Desktop {
             .map(|entry| entry.content.clone());
         if let Some(Content::Document(view)) = content {
             view.update(cx, |view, cx| view.request_close(window, cx));
+            self.sync_document(cx);
         } else {
             self.remove_window(id, cx);
         }
@@ -1164,6 +1311,7 @@ impl Desktop {
                     self.front().map(|entry| entry.content.clone())
                 {
                     view.update(cx, |view, cx| view.command(action, window, cx));
+                    self.sync_document(cx);
                 }
             }
             Command::Accessory(action) => {
@@ -1187,9 +1335,25 @@ impl Desktop {
             Command::Dock => self.toggle_dock(cx),
             Command::Cleanup => self.icon_positions = [None, None],
             Command::EmptyTrash => {
-                self.before_empty_focus = window.focused(cx);
+                let amount = self
+                    .files
+                    .read(cx)
+                    .find(TRASH)
+                    .map_or(0, |node| node.children.len());
+                let language = self.language;
+                let text = count(language, "emptyWastebasket", amount);
+                self.empty_alert.update(cx, |alert, cx| {
+                    alert.set_language(language, cx);
+                    alert.set_buttons(
+                        vec![desk(language, "cancel").into(), desk(language, "ok").into()],
+                        cx,
+                    );
+                    alert.set_message(text, "", cx);
+                    alert.show(window, cx);
+                });
                 self.emptying = true;
-                window.focus(&self.empty_focus, cx);
+                // The windows wait behind the alert, inactive.
+                self.set_front_active(false, cx);
             }
             Command::ConfirmEmpty => {
                 self.files.update(cx, |files, cx| {
@@ -1199,10 +1363,6 @@ impl Desktop {
                     cx.notify();
                 });
                 self.trash_parents.clear();
-                self.emptying = false;
-                if let Some(focus) = self.before_empty_focus.take() {
-                    window.focus(&focus, cx);
-                }
             }
             Command::Balloons => self.balloons = !self.balloons,
             Command::HideCurrent | Command::HideOthers | Command::ShowAll => {
@@ -1254,11 +1414,15 @@ impl Desktop {
         let content = self.windows[index].content.view();
         let state = self.windows[index].frame.read(cx).state;
         let width = state.width as i32;
-        self.windows[index].content.set_size(width - 12, 150, cx);
+        // As tall as the window, up to 200.
+        let height = (state.height as i32).min(200);
+        self.windows[index]
+            .content
+            .set_size(width - 12, height - 6, cx);
         let popup = cx.new(|cx| {
             PopupWindow::new(title, cx)
                 .position(state.x as i32)
-                .size(width, 150)
+                .size(width, height)
                 .theme(self.theme)
                 .language(self.language)
                 .content(content)
@@ -1625,6 +1789,25 @@ impl Desktop {
                 ],
             ));
         }
+        if scribe {
+            // Scribe's Size menu, the selection's size checked.
+            let index = menus.len();
+            let scale = self.document_scale.unwrap_or(1);
+            let mut items = Vec::new();
+            for (item, command) in ["size-11", "size-22", "size-33", "size-44"]
+                .into_iter()
+                .enumerate()
+            {
+                commands.insert((index, vec![item]), Command::Document(command));
+                items.push(
+                    MenuItem::new(
+                        tr(language, "points").replace("{size}", &(11 * (item + 1)).to_string()),
+                    )
+                    .checked(scale as usize == item + 1),
+                );
+            }
+            menus.push(Menu::new(tr(language, "size"), items));
+        }
         if front_kind == Some(Launch::Document(DocumentKind::Jotter)) {
             let index = menus.len();
             menus.push(Menu::new(
@@ -1699,10 +1882,15 @@ impl Desktop {
             apps.push(MenuItem::new(desk(language, "desk")).checked(!document));
             self.app_commands.push(Command::ShowAll);
         }
+        self.clock = self.clock_title();
+        let clock = self.clock.clone();
         self.application_menu.update(cx, |menu, cx| {
             let icon = application_icon(front_kind.map_or("desk", Launch::application_key));
             menu.set_menus(
-                vec![Menu::new(app_name, apps).icon(icon).icon_title(true)],
+                vec![
+                    Menu::new(clock.clone(), Vec::new()),
+                    Menu::new(app_name, apps).icon(icon).icon_title(true),
+                ],
                 cx,
             );
             menu.set_language(language, cx);
@@ -1711,21 +1899,6 @@ impl Desktop {
 
     fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if self.emptying {
-            match event.keystroke.key.as_str() {
-                "escape" => {
-                    self.emptying = false;
-                    if let Some(focus) = self.before_empty_focus.take() {
-                        window.focus(&focus, cx);
-                    }
-                    cx.notify();
-                }
-                "enter" => {
-                    self.pending = Some(Command::ConfirmEmpty);
-                    cx.notify();
-                }
-                _ => {}
-            }
-            cx.stop_propagation();
             return;
         }
         if let Some(DeskWindow {
@@ -1862,24 +2035,54 @@ impl Desktop {
         });
         image
     }
+    /// What the menu bar's clock shows: the time, or the date, as each
+    /// language writes them (CLDR's "jm" and "yMMMEd").
     fn clock_title(&self) -> String {
         let now = self
             .fixed_time
             .unwrap_or_else(|| Local::now().fixed_offset())
             + chrono::Duration::seconds(self.clock_offset);
-        if self.show_date {
-            match self.language {
-                Language::English => now.format("%a, %b %-d, %Y").to_string(),
-                Language::Korean => format!("{}년 {}월 {}일", now.year(), now.month(), now.day()),
-                _ => format!("{}年{}月{}日", now.year(), now.month(), now.day()),
+        let (year, month, day) = (now.year(), now.month(), now.day());
+        let weekday = now.weekday().num_days_from_sunday() as usize;
+        let hour = now.hour12().1;
+        let minute = now.minute();
+        let morning = now.hour() < 12;
+        match (self.language, self.show_date) {
+            (Language::English, false) => now.format("%-I:%M %p").to_string(),
+            (Language::English, true) => now.format("%a, %b %-d, %Y").to_string(),
+            (Language::Japanese, false) => format!("{}:{minute:02}", now.hour()),
+            (Language::Japanese, true) => {
+                let weekday = ["日", "月", "火", "水", "木", "金", "土"][weekday];
+                format!("{year}年{month}月{day}日({weekday})")
             }
-        } else {
-            now.format(if self.language == Language::English {
-                "%-I:%M %p"
-            } else {
-                "%H:%M"
-            })
-            .to_string()
+            (Language::Korean, false) => {
+                let period = if morning { "오전" } else { "오후" };
+                format!("{period} {hour}:{minute:02}")
+            }
+            (Language::Korean, true) => {
+                let weekday = ["일", "월", "화", "수", "목", "금", "토"][weekday];
+                format!("{year}년 {month}월 {day}일 ({weekday})")
+            }
+            (Language::SimplifiedChinese, false) => now.format("%H:%M").to_string(),
+            (Language::SimplifiedChinese, true) => {
+                let weekday = ["日", "一", "二", "三", "四", "五", "六"][weekday];
+                format!("{year}年{month}月{day}日周{weekday}")
+            }
+            (Language::TraditionalChinese, false) => {
+                let period = match now.hour() {
+                    0..5 => "凌晨",
+                    5..8 => "早上",
+                    8..12 => "上午",
+                    12..13 => "中午",
+                    13..19 => "下午",
+                    _ => "晚上",
+                };
+                format!("{period}{hour}:{minute:02}")
+            }
+            (Language::TraditionalChinese, true) => {
+                let weekday = ["日", "一", "二", "三", "四", "五", "六"][weekday];
+                format!("{year}年{month}月{day}日 週{weekday}")
+            }
         }
     }
 }
@@ -1887,7 +2090,13 @@ impl Desktop {
 impl Render for Desktop {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if let Some(command) = self.pending.take() {
-            self.execute(command, window, cx);
+            // Done once this frame is drawn: what it changes is drawn
+            // anew in the next, which views notified while this one draws
+            // would miss.
+            cx.defer_in(window, |this, window, cx| {
+                this.execute(command, window, cx);
+                cx.notify();
+            });
         }
         self.sync_focus(window, cx);
         let viewport = window.viewport_size();
@@ -1896,11 +2105,8 @@ impl Render for Desktop {
         self.desk_bounds.size = gpui::size(px(width), px(height));
         let background = self.background(width, height, window.scale_factor());
         let language = self.language;
-        let theme = self.theme;
         let layout = cx.entity();
         let pointer = cx.entity();
-        let clock = self.clock_title();
-        let clock_width = Font::Bold.measure_in(&clock, language) + 20;
         let mut body = div()
             .id("desktop-area")
             .relative()
@@ -2100,7 +2306,7 @@ impl Render for Desktop {
                     .child(content),
             );
         }
-        let mut root =
+        let root =
             div()
                 .id("platinum-desktop")
                 .flex()
@@ -2117,99 +2323,24 @@ impl Render for Desktop {
                 }))
                 .child(
                     div()
+                        .relative()
                         .flex()
                         .w_full()
                         .h(px(20.))
                         .flex_shrink_0()
-                        .bg(gpui::rgb(GRAY_2))
-                        .border_b_1()
-                        .border_color(gpui::rgb(BLACK))
+                        .child(div().absolute().child(drawing(width, 20., |pen, _, _| {
+                            pen.rect(0, 0, pen.width, pen.height, GRAY_2);
+                            pen.hline(0, 0, pen.width, WHITE);
+                            pen.hline(0, pen.height - 1, pen.width, BLACK);
+                        })))
                         .child(div().flex_1().min_w_0().child(self.menu.clone()))
-                        .child(
-                            div()
-                                .id("desk-clock")
-                                .role(Role::Button)
-                                .aria_label(clock.clone())
-                                .w(px(clock_width as f32))
-                                .flex_shrink_0()
-                                .h(px(19.))
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(|this, _, _, cx| {
-                                        this.show_date = !this.show_date;
-                                        cx.notify();
-                                        cx.stop_propagation();
-                                    }),
-                                )
-                                .child(drawing(clock_width as f32, 19., move |pen, _, _| {
-                                    pen.language = language;
-                                    pen.text(10, 14, &clock, Font::Bold, BLACK);
-                                })),
-                        )
-                        .child(self.application_menu.clone()),
+                        // The bar's inset, which the application menu's
+                        // own bar holds before the clock, after it too.
+                        .child(self.application_menu.clone())
+                        .child(div().w(px(10.)).flex_shrink_0()),
                 )
                 .child(body);
-        if self.emptying {
-            let amount = self
-                .files
-                .read(cx)
-                .find(TRASH)
-                .map_or(0, |node| node.children.len());
-            let text = count(language, "emptyWastebasket", amount);
-            root = root.child(
-                div()
-                    .absolute()
-                    .inset_0()
-                    .occlude()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .child(
-                        div()
-                            .track_focus(&self.empty_focus)
-                            .w(px(360.))
-                            .bg(gpui::rgb(GRAY_2))
-                            .border_2()
-                            .border_color(gpui::rgb(BLACK))
-                            .p(px(18.))
-                            .flex()
-                            .flex_col()
-                            .gap(px(16.))
-                            .child(label_in(text, language))
-                            .child(
-                                div()
-                                    .flex()
-                                    .justify_end()
-                                    .gap(px(8.))
-                                    .child(
-                                        button("cancel-empty", desk(language, "cancel"))
-                                            .theme(theme)
-                                            .language(language)
-                                            .on_click(cx.listener(|this, _, window, cx| {
-                                                this.emptying = false;
-                                                if let Some(focus) = this.before_empty_focus.take()
-                                                {
-                                                    window.focus(&focus, cx);
-                                                }
-                                                cx.notify();
-                                            })),
-                                    )
-                                    .child(
-                                        button("confirm-empty", desk(language, "ok"))
-                                            .default_button()
-                                            .theme(theme)
-                                            .language(language)
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.pending = Some(Command::ConfirmEmpty);
-                                                cx.notify();
-                                            })),
-                                    ),
-                            ),
-                    ),
-            );
-        }
-        root
+        root.child(self.empty_alert.clone())
     }
 }
 

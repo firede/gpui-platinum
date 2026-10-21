@@ -140,7 +140,7 @@ impl Controls {
         let sidebar = cx.new(|cx| {
             ListBox::new(PAGES.iter().copied(), cx)
                 .label("Controls")
-                .size(190, 420)
+                .size(160, 420)
                 .fill_height()
                 .selected(0)
         });
@@ -481,6 +481,16 @@ impl Controls {
         locale::format_message(&self.say("available"), &[("size", size)])
     }
 
+    /// Shows the page of the controls named, chosen in the list.
+    #[allow(dead_code, reason = "the desktop and its snapshot scenes show a page")]
+    pub fn show_page(&mut self, name: &str, cx: &mut Context<Self>) {
+        if let Some(page) = PAGES.iter().position(|page| *page == name) {
+            self.page = page;
+            self.sidebar
+                .update(cx, |list, cx| list.set_selection(Some(page), cx));
+            cx.notify();
+        }
+    }
     pub fn set_theme(&mut self, theme: Theme, cx: &mut Context<Self>) {
         self.theme = theme;
         self.sidebar
@@ -1590,7 +1600,13 @@ impl Render for Controls {
                     cx.stop_propagation();
                 }
             }))
-            .child(self.sidebar.clone())
+            .child(
+                div()
+                    .flex()
+                    .flex_shrink_0()
+                    .w(px(190.))
+                    .child(self.sidebar.clone()),
+            )
             .child(
                 div()
                     .flex()

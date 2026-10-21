@@ -8,8 +8,8 @@ use gpui::{
 };
 use gpui_platinum::{
     CalendarView, CheckState, ChoiceGroup, DateChanged, Font, Language, ListBox, ListEvent,
-    MenuEvent, MenuItem, PopupMenu, Slider, Theme, Time, TimeChanged, TimeField, button, checkbox,
-    label_in,
+    MenuEvent, MenuItem, PopupMenu, Slider, Theme, Time, TimeChanged, TimeField, button, card,
+    checkbox, group_box_in, label_in,
     locale::{LANGUAGE_NAMES, LANGUAGES, desk},
     models::{Calculator, Date},
     paint::{Pen, drawing},
@@ -189,7 +189,6 @@ impl Accessories {
         let alarm_hour = cx.new(|cx| {
             PopupMenu::new((0..24).map(|hour| MenuItem::new(format!("{hour:02}"))), cx)
                 .selected(now.hour() as usize)
-                .width(42)
         });
         let alarm_minute = cx.new(|cx| {
             PopupMenu::new(
@@ -197,7 +196,6 @@ impl Accessories {
                 cx,
             )
             .selected(((now.minute() / 5 + 1) % 12) as usize)
-            .width(42)
         });
         let patterns = cx.new(|cx| {
             ListBox::new(
@@ -209,7 +207,7 @@ impl Accessories {
         });
         let sounds = cx.new(|cx| {
             ListBox::new(sound_names(Language::English), cx)
-                .size(250, 80)
+                .size(250, 66)
                 .selected(0)
         });
         let subscriptions = vec![
@@ -248,7 +246,7 @@ impl Accessories {
             language: Language::English,
             width: 300,
             calculator: Calculator::new(),
-            puzzle: Puzzle::shuffled(1),
+            puzzle: Puzzle::opening(),
             appearance_tab: 0,
             pattern: 0,
             patterns,
@@ -337,6 +335,8 @@ impl Accessories {
             self.alarm_minute.update(cx, |menu, cx| {
                 menu.set_selection(((time.minute() / 5 + 1) % 12) as usize, cx)
             });
+            self.calendar
+                .update(cx, |calendar, cx| calendar.set_today(date_part(time), cx));
         }
         cx.notify();
     }
@@ -379,14 +379,14 @@ impl Accessories {
         else {
             return;
         };
-        let Some(chosen) = Local.from_local_datetime(&naive).earliest() else {
+        // In the zone of the desk's clock, fixed or the computer's.
+        let base = self
+            .fixed_time
+            .unwrap_or_else(|| Local::now().fixed_offset());
+        let Some(chosen) = base.offset().from_local_datetime(&naive).earliest() else {
             return;
         };
-        self.clock_offset = chosen.timestamp()
-            - self
-                .fixed_time
-                .unwrap_or_else(|| Local::now().fixed_offset())
-                .timestamp();
+        self.clock_offset = chosen.timestamp() - base.timestamp();
         cx.emit(ClockChanged(self.clock_offset));
         cx.notify();
     }
@@ -491,7 +491,7 @@ impl Accessories {
                         pen.language = language;
                         pen.text(
                             118 - Font::Bold.measure_in(&shown, language),
-                            17,
+                            16,
                             &shown,
                             Font::Bold,
                             BLACK,
@@ -555,7 +555,7 @@ impl Accessories {
                     let label = value.to_string();
                     pen.text(
                         x + (36 - Font::Bold.measure(&label)) / 2,
-                        y + 23,
+                        y + 22,
                         &label,
                         Font::Bold,
                         BLACK,
@@ -587,6 +587,7 @@ impl Accessories {
             moves_label(self.puzzle.moves, language)
         };
         div()
+            .w_full()
             .flex()
             .flex_col()
             .items_center()
@@ -628,7 +629,7 @@ impl Accessories {
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(4.))
+                    .gap(px(6.))
                     .child(
                         checkbox(
                             "armed",
@@ -757,29 +758,29 @@ impl Accessories {
             .flex()
             .flex_col()
             .gap(px(10.))
-            .w(px(370.))
+            .w(px((self.width - 20) as f32))
             .child(
-                div()
-                    .flex()
-                    .items_start()
-                    .gap(px(12.))
-                    .p(px(10.))
-                    .border_1()
-                    .border_color(rgb(GRAY_7))
-                    .child(self.calendar.clone())
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(8.))
-                            .child(label_in(desk(language, "timeLabel"), language))
-                            .child(self.time.clone())
-                            .child(localized_paragraph(
-                                date_label(self.now(), language),
-                                155,
-                                language,
-                            )),
-                    ),
+                card().child(
+                    div()
+                        .flex()
+                        .items_start()
+                        .gap(px(12.))
+                        .child(self.calendar.clone())
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(px(8.))
+                                .child(label_in(desk(language, "timeLabel"), language))
+                                .child(self.time.clone())
+                                .child(text_in_language(
+                                    short_date(self.now(), language),
+                                    Font::Small,
+                                    BLACK,
+                                    language,
+                                )),
+                        ),
+                ),
             )
             .child(
                 div().flex().justify_end().child(
@@ -799,12 +800,10 @@ impl Accessories {
         div()
             .flex()
             .flex_col()
-            .gap(px(16.))
+            .gap(px(10.))
+            .w(px((self.width - 20) as f32))
             .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(6.))
+                card()
                     .child(
                         div()
                             .flex()
@@ -839,7 +838,7 @@ impl Accessories {
                     ),
             )
             .child(
-                section(desk(language, "alertSound"), self.width - 20, language)
+                group_box_in(desk(language, "alertSound"), self.width - 20, language)
                     .child(self.sounds.clone()),
             )
     }
@@ -1134,6 +1133,14 @@ impl Puzzle {
             .enumerate()
             .all(|(index, tile)| usize::from(*tile) == (index + 1) % 16)
     }
+    /// The board the original opens with: its shuffle from seed 1, which
+    /// Go's random numbers make and these do not.
+    fn opening() -> Self {
+        Self {
+            tiles: [5, 13, 2, 14, 7, 1, 6, 0, 3, 12, 8, 11, 9, 10, 15, 4],
+            moves: 0,
+        }
+    }
     fn shuffled(mut seed: u64) -> Self {
         let mut puzzle = Self::default();
         for _ in 0..200 {
@@ -1171,6 +1178,31 @@ fn date_label(now: DateTime<FixedOffset>, language: Language) -> String {
         Language::English => now.format("%A, %B %-d, %Y").to_string(),
         Language::Korean => format!("{}년 {}월 {}일", now.year(), now.month(), now.day()),
         _ => format!("{}年{}月{}日", now.year(), now.month(), now.day()),
+    }
+}
+/// The day as the Date & Time panel shows it, as each language writes it
+/// (CLDR's "MMMEd").
+fn short_date(now: DateTime<FixedOffset>, language: Language) -> String {
+    let (month, day) = (now.month(), now.day());
+    let weekday = now.weekday().num_days_from_sunday() as usize;
+    match language {
+        Language::English => now.format("%a, %b %-d").to_string(),
+        Language::Japanese => {
+            let weekday = ["日", "月", "火", "水", "木", "金", "土"][weekday];
+            format!("{month}月{day}日({weekday})")
+        }
+        Language::Korean => {
+            let weekday = ["일", "월", "화", "수", "목", "금", "토"][weekday];
+            format!("{month}월 {day}일 ({weekday})")
+        }
+        Language::SimplifiedChinese => {
+            let weekday = ["日", "一", "二", "三", "四", "五", "六"][weekday];
+            format!("{month}月{day}日周{weekday}")
+        }
+        Language::TraditionalChinese => {
+            let weekday = ["日", "一", "二", "三", "四", "五", "六"][weekday];
+            format!("{month}月{day}日 週{weekday}")
+        }
     }
 }
 fn moves_label(count: usize, language: Language) -> String {

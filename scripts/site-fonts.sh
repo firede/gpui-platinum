@@ -3,7 +3,7 @@
 # Fonts to the characters its page and script use, in two faces — Platinum
 # Sans Bold and Platinum Sans Small Regular, Font::Bold and Font::Small —
 # and four regional forms. Run it again after changing the page's words.
-# Needs pyftsubset (pip install fonttools brotli) and curl.
+# Needs pyftsubset (pip install fonttools brotli), curl and unzip.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

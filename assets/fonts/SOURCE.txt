@@ -1,6 +1,6 @@
 Platinum Fonts
 https://github.com/firede/platinum-fonts
-Release: v0.3.0 (commit 971b10d0cc47e8c0714f9e54a6b2d14b0dd7745e)
+Release: v0.3.0 (commit 47c1ae804242741119012a48c048fb0225198b1d)
 
 The PXF1 files are copied without modification:
   sans/regular.bin       -> sans.bin

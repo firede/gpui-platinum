@@ -418,17 +418,21 @@ impl Steps<'_> {
         }));
         self.wait();
     }
-    /// Text typed, a character at a time.
+    /// Text typed, a character at a time; a capital as its key with shift,
+    /// as the system sends it.
     fn type_text(&mut self, text: &str) {
         for character in text.chars() {
             let key = match character {
                 ' ' => "space".to_owned(),
-                character => character.to_string(),
+                character => character.to_ascii_lowercase().to_string(),
             };
             let keystroke = Keystroke {
+                modifiers: Modifiers {
+                    shift: character.is_ascii_uppercase(),
+                    ..Modifiers::default()
+                },
                 key,
                 key_char: Some(character.to_string()),
-                ..Keystroke::default()
             };
             self.app
                 .update_window(self.window, |_, window, cx| {

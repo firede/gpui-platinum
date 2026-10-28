@@ -5,8 +5,8 @@
 use crate::{Scene, desktop::Desktop, gallery::Gallery};
 use gpui::{
     AnyWindowHandle, HeadlessAppContext, KeyDownEvent, Keystroke, Modifiers, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, OperatingSystem, PlatformInput, ScrollDelta,
-    ScrollEvent, ScrollSource, TouchPhase, point, px,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PlatformInput, ScrollDelta, ScrollEvent,
+    ScrollSource, TouchPhase, point, px,
 };
 use gpui_platinum::Language;
 
@@ -426,10 +426,9 @@ impl Steps<'_> {
                 character => character.to_string(),
             };
             let keystroke = Keystroke {
+                key,
                 key_char: Some(character.to_string()),
-                // A single character names no `secondary-` for the system
-                // to resolve.
-                ..Keystroke::parse_with_os(&key, OperatingSystem::Mac).unwrap()
+                ..Keystroke::default()
             };
             self.app
                 .update_window(self.window, |_, window, cx| {

@@ -102,7 +102,7 @@ be on the same revision: types from another GPUI are not interchangeable.
 
 ```toml
 [dependencies]
-gpui-platinum = { git = "https://github.com/firede/gpui-platinum", tag = "v0.1.0" }
+gpui-platinum = { git = "https://github.com/firede/gpui-platinum", tag = "v0.1.1" }
 gpui = { git = "https://github.com/longbridge/gpui-fast", rev = "07b42eb" }
 gpui_platform = { git = "https://github.com/longbridge/gpui-fast", rev = "07b42eb", features = ["font-kit", "runtime_shaders", "wayland", "x11"] }
 ```

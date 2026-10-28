@@ -26,7 +26,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
     <key>CFBundleIdentifier</key><string>dev.firede.gpui-platinum.$example</string>
     <key>CFBundleExecutable</key><string>$example</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleVersion</key><string>0.1.0</string>
+    <key>CFBundleVersion</key><string>0.1.1</string>
     <key>NSHighResolutionCapable</key><true/>
 </dict></plist>
 PLIST

@@ -6,7 +6,7 @@
 > in the browser.
 
 - Crate: gpui-platinum (imported as gpui_platinum); call gpui_platinum::init(cx) before the first window
-- Install: gpui-platinum = { git = "https://github.com/firede/gpui-platinum", tag = "v0.1.0" }, with gpui and gpui_platform from https://github.com/longbridge/gpui-fast at rev "07b42eb", as the README lists them
+- Install: gpui-platinum = { git = "https://github.com/firede/gpui-platinum", tag = "v0.1.1" }, with gpui and gpui_platform from https://github.com/longbridge/gpui-fast at rev "07b42eb", as the README lists them
 - Needs: Rust 2024, gpui-fast v0.1.12 (07b42eb); an application's own GPUI dependencies must be on the same revision
 - License: MIT; bitmap fonts from Platinum Fonts, OFL 1.1
 - Languages of the controls' own words: English, Simplified and Traditional Chinese, Japanese, Korean

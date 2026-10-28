@@ -1,6 +1,6 @@
 Platinum Fonts
 https://github.com/firede/platinum-fonts
-Commit: 33ef9cb37bc856dcf0a423717c7c1795dbbd066d
+Release: v0.3.0 (commit 971b10d0cc47e8c0714f9e54a6b2d14b0dd7745e)
 
 The PXF1 files are copied without modification:
   sans/regular.bin       -> sans.bin
@@ -12,6 +12,8 @@ The PXF1 files are copied without modification:
   cjk12/ja/regular.bin     -> cjk12/jp.bin
   cjk12/ko/regular.bin     -> cjk12/kr.bin
 
-NOTICE.txt is the upstream NOTICE.md, copied without modification.
+NOTICE.txt is the upstream NOTICE.md as of commit 33ef9cb37bc8, copied
+without modification; its faces and their glyphs are those of v0.3.0. The
+NOTICE.md of v0.3.0 adds Platinum Mono, which is not bundled here.
 The glyph data is licensed under the SIL Open Font License 1.1.
 The Rust reader follows the upstream bitmap package, licensed under MIT.

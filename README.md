@@ -241,7 +241,8 @@ app bundle of an example.
 `./scripts/site.sh` builds the web page, with the pictures the desktop
 draws (`desktop --site <dir>`), into `site/dist`; `./scripts/deploy.sh`
 builds it for its address and deploys it to Cloudflare, as `wrangler.jsonc`
-says, which publishing a release on GitHub does too.
+says, which publishing a release on GitHub does too. After the page's words
+change, `./scripts/site-fonts.sh` subsets its fonts to them again.
 
 ## Testing
 

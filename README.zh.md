@@ -228,7 +228,8 @@ macOS 应用。
 
 `./scripts/site.sh` 把网页连同桌面绘制的图片（`desktop --site <dir>`）构建到
 `site/dist`；`./scripts/deploy.sh` 按正式网址构建，并按 `wrangler.jsonc` 的
-配置部署到 Cloudflare。在 GitHub 上发布 Release 时也会自动部署。
+配置部署到 Cloudflare。在 GitHub 上发布 Release 时也会自动部署。网页文字改动后，
+运行 `./scripts/site-fonts.sh` 按新的文字重新裁剪网页字体。
 
 ## 测试
 

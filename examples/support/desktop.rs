@@ -915,8 +915,10 @@ impl Desktop {
                 view.update(cx, |view, cx| {
                     view.restore_settings(&self.panel_settings, cx);
                     view.set_pattern(self.pattern, cx);
-                    view.set_clock_offset(self.clock_offset, cx);
+                    // The time first, so the offset moves the desk's clock,
+                    // not the computer's.
                     view.set_fixed_time(self.fixed_time, cx);
+                    view.set_clock_offset(self.clock_offset, cx);
                 });
                 Content::Accessory(view)
             }

@@ -393,9 +393,11 @@ impl Accessories {
     fn sync_clock_fields(&mut self, cx: &mut Context<Self>) {
         let now = self.now();
         let date = date_part(now);
+        // Set, not chosen: a DateChanged would be taken for the user's, and
+        // one left behind by a later change of the clock would set it back.
         self.calendar.update(cx, |calendar, cx| {
             if calendar.selection() != date {
-                calendar.select(date, cx);
+                calendar.set_selection(date, cx);
             }
         });
         self.time

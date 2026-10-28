@@ -510,7 +510,7 @@ impl Render for IconView {
                 cx.notify();
                 cx.stop_propagation();
             }))
-            .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| {
+            .on_scroll(cx.listener(|this, event: &gpui::ScrollEvent, _, cx| {
                 this.offset = (this.offset
                     - f32::from(event.delta.pixel_delta(px(16.)).y).round() as i32)
                     .clamp(0, this.max_offset());

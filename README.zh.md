@@ -25,8 +25,8 @@ GPUI 的渲染器逐像素绘制。仓库里还附带一个"经典桌面"示例�
 
 > [!WARNING]
 > **这是一个早期的个人项目。** 它为作者自用而写，按原样分享，不承诺提供支持。
-> 0.x 版本之间 API 随时可能变化；它依赖的 gpui-fast v0.1.10（修订版
-> `b836dd9`）本身也还年轻、仍在变化。请固定版本使用，并做好随之调整的准备。
+> 0.x 版本之间 API 随时可能变化；它依赖的 gpui-fast v0.1.12（修订版
+> `07b42eb`）本身也还年轻、仍在变化。请固定版本使用，并做好随之调整的准备。
 
 ## 包含哪些控件
 
@@ -89,15 +89,15 @@ GPUI 的渲染器逐像素绘制。仓库里还附带一个"经典桌面"示例�
 
 ## 使用
 
-需要较新的稳定版 Rust（gpui-fast 使用 1.98 构建），以及 gpui-fast v0.1.10，
-修订版 `b836dd9`。应用自己的 GPUI 依赖必须是同一修订版：不同 GPUI 的类型
+需要较新的稳定版 Rust（gpui-fast 使用 1.98 构建），以及 gpui-fast v0.1.12，
+修订版 `07b42eb`。应用自己的 GPUI 依赖必须是同一修订版：不同 GPUI 的类型
 不能混用。
 
 ```toml
 [dependencies]
 gpui-platinum = { git = "https://github.com/firede/gpui-platinum", tag = "v0.1.0" }
-gpui = { git = "https://github.com/longbridge/gpui-fast", rev = "b836dd9" }
-gpui_platform = { git = "https://github.com/longbridge/gpui-fast", rev = "b836dd9", features = ["font-kit", "runtime_shaders", "wayland", "x11"] }
+gpui = { git = "https://github.com/longbridge/gpui-fast", rev = "07b42eb" }
+gpui_platform = { git = "https://github.com/longbridge/gpui-fast", rev = "07b42eb", features = ["font-kit", "runtime_shaders", "wayland", "x11"] }
 ```
 
 ```rust

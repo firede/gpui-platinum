@@ -5,7 +5,7 @@
 
 The crate is `gpui-platinum`, imported as `gpui_platinum`. The controls are
 in `src`; the desktop's applications are in `examples/support`. It is built
-on gpui-fast v0.1.10, revision `b836dd9`, and an application must use the
+on gpui-fast v0.1.12, revision `07b42eb`, and an application must use the
 same revision: types from another GPUI are not interchangeable.
 `cargo doc --no-deps --open` opens the reference generated from the
 source, which is the last word on what can be called.

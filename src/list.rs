@@ -547,7 +547,7 @@ impl Render for ListBox {
             .when(!self.fill_height, |el| el.h(px(self.height as f32)))
             .flex_shrink_0()
             .on_key_down(cx.listener(Self::key_down))
-            .on_scroll_wheel(cx.listener(move |this, event: &ScrollWheelEvent, _, cx| {
+            .on_scroll(cx.listener(move |this, event: &ScrollEvent, _, cx| {
                 let delta = f32::from(event.delta.pixel_delta(px(16.)).y) as f64;
                 this.top =
                     (this.top - delta / LIST_ROW_HEIGHT as f64).clamp(0., this.max_top() as f64);

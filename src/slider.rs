@@ -596,7 +596,7 @@ impl Element for RangeElement {
                     }
                 });
             if matches!(config.kind, Kind::ScrollBar { .. }) {
-                element = element.on_scroll_wheel(move |event, window, cx| {
+                element = element.on_scroll(move |event, window, cx| {
                     let next = {
                         let state = wheel_state.borrow();
                         let delta = match event.delta {

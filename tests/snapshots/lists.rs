@@ -63,7 +63,7 @@ fn focus<T: gpui::Focusable>(
 }
 
 /// Types keys into the focused element, one keystroke at a time.
-fn keys(app: &mut HeadlessAppContext, window: AnyWindowHandle, keys: &str) {
+fn keys(app: &mut HeadlessAppContext, window: AnyWindowHandle, keys: &'static str) {
     for key in keys.split_whitespace() {
         let keystroke = Keystroke::parse(key).unwrap();
         app.update_window(window, |_, window, cx| {
@@ -644,11 +644,12 @@ pub fn scenes() -> Vec<Scene> {
             input(
                 app,
                 window,
-                PlatformInput::ScrollWheel(gpui::ScrollWheelEvent {
+                PlatformInput::Scroll(gpui::ScrollEvent {
                     position: point(px(200.), px(60.)),
                     delta: gpui::ScrollDelta::Pixels(point(px(0.), px(-40.))),
                     modifiers: Modifiers::default(),
                     touch_phase: gpui::TouchPhase::Moved,
+                    source: gpui::ScrollSource::Pointer,
                 }),
             );
         }),

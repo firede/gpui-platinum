@@ -5,8 +5,8 @@
 use crate::{Scene, desktop::Desktop, gallery::Gallery};
 use gpui::{
     AnyWindowHandle, HeadlessAppContext, KeyDownEvent, Keystroke, Modifiers, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PlatformInput, ScrollDelta, ScrollWheelEvent,
-    TouchPhase, point, px,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, OperatingSystem, PlatformInput, ScrollDelta,
+    ScrollEvent, ScrollSource, TouchPhase, point, px,
 };
 use gpui_platinum::Language;
 
@@ -378,7 +378,7 @@ impl Steps<'_> {
     }
     /// Keys, as Keystroke parses them, one after another; a menu's
     /// equivalent among them is waited out.
-    fn keys(&mut self, keys: &str) {
+    fn keys(&mut self, keys: &'static str) {
         for key in keys.split_whitespace() {
             let keystroke = Keystroke::parse(key).unwrap();
             let command = keystroke.modifiers.platform;
@@ -409,11 +409,12 @@ impl Steps<'_> {
     /// The wheel turned at x, y, by the pixels given, toward the end.
     fn scroll(&mut self, x: f32, y: f32, pixels: f32) {
         self.move_to(x, y, false);
-        self.send(PlatformInput::ScrollWheel(ScrollWheelEvent {
+        self.send(PlatformInput::Scroll(ScrollEvent {
             position: point(px(x), px(y)),
             delta: ScrollDelta::Pixels(point(px(0.), px(-pixels))),
             modifiers: Modifiers::default(),
             touch_phase: TouchPhase::Moved,
+            source: ScrollSource::Pointer,
         }));
         self.wait();
     }
@@ -426,7 +427,9 @@ impl Steps<'_> {
             };
             let keystroke = Keystroke {
                 key_char: Some(character.to_string()),
-                ..Keystroke::parse(&key).unwrap()
+                // A single character names no `secondary-` for the system
+                // to resolve.
+                ..Keystroke::parse_with_os(&key, OperatingSystem::Mac).unwrap()
             };
             self.app
                 .update_window(self.window, |_, window, cx| {

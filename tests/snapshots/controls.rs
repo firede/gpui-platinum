@@ -147,7 +147,7 @@ fn release(
 }
 
 /// Presses a key, as "tab" or "shift-tab", in the scene's window.
-fn key(app: &mut HeadlessAppContext, window: AnyWindowHandle, keystroke: &str) {
+fn key(app: &mut HeadlessAppContext, window: AnyWindowHandle, keystroke: &'static str) {
     let keystroke = Keystroke::parse(keystroke).unwrap();
     send(
         app,

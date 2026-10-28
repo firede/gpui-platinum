@@ -9,8 +9,8 @@ use std::{
 
 use gpui::{
     App, Bounds, Context, EventEmitter, FocusHandle, Focusable, KeyDownEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, Pixels, Point, Role, ScrollWheelEvent, SharedString, Window,
-    canvas, div, point, prelude::*, px,
+    MouseDownEvent, MouseMoveEvent, Pixels, Point, Role, ScrollEvent, SharedString, Window, canvas,
+    div, point, prelude::*, px,
 };
 
 use crate::{
@@ -364,7 +364,7 @@ impl Render for TreeView {
             .flex_shrink_0()
             .on_key_down(cx.listener(Self::key_down))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::mouse_down))
-            .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _, cx| {
+            .on_scroll(cx.listener(|this, event: &ScrollEvent, _, cx| {
                 this.viewport.scroll(event, this.model.visible_rows().len());
                 cx.stop_propagation();
                 cx.notify();
@@ -1166,7 +1166,7 @@ impl Render for Table {
                     this.columns.resizing = None;
                 }),
             )
-            .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _, cx| {
+            .on_scroll(cx.listener(|this, event: &ScrollEvent, _, cx| {
                 this.viewport.scroll(event, this.rows.len());
                 cx.stop_propagation();
                 cx.notify();
@@ -1323,7 +1323,7 @@ impl Viewport {
                 .on_change(on_change),
             )
     }
-    fn scroll(&mut self, event: &ScrollWheelEvent, count: usize) {
+    fn scroll(&mut self, event: &ScrollEvent, count: usize) {
         self.wheel += f32::from(event.delta.pixel_delta(px(ROW_HEIGHT as f32)).y);
         let rows = (self.wheel / ROW_HEIGHT as f32).trunc() as isize;
         self.wheel -= rows as f32 * ROW_HEIGHT as f32;

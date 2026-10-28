@@ -3,7 +3,7 @@
 use gpui::{
     AccessibleAction, App, Bounds, ClipboardItem, Context, Entity, EventEmitter, FocusHandle,
     Focusable, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, Point, Role,
-    ScrollWheelEvent, SharedString, Subscription, Window, canvas, div, point, prelude::*, px,
+    ScrollEvent, SharedString, Subscription, Window, canvas, div, point, prelude::*, px,
 };
 
 use std::rc::Rc;
@@ -833,7 +833,7 @@ impl Render for SheetView {
                 MouseButton::Left,
                 cx.listener(|this, _, _, _| this.dragging = false),
             )
-            .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _, cx| {
+            .on_scroll(cx.listener(|this, event: &ScrollEvent, _, cx| {
                 let delta = event.delta.pixel_delta(px(CELL_HEIGHT as f32));
                 this.top = this
                     .top

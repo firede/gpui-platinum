@@ -258,7 +258,7 @@ impl RenderOnce for ScrollView {
                     .overflow_x_hidden()
                     .overflow_y_scroll()
                     .track_scroll(&self.handle)
-                    .on_scroll_wheel(|_, window, _| window.refresh())
+                    .on_scroll(|_, window, _| window.refresh())
                     .child(div().px(px(6.)).py(px(4.)).child(self.content)),
             )
             .child(

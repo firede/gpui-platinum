@@ -137,7 +137,7 @@ fn double_click(app: &mut HeadlessAppContext, window: AnyWindowHandle, x: f32, y
 
 /// Types keys; Tab, unless what has the focus takes it, moves the focus
 /// on, as the window of an application does.
-fn keys(app: &mut HeadlessAppContext, window: AnyWindowHandle, keys: &[&str]) {
+fn keys(app: &mut HeadlessAppContext, window: AnyWindowHandle, keys: &[&'static str]) {
     for key in keys {
         app.update_window(window, |_, window, cx| {
             let _ = window.draw(cx);

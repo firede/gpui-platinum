@@ -299,17 +299,15 @@ impl ColumnView {
             .h(px(height as f32))
             .flex_shrink_0()
             .mr(px(-1.))
-            .on_scroll_wheel(
-                cx.listener(move |this, event: &gpui::ScrollWheelEvent, _, cx| {
-                    let delta = f32::from(event.delta.pixel_delta(px(16.)).y) as f64;
-                    let max = this.max_top(column);
-                    if let Some(top) = this.tops.get_mut(column) {
-                        *top = (*top - delta / LIST_ROW_HEIGHT as f64).clamp(0., max);
-                    }
-                    cx.notify();
-                    cx.stop_propagation();
-                }),
-            )
+            .on_scroll(cx.listener(move |this, event: &gpui::ScrollEvent, _, cx| {
+                let delta = f32::from(event.delta.pixel_delta(px(16.)).y) as f64;
+                let max = this.max_top(column);
+                if let Some(top) = this.tops.get_mut(column) {
+                    *top = (*top - delta / LIST_ROW_HEIGHT as f64).clamp(0., max);
+                }
+                cx.notify();
+                cx.stop_propagation();
+            }))
             .child(drawing(
                 COLUMN_WIDTH as f32,
                 height as f32,

@@ -29,7 +29,7 @@ ruler), [page 5](docs/gallery-5@2x.png) (documents and navigation).
 > [!WARNING]
 > **An early, personal project.** It was made for its author's own use and
 > is shared as it is, with no promise of support. Its API may change in any
-> 0.x release, and it is built on gpui-fast v0.1.10 (revision `b836dd9`),
+> 0.x release, and it is built on gpui-fast v0.1.12 (revision `07b42eb`),
 > itself young and changing. Pin a version, and expect to adapt.
 
 ## What is in it
@@ -97,14 +97,14 @@ differ:
 ## Using it
 
 It needs a current stable Rust (gpui-fast builds with 1.98) and gpui-fast
-v0.1.10, revision `b836dd9`. An application's own GPUI dependencies must
+v0.1.12, revision `07b42eb`. An application's own GPUI dependencies must
 be on the same revision: types from another GPUI are not interchangeable.
 
 ```toml
 [dependencies]
 gpui-platinum = { git = "https://github.com/firede/gpui-platinum", tag = "v0.1.0" }
-gpui = { git = "https://github.com/longbridge/gpui-fast", rev = "b836dd9" }
-gpui_platform = { git = "https://github.com/longbridge/gpui-fast", rev = "b836dd9", features = ["font-kit", "runtime_shaders", "wayland", "x11"] }
+gpui = { git = "https://github.com/longbridge/gpui-fast", rev = "07b42eb" }
+gpui_platform = { git = "https://github.com/longbridge/gpui-fast", rev = "07b42eb", features = ["font-kit", "runtime_shaders", "wayland", "x11"] }
 ```
 
 ```rust

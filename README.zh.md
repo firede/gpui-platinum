@@ -25,8 +25,8 @@ GPUI 的渲染器逐像素绘制。仓库里还附带一个"经典桌面"示例�
 
 > [!WARNING]
 > **这是一个早期的个人项目。** 它为作者自用而写，按原样分享，不承诺提供支持。
-> 0.x 版本之间 API 随时可能变化；它依赖的 gpui-fast v0.1.12（修订版
-> `07b42eb`）本身也还年轻、仍在变化。请固定版本使用，并做好随之调整的准备。
+> 0.x 版本之间 API 随时可能变化；它依赖的 gpui-fast v0.1.12 和 limu-rs v0.1.0
+> 本身也还年轻、仍在变化。请固定版本使用，并做好随之调整的准备。
 
 ## 包含哪些控件
 
@@ -66,11 +66,27 @@ GPUI 的渲染器逐像素绘制。仓库里还附带一个"经典桌面"示例�
 | 停靠在底边的弹出窗口 | `PopupWindow` |
 | 打开与保存对话框 | `OpenDialog`、`SaveDialog` |
 | 窗口打开时的缩放矩形动画 | `zoom_rects` |
+| Mermaid 图表，由 [limu](https://limu.firede.com) 排版 | `diagram::view` |
 
 每个控件都具备完整的状态（按下、禁用、聚焦、默认、选中、选定，以及位于后台
 窗口时的非活动状态），可以用键盘操作，并通过 GPUI 的无障碍支持向屏幕阅读器
 描述自己。有独特外观的控件还导出了对应的 `draw_…` 函数，方便你画出外观一致的
 自定义控件。
+
+`diagram` 模块以这套外观绘制 Mermaid 图表。limu-rs 用库里的点阵字体测量文字，
+把图表排在整像素上；模块像绘制控件那样绘制其中的框，逐像素绘制线条。它会报告
+指针下的元素和被点击的元素，并在帮助气球里显示元素的提示文字。
+
+```rust
+use gpui_platinum::{Language, diagram::{self, limu}};
+
+let options = diagram::layout_options(Language::English);
+let scene = limu::layout("flowchart LR; a --> b", &options)?;
+diagram::view("flow", scene).on_click(|item, _, _| println!("clicked item {item}"))
+```
+
+它是 crate 的默认 feature `diagram`。只需要控件时，用 `default-features = false`
+去掉它。
 
 控件名沿用 mygo-platinum，按 Rust 的命名习惯书写。两者不同之处：
 
@@ -86,18 +102,19 @@ GPUI 的渲染器逐像素绘制。仓库里还附带一个"经典桌面"示例�
 | `Find`、`ReplaceAll` | `find_next`、`replace_all` |
 | `SpringOpen`、`ZoomRects` | `PopupWindow::spring_open`、`zoom_rects` |
 | `Card`、`EmptyState` | `card`、`empty_state` |
+| `diagram.Layout`、`diagram.View` | `diagram::layout_options`、`diagram::view` |
 
 ## 使用
 
-需要较新的稳定版 Rust（gpui-fast 使用 1.98 构建），以及 gpui-fast v0.1.12，
-修订版 `07b42eb`。应用自己的 GPUI 依赖必须是同一修订版：不同 GPUI 的类型
-不能混用。
+需要较新的稳定版 Rust（gpui-fast 使用 1.98 构建），以及 crates.io 上的
+gpui-fast v0.1.12，与 limu-gpui 相同。应用自己的 GPUI 依赖也必须是这个 crate：
+不同 GPUI 的类型（例如来自 gpui-fast 仓库的那份）不能混用。
 
 ```toml
 [dependencies]
-gpui-platinum = { git = "https://github.com/firede/gpui-platinum", tag = "v0.1.1" }
-gpui = { git = "https://github.com/longbridge/gpui-fast", rev = "07b42eb" }
-gpui_platform = { git = "https://github.com/longbridge/gpui-fast", rev = "07b42eb", features = ["font-kit", "runtime_shaders", "wayland", "x11"] }
+gpui-platinum = { git = "https://github.com/firede/gpui-platinum", tag = "v0.2.0" }
+gpui = { package = "gpui-fast", version = "0.1.12" }
+gpui_platform = { package = "gpui-fast-platform", version = "0.1.12", features = ["font-kit", "runtime_shaders", "wayland", "x11"] }
 ```
 
 ```rust
@@ -219,9 +236,12 @@ cargo run --example gallery -- --png gallery.png --page 2   # 不开窗口，把
 cargo run --example controls                   # 按函数名列出所有控件
 cargo run --example desktop                    # 经典桌面
 cargo run --example desktop -- --png desk.png --lang ja     # 不开窗口渲染成图片，日文界面
+cargo run --example diagrams                   # 以这套外观展示每种图表
+cargo run --example diagrams -- --png sequence.png --type Sequence --example 2
+cargo run --example diagrams -- --src flow.mmd --png flow.png --frame Flow  # 只渲染图表，放在一个窗口里
 ```
 
-`--scale 2` 以两倍尺寸渲染图片。图片由 GPUI 的离屏渲染器绘制，所固定的修订版
+`--scale 2` 以两倍尺寸渲染图片。图片由 GPUI 的离屏渲染器绘制，gpui-fast v0.1.12
 在 macOS 和 Linux 上提供它，Windows 上没有。`./scripts/screenshots.sh` 生成
 `docs` 里的配图；`./scripts/bundle.sh --gallery`（或 `--desktop`）把示例打包成
 macOS 应用。
@@ -241,7 +261,7 @@ macOS 应用。
 警告的 Clippy；GitHub 会在 macOS、Windows 和 Linux 上运行它。额外的参数会
 传给 Cargo，例如 `--offline`。测试包括：
 
-- 每个控件、gallery 的各页和桌面的场景，由 GPUI 的离屏渲染器绘制，与
+- 每个控件、gallery 的各页、桌面和每种图表的场景，由 GPUI 的离屏渲染器绘制，与
   `tests/reference/snapshots` 中 mygo-platinum 的 golden 图逐像素比对。它们在
   由 Metal 绘制的 macOS 上运行，其他平台上跳过：
 
@@ -256,7 +276,8 @@ macOS 应用。
 - 控件的键盘操作、菜单与取值范围，以及随时间的行为（闪烁、光标闪动、重复、
   延时），使用测试执行器的时钟；
 - `Font::measure_styled` 与 `Pen::text_styled` 的绘制结果是否一致；
-- 文本缓冲、富文本、日期、公式、树和桌面各应用的单元测试。
+- diagrams 示例的每个例子都能排版和绘制，以及图表视图报告的指针位置；
+- 文本缓冲、富文本、日期、公式、树、图表像素和桌面各应用的单元测试。
 
 有意修改了控件外观后，运行 `./scripts/screenshots.sh`，并查看 `docs` 里的
 新图。
@@ -280,6 +301,10 @@ macOS 应用。
   `first_weekday`、`day_first` 和 `hour_cycle` 用来按用户的区域格式设置。
 - 文本行会为东亚字形留出空间，与 mygo-platinum 设置了东亚字体后的行为一致。
   `text_input::set_east_asian_line_room(false)` 让英文文本行只按西文字体排列。
+- 图表中旋转 90° 整数倍的标签逐像素旋转，与 mygo-platinum 一致；旋转其他角度的
+  标签逐像素取其来源像素，而 mygo-platinum 会对它重新采样。limu-rs 把图表网格和
+  坐标轴的每个点都对齐到像素上，Go 版 limu 则整体平移，所以甘特图的网格和 XY
+  图的线条与 mygo-platinum 相差一个像素。
 
 ## 许可
 

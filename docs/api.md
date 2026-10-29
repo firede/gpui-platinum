@@ -5,8 +5,8 @@
 
 The crate is `gpui-platinum`, imported as `gpui_platinum`. The controls are
 in `src`; the desktop's applications are in `examples/support`. It is built
-on gpui-fast v0.1.12, revision `07b42eb`, and an application must use the
-same revision: types from another GPUI are not interchangeable.
+on gpui-fast v0.1.12 from crates.io, as limu-gpui is, and an application
+must use that crate too: types from another GPUI are not interchangeable.
 `cargo doc --no-deps --open` opens the reference generated from the
 source, which is the last word on what can be called.
 
@@ -346,6 +346,50 @@ accessibility node; a control of your own adds those.
 The Latin faces and the four regional `cjk12` faces are compiled in. After
 `init`, characters no face draws fall back to the system's font.
 
+## Diagrams
+
+The `diagram` module, the crate's default feature `diagram`, draws Mermaid
+diagrams in the look. [limu-rs](https://github.com/firede/limu-rs) lays a
+diagram out as a scene, and the module draws the scene: a node's box as a
+button, a group's as a group box, every other outline, line and arrowhead
+a pixel at a time, and text in `Font::Small`. It re-exports `limu` and
+`limu_gpui`, so an application need not depend on them itself.
+
+`layout_options(language)` gives limu's layout options for the look: text
+measured as `Font::Small` draws it in the language, edges in runs across
+and down, and everything snapped to whole pixels. A scene laid out with
+other options draws, but not on whole pixels.
+
+```rust
+use gpui_platinum::{Language, diagram::{self, limu}};
+use std::sync::Arc;
+
+let options = diagram::layout_options(Language::English);
+let scene = Arc::new(limu::layout("sequenceDiagram\n  A->>B: Hello", &options)?);
+let view = diagram::view("greeting", scene.clone())
+    .language(Language::English)
+    .on_hover(move |item, _, _| {
+        if let Some(i) = item {
+            println!("over {}", scene.items[i].role);
+        }
+    });
+```
+
+`view(id, scene)` is an element the size of the scene. `.theme(…)` draws it
+in a Platinum theme's colors and `.look(…)` in a look of limu's, such as
+`Look::new(diagram::theme(&theme))` with overrides of roles. `.language(…)`
+draws its East Asian text in the language it was measured in. `.on_hover`
+reports the index of the item under the pointer, or none, and `.on_click`
+the item a click was on. An item's tooltip shows in a help balloon, and the
+pointer is a hand over an item with a link, which the application follows.
+`.icons(…)` and `.images(…)` draw pictures as limu-gpui draws them; without
+them, pictures are left out. Assistive technology reads the diagram as an
+image named by the scene's title, or `.label(…)`.
+
+`paint(scene, origin, options, window, cx)` paints a scene in an element's
+paint phase, and `draw` is the hook it paints each item with, for
+`limu_gpui::paint_with` when an application draws some items its own way.
+
 ## Examples
 
 | Example | What it is |
@@ -353,12 +397,15 @@ The Latin faces and the four regional `cjk12` faces are compiled in. After
 | `gallery` | Every control, on five pages |
 | `controls` | Every control, live, by the name of its function, with its dialogs |
 | `desktop` | The classic desktop: windows, menus, a disk and small applications |
+| `diagrams` | Every type of Mermaid diagram limu reads, in the look, with its text to edit |
 
 Run them with `cargo run --example <name>`. `--png <file>` renders a
-picture without a window, at `--scale <n>`; the gallery takes `--page <n>`
-and the desktop `--lang en`, `zh-Hans`, `zh-Hant`, `ja` or `ko`. Pictures
-need GPUI's offscreen renderer, which the pinned revision has on macOS
-and Linux, not on Windows. `./scripts/screenshots.sh` renders the pictures
+picture without a window, at `--scale <n>`; the gallery takes `--page <n>`,
+the desktop `--lang en`, `zh-Hans`, `zh-Hant`, `ja` or `ko`, and the
+diagrams `--type <title>`, `--example <n>`, `--src <file>` and, for the
+drawing alone in a window of the look, `--frame <title>`. Pictures need
+GPUI's offscreen renderer, which gpui-fast v0.1.12 has on macOS and Linux,
+not on Windows. `./scripts/screenshots.sh` renders the pictures
 in `docs`.
 
 ## From the Go library

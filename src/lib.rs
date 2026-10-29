@@ -17,6 +17,8 @@ pub mod bitmap_icons;
 pub mod calendar;
 pub mod choice;
 pub mod collections;
+#[cfg(feature = "diagram")]
+pub mod diagram;
 pub mod dialogs;
 pub mod display;
 pub mod extras;

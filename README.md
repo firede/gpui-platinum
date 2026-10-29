@@ -29,8 +29,8 @@ ruler), [page 5](docs/gallery-5@2x.png) (documents and navigation).
 > [!WARNING]
 > **An early, personal project.** It was made for its author's own use and
 > is shared as it is, with no promise of support. Its API may change in any
-> 0.x release, and it is built on gpui-fast v0.1.12 (revision `07b42eb`),
-> itself young and changing. Pin a version, and expect to adapt.
+> 0.x release, and it is built on gpui-fast v0.1.12 and limu-rs v0.1.0,
+> both young and changing. Pin a version, and expect to adapt.
 
 ## What is in it
 
@@ -70,6 +70,7 @@ ruler), [page 5](docs/gallery-5@2x.png) (documents and navigation).
 | Pop-up window docked at the bottom edge | `PopupWindow` |
 | Open and save dialogs | `OpenDialog`, `SaveDialog` |
 | Zoom rectangles of a window opening | `zoom_rects` |
+| Mermaid diagram, laid out by [limu](https://limu.firede.com) | `diagram::view` |
 
 Every control has its states (pressed, disabled, focused, default, checked,
 selected, and inactive in a window in the background), is operated from the
@@ -77,6 +78,23 @@ keyboard, and describes itself to screen readers through GPUI's
 accessibility support. Those with a look of their own are drawn with an
 exported `draw_…` function too, for controls of your own that look like
 them.
+
+The `diagram` module draws Mermaid diagrams in the look. limu-rs lays a
+diagram out on whole pixels with the library's bitmap faces, and the module
+draws its boxes as the controls are drawn and its lines a pixel at a time.
+It reports the item under the pointer and the one clicked, and shows an
+item's tooltip in a help balloon.
+
+```rust
+use gpui_platinum::{Language, diagram::{self, limu}};
+
+let options = diagram::layout_options(Language::English);
+let scene = limu::layout("flowchart LR; a --> b", &options)?;
+diagram::view("flow", scene).on_click(|item, _, _| println!("clicked item {item}"))
+```
+
+It is the crate's default feature `diagram`. Leave it out with
+`default-features = false` for the controls alone.
 
 The names follow mygo-platinum's, in Rust's conventions. Where the two
 differ:
@@ -93,18 +111,20 @@ differ:
 | `Find`, `ReplaceAll` | `find_next`, `replace_all` |
 | `SpringOpen`, `ZoomRects` | `PopupWindow::spring_open`, `zoom_rects` |
 | `Card`, `EmptyState` | `card`, `empty_state` |
+| `diagram.Layout`, `diagram.View` | `diagram::layout_options`, `diagram::view` |
 
 ## Using it
 
 It needs a current stable Rust (gpui-fast builds with 1.98) and gpui-fast
-v0.1.12, revision `07b42eb`. An application's own GPUI dependencies must
-be on the same revision: types from another GPUI are not interchangeable.
+v0.1.12 from crates.io, as limu-gpui does. An application's own GPUI
+dependencies must be that crate too: types from another GPUI, such as one
+from gpui-fast's repository, are not interchangeable.
 
 ```toml
 [dependencies]
-gpui-platinum = { git = "https://github.com/firede/gpui-platinum", tag = "v0.1.1" }
-gpui = { git = "https://github.com/longbridge/gpui-fast", rev = "07b42eb" }
-gpui_platform = { git = "https://github.com/longbridge/gpui-fast", rev = "07b42eb", features = ["font-kit", "runtime_shaders", "wayland", "x11"] }
+gpui-platinum = { git = "https://github.com/firede/gpui-platinum", tag = "v0.2.0" }
+gpui = { package = "gpui-fast", version = "0.1.12" }
+gpui_platform = { package = "gpui-fast-platform", version = "0.1.12", features = ["font-kit", "runtime_shaders", "wayland", "x11"] }
 ```
 
 ```rust
@@ -230,10 +250,13 @@ cargo run --example gallery -- --png gallery.png --page 2   # a page, rendered w
 cargo run --example controls                   # every control, by the name of its function
 cargo run --example desktop                    # the classic desktop
 cargo run --example desktop -- --png desk.png --lang ja     # a picture of it, in Japanese
+cargo run --example diagrams                   # every type of diagram, in the look
+cargo run --example diagrams -- --png sequence.png --type Sequence --example 2
+cargo run --example diagrams -- --src flow.mmd --png flow.png --frame Flow  # a drawing alone, in a window
 ```
 
 `--scale 2` renders a picture at twice the size. Pictures are rendered with
-GPUI's offscreen renderer, which the pinned revision has on macOS and
+GPUI's offscreen renderer, which gpui-fast v0.1.12 has on macOS and
 Linux, not on Windows. `./scripts/screenshots.sh` renders the pictures in
 `docs`, and `./scripts/bundle.sh --gallery` (or `--desktop`) builds a macOS
 app bundle of an example.
@@ -254,9 +277,9 @@ runs `cargo fmt --check`, every test of every target, the doc tests and
 Clippy with warnings denied; GitHub runs it on macOS, Windows and Linux.
 Arguments go on to Cargo, as `--offline`. The tests include:
 
-- scenes of every control, the gallery's pages and the desktop, drawn by
-  GPUI's offscreen renderer and compared pixel for pixel with
-  mygo-platinum's golden images in `tests/reference/snapshots`. They run
+- scenes of every control, the gallery's pages, the desktop and diagrams
+  of every type, drawn by GPUI's offscreen renderer and compared pixel for
+  pixel with mygo-platinum's golden images in `tests/reference/snapshots`. They run
   on macOS, where Metal draws them, and are skipped elsewhere:
 
   ```sh
@@ -272,8 +295,10 @@ Arguments go on to Cargo, as `--offline`. The tests include:
 - what the controls do from the keyboard, with menus and ranges, and over
   time (flashes, blinks, repeats, delays), by the test executor's clock;
 - `Font::measure_styled` against what `Pen::text_styled` draws;
-- unit tests of the text buffer, rich text, dates, formulas, trees and the
-  desktop's applications.
+- every example of the diagrams example laid out and drawn, and what a
+  diagram's view reports of the pointer;
+- unit tests of the text buffer, rich text, dates, formulas, trees, the
+  pixels of diagrams and the desktop's applications.
 
 After a deliberate change to how a control looks, run
 `./scripts/screenshots.sh` and look at the new pictures in `docs`.
@@ -303,6 +328,12 @@ After a deliberate change to how a control looks, run
 - Lines of text make room for East Asian glyphs, as mygo-platinum's do once
   it has East Asian faces. `text_input::set_east_asian_line_room(false)`
   fits English lines to the Latin face alone.
+- A diagram's label turned by a quarter turn is turned pixel for pixel, as
+  mygo-platinum's is; one turned by another angle is turned a pixel at a
+  time, each pixel taking the one it came from, where mygo-platinum
+  resamples it. limu-rs puts each point of a chart's grid and axes on the
+  pixels, where the Go limu moves them as a whole, so a gantt chart's grid
+  and an XY chart's lines fall a pixel from mygo-platinum's.
 
 ## License
 

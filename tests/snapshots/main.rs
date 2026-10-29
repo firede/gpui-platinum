@@ -30,6 +30,9 @@ mod catalog;
 #[path = "../../examples/support/desktop.rs"]
 mod desktop;
 #[allow(dead_code, unused_imports)]
+#[path = "../../examples/support/diagram_samples.rs"]
+mod diagram_samples;
+#[allow(dead_code, unused_imports)]
 #[path = "../../examples/support/documents.rs"]
 mod documents;
 #[allow(dead_code, unused_imports)]
@@ -43,6 +46,7 @@ mod gallery;
 mod menu_icons;
 
 mod controls;
+mod diagrams;
 mod examples;
 mod forms;
 mod lists;
@@ -62,6 +66,9 @@ pub struct Scene {
     pub prepare: Option<Prepare>,
     /// Drawn as the original draws once its app gives it East Asian faces.
     pub east_asian: bool,
+    /// Boxes left out of the comparison, from their left, top, right and
+    /// bottom.
+    pub ignore: Vec<[u32; 4]>,
 }
 
 impl Scene {
@@ -80,6 +87,7 @@ impl Scene {
             pending: false,
             prepare: None,
             east_asian: false,
+            ignore: Vec::new(),
         }
     }
 
@@ -113,6 +121,13 @@ impl Scene {
         self
     }
 
+    /// Leaves boxes out of the comparison: where the original draws what
+    /// this port draws otherwise by design.
+    pub fn ignore(mut self, boxes: Vec<[u32; 4]>) -> Self {
+        self.ignore = boxes;
+        self
+    }
+
     pub fn prepare(
         mut self,
         prepare: impl FnOnce(&mut HeadlessAppContext, AnyWindowHandle) + 'static,
@@ -142,6 +157,7 @@ fn main() {
         lists::scenes(),
         forms::scenes(),
         examples::scenes(),
+        diagrams::scenes(),
     ]
     .into_iter()
     .flatten()
@@ -165,9 +181,10 @@ fn main() {
     for scene in scenes {
         let name = scene.name;
         let pending = scene.pending;
+        let ignore = scene.ignore.clone();
         let reference = reference(name);
         let image = draw(&platform, scene);
-        let differ = compare(&image, &reference);
+        let differ = compare(&image, &reference, &ignore);
         if differ == 0 {
             if pending {
                 println!("{name}: matches, so it is no longer pending");
@@ -178,7 +195,7 @@ fn main() {
             continue;
         }
         image.save(out.join(format!("{name}.png"))).unwrap();
-        diff_map(&image, &reference)
+        diff_map(&image, &reference, &ignore)
             .save(out.join(format!("{name}-diff.png")))
             .unwrap();
         if pending {
@@ -253,22 +270,29 @@ impl Render for Root {
     }
 }
 
-fn compare(image: &RgbaImage, reference: &RgbaImage) -> usize {
+/// Whether a pixel is in one of the boxes left out.
+fn ignored(x: u32, y: u32, ignore: &[[u32; 4]]) -> bool {
+    ignore
+        .iter()
+        .any(|&[left, top, right, bottom]| (left..right).contains(&x) && (top..bottom).contains(&y))
+}
+
+fn compare(image: &RgbaImage, reference: &RgbaImage, ignore: &[[u32; 4]]) -> usize {
     if image.dimensions() != reference.dimensions() {
         return (image.width() * image.height()).max(1) as usize;
     }
     image
-        .pixels()
+        .enumerate_pixels()
         .zip(reference.pixels())
-        .filter(|(a, b)| a.0[0..3] != b.0[0..3])
+        .filter(|((x, y, a), b)| a.0[0..3] != b.0[0..3] && !ignored(*x, *y, ignore))
         .count()
 }
 
-fn diff_map(image: &RgbaImage, reference: &RgbaImage) -> RgbaImage {
+fn diff_map(image: &RgbaImage, reference: &RgbaImage, ignore: &[[u32; 4]]) -> RgbaImage {
     RgbaImage::from_fn(image.width(), image.height(), |x, y| {
         let a = image.get_pixel(x, y);
         match reference.get_pixel_checked(x, y) {
-            Some(b) if a.0[0..3] == b.0[0..3] => {
+            Some(b) if a.0[0..3] == b.0[0..3] || ignored(x, y, ignore) => {
                 let gray = ((a[0] as u32 + a[1] as u32 + a[2] as u32) / 6 + 128) as u8;
                 image::Rgba([gray, gray, gray, 255])
             }

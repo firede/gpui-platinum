@@ -96,11 +96,14 @@ pub fn scenes() -> Vec<Scene> {
                 Steps { app, window }.scroll(260., 130., 1000.);
             }
         });
-        // The original's list ends with a page for its diagrams, which
-        // this port has none of, so its scroll bar's thumb is shorter; and
-        // a page chosen as its tests choose one leaves its list unscrolled,
-        // where this port's list scrolls to the page.
-        scenes.push(scene.pending());
+        // The original's tests choose a page behind its list's back, which
+        // leaves the list unscrolled, where this port's list scrolls to the
+        // page; with the list left as it was, the scenes match.
+        scenes.push(if page == "Button" {
+            scene
+        } else {
+            scene.pending()
+        });
     }
     scenes.extend(desk_tests());
     // TestScribeAskToSave: Letter changed, then closed.

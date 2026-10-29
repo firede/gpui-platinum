@@ -90,7 +90,7 @@ impl BalloonState {
     }
 }
 
-struct HelpBalloon(SharedString, Language);
+pub(crate) struct HelpBalloon(pub(crate) SharedString, pub(crate) Language);
 impl Render for HelpBalloon {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         let width = Font::Small.measure_in(&self.0, self.1).min(200) + 20;

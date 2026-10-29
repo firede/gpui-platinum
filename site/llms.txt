@@ -6,8 +6,9 @@
 > in the browser.
 
 - Crate: gpui-platinum (imported as gpui_platinum); call gpui_platinum::init(cx) before the first window
-- Install: gpui-platinum = { git = "https://github.com/firede/gpui-platinum", tag = "v0.1.1" }, with gpui and gpui_platform from https://github.com/longbridge/gpui-fast at rev "07b42eb", as the README lists them
-- Needs: Rust 2024, gpui-fast v0.1.12 (07b42eb); an application's own GPUI dependencies must be on the same revision
+- Install: gpui-platinum = { git = "https://github.com/firede/gpui-platinum", tag = "v0.2.0" }, with gpui and gpui_platform as gpui-fast and gpui-fast-platform 0.1.12 from crates.io, as the README lists them
+- Needs: Rust 2024, gpui-fast v0.1.12 from crates.io; an application's own GPUI dependencies must be that crate too
+- Diagrams: the diagram module (default feature "diagram") draws Mermaid diagrams laid out by limu-rs in the look; diagram::layout_options and diagram::view
 - License: MIT; bitmap fonts from Platinum Fonts, OFL 1.1
 - Languages of the controls' own words: English, Simplified and Traditional Chinese, Japanese, Korean
 
@@ -18,5 +19,7 @@
 - [Design specification](https://raw.githubusercontent.com/firede/gpui-platinum/main/docs/spec.md): how each control looks and behaves
 - [Example: desktop](https://github.com/firede/gpui-platinum/blob/main/examples/desktop.rs): the desk this site shows (cargo run --example desktop -- --lang ja)
 - [Example: gallery](https://github.com/firede/gpui-platinum/blob/main/examples/gallery.rs): every control on five pages
+- [Example: diagrams](https://github.com/firede/gpui-platinum/blob/main/examples/diagrams.rs): every type of Mermaid diagram limu reads, in the look
+- [limu-rs](https://github.com/firede/limu-rs): the Rust diagram layout engine the diagram module draws
 - [mygo-platinum](https://github.com/firede/mygo-platinum): the Go original, its design and pictures
 - [Platinum Fonts](https://github.com/firede/platinum-fonts): the bitmap faces, Latin and East Asian

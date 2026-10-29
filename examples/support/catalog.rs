@@ -59,6 +59,7 @@ const PAGES: &[&str] = &[
     "PopupWindow, SpringOpen",
     "OpenDialog, SaveDialog",
     "ZoomRects",
+    "diagram.View",
 ];
 
 pub struct Controls {
@@ -127,6 +128,8 @@ pub struct Controls {
     windows: Vec<Entity<PlatinumWindow>>,
     sheet: Entity<SheetView>,
     rich: Entity<RichTextArea>,
+    /// The diagram page's, laid out in the language it is in.
+    diagram: std::sync::Arc<diagram::limu::scene::Scene>,
 }
 
 impl Focusable for Controls {
@@ -371,10 +374,10 @@ impl Controls {
             icons: cx.new(|cx| {
                 IconView::new(
                     vec![
-                        IconItem::new("Calculator", IconKind::Calculator),
-                        IconItem::new("Jotter", IconKind::Jotter),
-                        IconItem::new("Scribe", IconKind::Scribe),
-                        IconItem::new("Puzzle", IconKind::Puzzle),
+                        IconItem::from_image("Calculator", bitmap(IconKind::Calculator)),
+                        IconItem::from_image("Jotter", bitmap(IconKind::Jotter)),
+                        IconItem::from_image("Scribe", bitmap(IconKind::Scribe)),
+                        IconItem::from_image("Puzzle", bitmap(IconKind::Puzzle)),
                     ],
                     cx,
                 )
@@ -464,6 +467,7 @@ impl Controls {
                     .with_text("One\nThe quick brown fox jumps over the lazy dog.")
                     .size(440., 220.)
             }),
+            diagram: desk_diagram(Language::English),
         };
         controls.set_theme(Theme::default(), cx);
         controls.set_language(Language::English, cx);
@@ -586,6 +590,7 @@ impl Controls {
 
     pub fn set_language(&mut self, language: Language, cx: &mut Context<Self>) {
         self.language = language;
+        self.diagram = desk_diagram(language);
         self.text
             .update(cx, |widget, cx| widget.set_language(language, cx));
         self.password
@@ -742,7 +747,7 @@ impl Controls {
                     ("scribe", IconKind::Scribe),
                     ("puzzle", IconKind::Puzzle),
                 ]
-                .map(|(key, kind)| IconItem::new(locale::desk(language, key), kind))
+                .map(|(key, kind)| IconItem::from_image(locale::desk(language, key), bitmap(kind)))
                 .into(),
                 cx,
             )
@@ -1568,9 +1573,57 @@ impl Controls {
                         ),
                 )
                 .into_any_element(),
+            "diagram.View" => column
+                .child(
+                    diagram::view("diagram", self.diagram.clone())
+                        .theme(self.theme)
+                        .language(self.language),
+                )
+                .into_any_element(),
             _ => unreachable!("unknown control page"),
         }
     }
+}
+
+/// A desk icon as a bitmap of 32 by 32 pixels, as the original gives its
+/// icon view the desk's icons: chosen, the view darkens it by its own tint,
+/// not as the desk darkens its selected icons.
+fn bitmap(kind: IconKind) -> std::sync::Arc<RenderImage> {
+    let mut pen = paint::Pen::new(32, 32);
+    draw_icon(&mut pen, 0, 0, kind, false);
+    let mut image = image::RgbaImage::new(32, 32);
+    for fill in pen.fills.iter().filter(|fill| fill.alpha == 255) {
+        let r = fill.rect;
+        for y in r.y.max(0)..(r.y + r.height).min(32) {
+            for x in r.x.max(0)..(r.x + r.width).min(32) {
+                // Blue, green, red and alpha, as GPUI holds them.
+                let [_, red, green, blue] = fill.color.to_be_bytes();
+                image.put_pixel(x as u32, y as u32, image::Rgba([blue, green, red, 255]));
+            }
+        }
+    }
+    std::sync::Arc::new(RenderImage::new(vec![image::Frame::new(image)]))
+}
+
+/// A flowchart of the desk's applications, in a language: the desk opens
+/// Scribe and Jotter, Scribe saves to the desk, and what is not kept goes to
+/// the Wastebasket.
+fn desk_diagram(language: Language) -> std::sync::Arc<diagram::limu::scene::Scene> {
+    let say = |key: &str| format!("\"{}\"", locale::desk(language, key).replace('"', "#quot;"));
+    let src = format!(
+        "flowchart LR\n  desk([{desk}]) -->|{open}| scribe[{scribe}]\n  scribe -->|{save}| desk\n  desk -->|{open}| jotter[{jotter}]\n  jotter -.-> waste[({waste})]\n",
+        desk = say("desk"),
+        open = say("open"),
+        scribe = say("scribe"),
+        save = say("save"),
+        jotter = say("jotter"),
+        waste = say("wastebasket"),
+    );
+    // The page is about 400 pixels wide; a diagram wider turns to fit it.
+    let mut o = diagram::layout_options(language);
+    o.max_width = 390.;
+    let scene = diagram::limu::layout(&src, &o).expect("the desk's own flowchart");
+    std::sync::Arc::new(scene)
 }
 
 fn row() -> Div {

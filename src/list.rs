@@ -58,6 +58,9 @@ pub struct ListBox {
     /// Where the layout put the box, from the last frame.
     bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     fill_height: bool,
+    /// The selection is to be brought into view once the layout has given
+    /// the box its height, which a box filling its parent's lacks before.
+    revealing: bool,
     dragging: bool,
     label: SharedString,
     theme: Theme,
@@ -87,6 +90,7 @@ impl ListBox {
             height: 120,
             bounds: Rc::new(Cell::new(None)),
             fill_height: false,
+            revealing: false,
             dragging: false,
             label: "List".into(),
             theme: Theme::default(),
@@ -234,8 +238,10 @@ impl ListBox {
         self.items.len().saturating_sub(self.rows())
     }
 
-    /// Scrolls the fewest rows that bring the row into view.
+    /// Scrolls the fewest rows that bring the row into view, and again once
+    /// the box is laid out if its height is not known yet.
     fn reveal(&mut self, index: usize) {
+        self.revealing = self.fill_height && self.bounds.get().is_none();
         let rows = self.rows();
         if (index as f64) < self.top {
             self.top = index as f64;
@@ -515,6 +521,12 @@ pub(crate) fn draw_list_frame(
 
 impl Render for ListBox {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.revealing
+            && self.bounds.get().is_some()
+            && let Some(index) = self.selected
+        {
+            self.reveal(index);
+        }
         let focused = self.focus.is_focused(window) && !self.disabled;
         let accent = self.theme.accent;
         let language = self.language;
@@ -599,8 +611,9 @@ impl Render for ListBox {
                     move |bounds, window, _| {
                         let before = laid_out.replace(Some(bounds));
                         if fill_height && before.is_none_or(|b| b.size != bounds.size) {
-                            // Laid out anew: the rows that fit change.
-                            window.refresh();
+                            // Laid out anew: the rows that fit change, which
+                            // the next frame draws, as this one is drawing.
+                            window.on_next_frame(|window, _| window.refresh());
                         }
                     },
                     |_, _, _, _| {},
@@ -684,5 +697,47 @@ impl ListBox {
     /// Where the box is on the window, from the last frame.
     fn focus_bounds(&self, _: &Window) -> Option<Bounds<Pixels>> {
         self.bounds.get()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ListBox;
+    use gpui::{
+        AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled, TestAppContext,
+        Window, div, px,
+    };
+
+    struct Column(Entity<ListBox>);
+
+    impl Render for Column {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().h(px(100.)).child(self.0.clone())
+        }
+    }
+
+    // A row chosen before the box filling its parent is laid out comes into
+    // view by the height the layout gives it, not the height it was made
+    // with.
+    #[gpui::test]
+    fn chosen_before_layout_shows_once_laid_out(cx: &mut TestAppContext) {
+        let list = cx.new(|cx| {
+            ListBox::new((0..40).map(|i| format!("Row {i}")), cx)
+                .size(160, 420)
+                .fill_height()
+        });
+        list.update(cx, |list, cx| list.set_selection(Some(30), cx));
+        let column = Column(list.clone());
+        let (_, cx) = cx.add_window_view(|_, _| column);
+        cx.run_until_parked();
+        // The frame the first asks for, which the test platform leaves to
+        // be drawn.
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        // 100 pixels show six whole rows, the chosen one last.
+        list.read_with(cx, |list, _| {
+            assert_eq!(list.rows(), 6);
+            assert_eq!(list.top, 25.);
+        });
     }
 }

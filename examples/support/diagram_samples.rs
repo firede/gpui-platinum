@@ -59,17 +59,18 @@ pub fn samples() -> Vec<SampleType> {
 }
 
 /// Reads a file of the gallery: the title in its front matter, and each
-/// heading with the code block under it.
+/// heading with the code block under it. Its lines may end as Windows ends
+/// them, as a checkout there may leave them.
 fn parse(text: &str) -> SampleType {
     let mut t = SampleType {
         title: String::new(),
         examples: Vec::new(),
     };
-    let mut front = text.starts_with("---\n");
+    let mut front = text.lines().next() == Some("---");
     let mut title = "";
     let mut code: Vec<&str> = Vec::new();
     let mut in_code = false;
-    for (i, line) in text.split('\n').enumerate() {
+    for (i, line) in text.lines().enumerate() {
         if front {
             if i > 0 && line == "---" {
                 front = false;

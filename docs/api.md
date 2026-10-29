@@ -255,7 +255,9 @@ or, with `.percent()`, the share of the room it takes, so both panes grow
 and shrink with the split. `.vertical()` stacks the panes. A split too
 small for the first pane's width shrinks that pane, keeping the second's
 least, and gives the width back as it grows. `ScrollView` draws GPUI's
-scrolling in the content frame.
+scrolling in the content frame: up and down with a scroll bar at its
+right, and across with one at its bottom while the content is wider than
+the frame, as a diagram can be.
 
 ## Menus, windows and dialogs
 

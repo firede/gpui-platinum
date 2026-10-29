@@ -9,6 +9,8 @@ use crate::{
 use gpui::{prelude::*, *};
 use std::time::{Duration, Instant};
 
+const SCROLL_BAR_WIDTH: i32 = 16;
+
 #[derive(IntoElement)]
 pub struct Balloon {
     id: ElementId,
@@ -186,6 +188,9 @@ impl RenderOnce for Balloon {
     }
 }
 
+/// A box that scrolls its content up and down, with a scroll bar at its
+/// right that follows it, and across, with one at its bottom while the
+/// content is wider than the box.
 #[derive(IntoElement)]
 pub struct ScrollView {
     id: ElementId,
@@ -218,19 +223,25 @@ impl ScrollView {
 }
 impl RenderOnce for ScrollView {
     fn render(self, window: &mut Window, _: &mut App) -> impl IntoElement {
-        let position = -f32::from(self.handle.offset().y);
-        let extent = f32::from(self.handle.max_offset().y).abs();
-        let height = self.height;
-        let handle = self.handle.clone();
+        let offset = self.handle.offset();
+        let max = self.handle.max_offset();
+        let (down, across) = (f32::from(max.y).abs(), f32::from(max.x).abs());
         let measured = self.handle.clone();
         window.on_next_frame(move |window, _| {
-            if f32::from(measured.max_offset().y).abs() != extent {
+            let max = measured.max_offset();
+            if f32::from(max.y).abs() != down || f32::from(max.x).abs() != across {
                 window.refresh();
             }
         });
         // The content frame round the content, 6 in from its sides and 4
-        // from its top, and the scroll bar on the frame's line at its right.
-        let width = self.width;
+        // from its top, the scroll bar on the frame's line at its right,
+        // and, while the content is wider than the frame, one on its line
+        // at the bottom, the two meeting at a corner of their own.
+        let (width, height) = (self.width, self.height);
+        let wide = across > 0.;
+        let room = if wide { SCROLL_BAR_WIDTH - 1 } else { 0 };
+        let (view_width, view_height) = (width - 3 - SCROLL_BAR_WIDTH, height - 4 - room);
+        let (vertical, horizontal) = (self.handle.clone(), self.handle.clone());
         div()
             .id(self.id)
             .relative()
@@ -240,11 +251,28 @@ impl RenderOnce for ScrollView {
             .child(crate::paint::drawing(
                 width as f32,
                 height as f32,
-                |pen, _, _| {
+                move |pen, _, _| {
                     let (width, height) = (pen.width, pen.height);
                     pen.bevel(0, 0, width, height, GRAY_7, WHITE);
                     pen.rect(2, 2, width - 4, height - 4, WHITE);
                     pen.frame(1, 1, width - 2, height - 2, BLACK);
+                    if wide {
+                        let at = SCROLL_BAR_WIDTH + 1;
+                        pen.rect(
+                            width - at,
+                            height - at,
+                            SCROLL_BAR_WIDTH,
+                            SCROLL_BAR_WIDTH,
+                            GRAY_2,
+                        );
+                        pen.frame(
+                            width - at,
+                            height - at,
+                            SCROLL_BAR_WIDTH,
+                            SCROLL_BAR_WIDTH,
+                            BLACK,
+                        );
+                    }
                 },
             ))
             .child(
@@ -253,30 +281,59 @@ impl RenderOnce for ScrollView {
                     .absolute()
                     .left(px(2.))
                     .top(px(2.))
-                    .w(px((width - 2 - 1 - 16) as f32))
-                    .h(px((height - 4) as f32))
-                    .overflow_x_hidden()
-                    .overflow_y_scroll()
+                    .w(px(view_width as f32))
+                    .h(px(view_height as f32))
+                    .flex()
+                    .flex_col()
+                    .items_start()
+                    .overflow_scroll()
                     .track_scroll(&self.handle)
                     .on_scroll(|_, window, _| window.refresh())
-                    .child(div().px(px(6.)).py(px(4.)).child(self.content)),
+                    // As wide as the frame, or as the content where it is
+                    // wider.
+                    .child(div().min_w_full().px(px(6.)).py(px(4.)).child(self.content)),
             )
             .child(
                 div().absolute().right(px(1.)).top(px(1.)).child(
                     ScrollBar::new(
                         "scroll",
-                        position as f64,
-                        (height - 4) as f64,
-                        (extent + height as f32 - 4.) as f64,
+                        -f32::from(offset.y) as f64,
+                        view_height as f64,
+                        (down + view_height as f32) as f64,
                     )
-                    .length(height - 2)
+                    .length(height - 2 - room)
                     .theme(self.theme)
                     .on_change(move |position, window, _| {
-                        handle.set_offset(point(px(0.), px(-position as f32)));
+                        let x = vertical.offset().x;
+                        vertical.set_offset(point(x, px(-position as f32)));
                         window.refresh();
                     }),
                 ),
             )
+            .when(wide, |view| {
+                view.child(
+                    div()
+                        .absolute()
+                        .left(px(1.))
+                        .top(px((height - 1 - SCROLL_BAR_WIDTH) as f32))
+                        .child(
+                            ScrollBar::new(
+                                "scroll-across",
+                                -f32::from(offset.x) as f64,
+                                view_width as f64,
+                                (across + view_width as f32) as f64,
+                            )
+                            .horizontal()
+                            .length(width - 2 - room)
+                            .theme(self.theme)
+                            .on_change(move |position, window, _| {
+                                let y = horizontal.offset().y;
+                                horizontal.set_offset(point(px(-position as f32), y));
+                                window.refresh();
+                            }),
+                        ),
+                )
+            })
     }
 }
 
@@ -723,4 +780,42 @@ pub fn icon_button(
     label: impl Into<SharedString>,
 ) -> Control {
     bevel_button(id, label).icon_only(icon)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ScrollView;
+    use gpui::{
+        Context, IntoElement, Render, ScrollHandle, Styled, TestAppContext, Window, div, px,
+    };
+
+    struct Scrolled {
+        handle: ScrollHandle,
+        content: f32,
+    }
+
+    impl Render for Scrolled {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let content = div().w(px(self.content)).h(px(50.)).flex_shrink_0();
+            ScrollView::new("scroll", &self.handle, content).size(200, 100)
+        }
+    }
+
+    // Content wider than the box scrolls across, by what its margins and
+    // it stand out of the room the scroll bars leave; content that fits
+    // does not.
+    #[gpui::test]
+    fn wide_content_scrolls_across(cx: &mut TestAppContext) {
+        for (content, across) in [(600., 612. - 181.), (150., 0.)] {
+            let handle = ScrollHandle::new();
+            let scrolled = Scrolled {
+                handle: handle.clone(),
+                content,
+            };
+            let (_, cx) = cx.add_window_view(|_, _| scrolled);
+            cx.run_until_parked();
+            assert_eq!(handle.max_offset().x, px(across), "{content} wide");
+            assert_eq!(handle.max_offset().y, px(0.), "{content} wide");
+        }
+    }
 }
